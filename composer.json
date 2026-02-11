@@ -1,0 +1,12 @@
+{
+    "name": "semitexa",
+    "description": "Meta-package: full Semitexa stack for a working SSR site (core + frontend + docs)",
+    "type": "metapackage",
+    "license": "MIT",
+    "require": {
+        "php": "^8.4",
+        "semitexa/core": "*",
+        "semitexa/module-core-frontend": "*",
+        "semitexa/docs": "*"
+    }
+}
