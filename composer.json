@@ -1,7 +1,7 @@
 {
     "name": "semitexa/ultimate",
     "description": "Meta-package: full Semitexa stack for a working SSR site (core + frontend + docs)",
-    "version": "v1.0.5",
+    "version": "v1.0.6",
     "type": "metapackage",
     "license": "MIT",
     "require": {
@@ -9,7 +9,7 @@
         "semitexa/core": "*",
         "semitexa/tenancy": "*",
         "semitexa/orm": "*",
-        "semitexa/module-core-frontend": "*",
+        "semitexa/ssr": "*",
         "semitexa/docs": "*"
     }
 }
