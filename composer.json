@@ -1,7 +1,7 @@
 {
     "name": "semitexa/ultimate",
     "description": "Project skeleton: full Semitexa stack for a working SSR site (core + frontend + docs)",
-    "version": "v2.0.0",
+    "version": "v2.0.2",
     "type": "project",
     "license": "MIT",
     "require": {
