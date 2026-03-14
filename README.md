@@ -22,6 +22,42 @@ Drawing from experience with ecosystems like **Magento 2**, Semitexa addresses t
 
 ---
 
+## 🚀 Quick Start
+
+No PHP, Composer, or extensions required on the host — only Docker.
+
+```sh
+mkdir my-project && cd my-project
+docker run --rm -v $(pwd):/app semitexa/installer install
+docker compose up -d
+```
+
+That's it. On first boot the `setup` container runs `composer create-project` automatically.
+The app is available at **http://localhost:8080** once it's ready.
+
+### After first boot
+
+```sh
+# Run database migrations
+./bin/semitexa php bin/semitexa db:migrate
+
+# Open a shell inside the container
+./bin/semitexa sh
+
+# Run any framework CLI command
+./bin/semitexa php bin/semitexa <command>
+```
+
+### How it works
+
+| Step | What happens |
+|------|-------------|
+| `docker run semitexa/installer install` | Writes `Dockerfile`, `docker-compose.yml`, `.env` (with generated secrets), `bin/semitexa` into the current directory |
+| `docker compose up -d` | Starts `db` + `redis` → `setup` runs `composer create-project semitexa/ultimate` into a named volume → `app` starts Swoole on `:8080` |
+| Subsequent restarts | `setup` detects `vendor/autoload.php` and exits instantly — no reinstall |
+
+---
+
 ## 🏛️ Heritage & Open Source
 Semitexa is built upon the collective wisdom of the PHP community, reflecting lessons learned from:
 **Zend Framework • Symfony • Laravel • Laminas • Magento 2**
