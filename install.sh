@@ -865,6 +865,10 @@ main() {
             warn "Resolve the conflict, then: cd ${PROJECT_NAME} && bin/semitexa server:start"
         else
             start_server
+            if [ -n "$LOCAL_DOMAIN" ]; then
+                printf "\n"
+                success "Your app is also available at: http://${LOCAL_DOMAIN}"
+            fi
         fi
     else
         info "Run 'bin/semitexa server:start' when you're ready."
