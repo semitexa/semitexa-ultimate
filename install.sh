@@ -317,9 +317,21 @@ get_swoole_port() {
 
 # ── Port conflict check ──────────────────────────────────────────────────────
 # Detects whether SWOOLE_PORT is already bound before attempting server:start.
-# Tries lsof, then ss, then netstat — whichever is available on the host.
-# If none are available, skips the check and lets the server attempt to bind
-# (it will fail with a clear error from Docker Compose in that case).
+#
+# TWO independent checks are required because ports can be claimed in two
+# different ways that are invisible to each other:
+#
+#   Check A — host-level sockets (lsof / ss / netstat)
+#     Catches: processes listening directly on the host (nginx, another app).
+#     Does NOT catch: ports allocated by Docker's network driver, because
+#     Docker registers them through its proxy/iptables layer, not as a
+#     conventional listening socket visible to these tools.
+#
+#   Check B — Docker-allocated ports (docker ps)
+#     Catches: any running container that already maps host:PORT -> container.
+#     Output format: "0.0.0.0:9502->9502/tcp" — grep for ":PORT->".
+#     This is exactly the class of conflict that causes Docker Compose to fail
+#     with "Bind for 0.0.0.0:PORT failed: port is already allocated".
 #
 # MUST be called directly (not inside $(...)) so that setting SKIP_START=1
 # propagates to main()'s scope. A subshell would discard the mutation.
@@ -327,21 +339,37 @@ check_port_conflicts() {
     SKIP_START=0
     _port="$(get_swoole_port)"
     _in_use=0
+    _conflict_source=""
 
+    # Check A: host-level socket listeners
+    # Note: -sTCP:LISTEN is omitted from lsof — it is non-POSIX and
+    # unreliable for Docker-proxied ports; plain -i :PORT is sufficient here.
     if command -v lsof >/dev/null 2>&1; then
-        lsof -i :"$_port" -sTCP:LISTEN >/dev/null 2>&1 && _in_use=1 || true
+        lsof -i :"$_port" >/dev/null 2>&1 && _in_use=1 && _conflict_source="host process" || true
     elif command -v ss >/dev/null 2>&1; then
-        ss -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 || true
+        ss -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 && _conflict_source="host process" || true
     elif command -v netstat >/dev/null 2>&1; then
-        netstat -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 || true
+        netstat -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 && _conflict_source="host process" || true
+    fi
+
+    # Check B: Docker-allocated ports (runs even if check A already fired,
+    # so the error message can be more specific when both are true)
+    if command -v docker >/dev/null 2>&1; then
+        if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":${_port}->"; then
+            _in_use=1
+            _conflict_source="Docker container"
+        fi
     fi
 
     if [ "$_in_use" -eq 1 ]; then
-        warn "Port ${_port} is already bound by another process."
+        warn "Port ${_port} is already allocated (by a ${_conflict_source})."
         warn "Options:"
-        warn "  1. Stop the conflicting process:  lsof -i :${_port}  (macOS/Linux)"
-        warn "                                    netstat -ano | findstr :${_port}  (Windows)"
-        warn "  2. Change SWOOLE_PORT in ${PROJECT_NAME}/.env, then start manually."
+        warn "  1. Find and stop the owner:"
+        warn "       docker ps | grep :${_port}          (if it is a container)"
+        warn "       lsof -i :${_port}                   (if it is a host process)"
+        warn "       netstat -ano | findstr :${_port}    (Windows)"
+        warn "  2. Change SWOOLE_PORT in ${PROJECT_NAME}/.env, then:"
+        warn "       cd ${PROJECT_NAME} && bin/semitexa server:start"
         SKIP_START=1
     fi
 }
