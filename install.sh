@@ -103,7 +103,18 @@ _on_exit() {
     if [ -n "$_p" ] && [ -d "$_p" ]; then
         printf "\n" >&2
         warn "Install did not complete — removing partial directory: ./${_p}"
-        rm -rf "$_p"
+        # Docker containers (dnsmasq, app) create root-owned files inside the
+        # project dir (e.g. var/dns/dnsmasq.conf). Plain rm -rf fails on those.
+        # Fall back to a throwaway Alpine container that has root on the volume.
+        if ! rm -rf "$_p" 2>/dev/null; then
+            if command -v docker >/dev/null 2>&1; then
+                docker run --rm -v "$(pwd):/work" alpine \
+                    rm -rf "/work/${_p}" 2>/dev/null \
+                    || warn "Could not remove '${_p}'. Run: sudo rm -rf ./${_p}"
+            else
+                warn "Could not remove '${_p}' (permission denied). Run: sudo rm -rf ./${_p}"
+            fi
+        fi
     fi
 }
 
@@ -554,9 +565,66 @@ validate_local_domain() {
     return 0
 }
 
+# Try to free a single fixed port before starting DNS services.
+# Returns 0 = port is free (or was freed), 1 = still blocked.
+# Checks Docker allocations first (most common case), then host sockets.
+# Resolution: stop the conflicting Docker container.
+# Auto mode (--start / no TTY): stops silently.
+# Interactive: asks the user to confirm or skip.
+_free_fixed_port() {
+    _ffp="$1"
+    _owner=""
+
+    if command -v docker >/dev/null 2>&1; then
+        _owner="$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
+            | grep ":${_ffp}[^0-9]" | awk '{print $1}' | head -1)"
+        [ -n "$_owner" ] || {
+            if command -v lsof >/dev/null 2>&1; then
+                lsof -i :"$_ffp" >/dev/null 2>&1 && _owner="[host process]" || true
+            elif command -v ss >/dev/null 2>&1; then
+                ss -ltn 2>/dev/null | grep -qE "[: ]${_ffp}( |$)" \
+                    && _owner="[host process]" || true
+            fi
+        }
+    fi
+
+    [ -z "$_owner" ] && return 0   # port is free
+
+    warn "Port ${_ffp} is held by: ${_owner}"
+
+    if ! tty_available || [ "$AUTO_START" -eq 1 ]; then
+        if [ "$_owner" != "[host process]" ]; then
+            info "Auto: stopping '${_owner}' to free port ${_ffp}..."
+            docker stop "$_owner" >/dev/null 2>&1 && return 0 || true
+        fi
+        return 1
+    fi
+
+    printf "  %s[1]%s Stop '%s' and continue\n" "$C_BOLD" "$C_RESET" "$_owner"
+    printf "  %s[s]%s Skip domain registration (app will still start)\n" "$C_BOLD" "$C_RESET"
+    printf "\n  Choice [1/s]: "
+    read -r _ffp_c </dev/tty
+    case "$_ffp_c" in
+        1)
+            if [ "$_owner" != "[host process]" ] \
+               && docker stop "$_owner" >/dev/null 2>&1; then
+                success "Stopped '${_owner}'."
+                return 0
+            fi ;;
+    esac
+    return 1
+}
+
 # Calls the internal DNS registration module via `bin/semitexa dns:add`.
-# Non-fatal: a failure here warns the user but does NOT abort the installer,
-# because the project itself is already fully installed at this point.
+# Non-fatal: a failure here warns the user but does NOT abort the installer.
+#
+# PORT GATE — all fixed ports used by docker-compose.dns.yml are checked
+# BEFORE calling dns:add. If any conflict cannot be resolved we skip domain
+# registration entirely, leaving LOCAL_DOMAIN="" so server:start never
+# includes docker-compose.dns.yml and the app starts cleanly on its own port.
+#
+#   Port 80   — Nginx reverse proxy (docker-compose.dns.yml: proxy service)
+#   Port 5553 — dnsmasq local DNS   (docker-compose.dns.yml: dns service)
 #
 # Related commands the user can run manually inside the project directory:
 #   bin/semitexa dns:add <domain>     — register a .test domain
@@ -564,6 +632,22 @@ validate_local_domain() {
 #   bin/semitexa dns:remove <domain>  — remove a registered local domain
 register_local_domain() {
     _domain="$1"
+
+    # ── Fixed-port gate for docker-compose.dns.yml ────────────────────────────
+    if [ -f "${PROJECT_NAME}/docker-compose.dns.yml" ]; then
+        info "Checking ports required by local DNS services..."
+        for _dns_port in 80 5553; do
+            if ! _free_fixed_port "$_dns_port"; then
+                warn "Cannot free port ${_dns_port} — skipping domain registration."
+                warn "App will still start on its own port."
+                warn "Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
+                LOCAL_DOMAIN=""
+                return
+            fi
+        done
+    fi
+
+    # ── Register ──────────────────────────────────────────────────────────────
     info "Registering ${_domain} with local DNS..."
     _dns_bin="${PROJECT_NAME}/bin/semitexa"
     if [ -x "$_dns_bin" ]; then
@@ -574,10 +658,12 @@ register_local_domain() {
         else
             warn "DNS registration failed — run manually once the server is up:"
             warn "  cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
+            LOCAL_DOMAIN=""
         fi
     else
         warn "bin/semitexa not executable — skipping DNS registration."
         warn "Register manually after start: cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
+        LOCAL_DOMAIN=""
     fi
 }
 
