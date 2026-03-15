@@ -14,12 +14,44 @@
 # Requirements: Docker with Compose v2 (no PHP, no Composer on host)
 # Compatible:   macOS, Linux, Windows (Git Bash / WSL)
 # Architecture: AMD64, ARM64
+#
+# ── HOW TO USE SAFELY ────────────────────────────────────────────────────────
+#
+# BEFORE RUNNING — verify these from the directory where you want the project:
+#   docker info              # Docker daemon must be running
+#   docker compose version   # Must show v2 (not docker-compose v1)
+#
+# RECOMMENDED ONE-LINER (avoids TTY / CI hang issues):
+#   curl -fsSL https://semitexa.com/install.sh | bash -s my-project
+#
+# NON-INTERACTIVE / CI (skips all prompts, starts server immediately):
+#   curl -fsSL https://semitexa.com/install.sh | bash -s my-project --start
+#
+# WINDOWS:
+#   Prefer WSL2 over Git Bash — Docker socket and id -u/id -g behave
+#   correctly in WSL2. In Git Bash: sh install.sh my-project --start
+#   Line endings must be LF not CRLF, or sh will fail with obscure parse errors.
+#
+# PITFALLS:
+#   - Run from the PARENT directory of where you want the project created.
+#   - Edit .env BEFORE starting the server — changes after start need a restart.
+#   - A directory named PROJECT_NAME must not already exist.
+#   - SWOOLE_PORT (default 9502) must be free. Check: lsof -i :9502
+#   - On Docker rootless setups, ensure your user can run 'docker info'.
+#   - If the install is interrupted (Ctrl+C, network drop), the partial
+#     directory is automatically removed so you can re-run without errors.
+#
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
+# set -e aborts on any non-zero exit. A partial install is worse than a clean
+# failure. The last printed step number tells you exactly where it stopped.
 
 SEMITEXA_VERSION="semitexa/ultimate"
 COMPOSER_IMAGE="composer:2"
 PACKAGIST_URL="https://packagist.org/packages/semitexa/ultimate.json"
+# If Packagist is unreachable (air-gapped env, corporate proxy), the script
+# falls back to the floating "semitexa/ultimate" tag automatically.
+# For fully reproducible installs, pin externally: SEMITEXA_VERSION=semitexa/ultimate:1.2.3
 
 # ── Colour helpers ───────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
@@ -30,6 +62,8 @@ if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
     C_CYAN="$(tput setaf 6 2>/dev/null  || true)"
     C_BOLD="$(tput bold 2>/dev/null     || true)"
 else
+    # Colour is automatically suppressed in pipes and non-TTY contexts
+    # (CI logs, cron, redirected output). No flags needed.
     C_RESET="" C_GREEN="" C_YELLOW="" C_RED="" C_CYAN="" C_BOLD=""
 fi
 
@@ -47,20 +81,59 @@ banner() {
     printf "\n"
 }
 
+# ── Cleanup on failure ───────────────────────────────────────────────────────
+# _CLEANUP_PROJECT is armed just before we start writing files (step 3).
+# It is disarmed once the install is confirmed complete (after step 5).
+# On any premature exit — set -e abort, Ctrl+C, SIGTERM — the partial
+# project directory is removed so the user can re-run without hitting the
+# "directory already exists" guard in validate_project_name.
+_CLEANUP_PROJECT=""
+
+_on_exit() {
+    _p="${_CLEANUP_PROJECT:-}"
+    _CLEANUP_PROJECT=""          # idempotent — prevents double-run if both signal + EXIT fire
+    if [ -n "$_p" ] && [ -d "$_p" ]; then
+        printf "\n" >&2
+        warn "Install did not complete — removing partial directory: ./${_p}"
+        rm -rf "$_p"
+    fi
+}
+
+# EXIT fires on: normal exit, set -e abort, and explicit exit N calls.
+# INT/TERM are trapped separately with explicit exit codes so EXIT fires too,
+# even on shells that do not propagate signal exits through the EXIT trap.
+trap '_on_exit' EXIT
+trap '_on_exit; exit 130' INT
+trap '_on_exit; exit 143' TERM
+
 # ── Argument parsing ─────────────────────────────────────────────────────────
+# Only two inputs matter: PROJECT_NAME and --start.
+# Unknown --flags warn but do NOT abort (non-fatal) — check for typos like
+# --Start or --autostart if --start seems to have no effect.
 PROJECT_NAME=""
 AUTO_START=0
+# SKIP_START is mutated by check_port_conflicts(). It MUST be declared here
+# (not inside main) so check_port_conflicts can write to it and main can read
+# the updated value. Calling check_port_conflicts in a subshell ($(...)) would
+# isolate variable writes, causing SKIP_START to always remain 0.
+SKIP_START=0
+# LOCAL_DOMAIN is set by ask_local_domain() and read by print_next_steps().
+# Same scope requirement as SKIP_START — must live outside both functions.
+LOCAL_DOMAIN=""
 
 for _arg in "$@"; do
     case "$_arg" in
         --start) AUTO_START=1 ;;
-        --*)     warn "Unknown option: $_arg" ;;
+        --*)     warn "Unknown option: $_arg (did you mean --start?)" ;;
         *)       [ -z "$PROJECT_NAME" ] && PROJECT_NAME="$_arg" ;;
     esac
 done
 
 # ── Prerequisites ────────────────────────────────────────────────────────────
 check_docker() {
+    # PITFALL: Docker installed but daemon not running gives a misleading
+    # "permission denied" on rootless Linux setups.
+    # Fix: systemctl start docker  (or start Docker Desktop on mac/Windows).
     if ! command -v docker >/dev/null 2>&1; then
         error "Docker is not installed."
         printf "\n  Install Docker Desktop: %shttps://docs.docker.com/get-docker/%s\n\n" "$C_CYAN" "$C_RESET"
@@ -72,7 +145,9 @@ check_docker() {
         exit 1
     fi
 
-    # Compose v2: `docker compose` (plugin) — required
+    # Compose v2: `docker compose` (plugin) — required.
+    # PITFALL: `docker-compose` (v1, standalone binary) will NOT satisfy this.
+    # If you have both installed, upgrade: https://docs.docker.com/compose/migrate/
     if ! docker compose version >/dev/null 2>&1; then
         error "Docker Compose v2 is required ('docker compose' not found)."
         printf "\n  Upgrade to Docker Desktop 3.6+ or install the Compose plugin:\n"
@@ -86,6 +161,11 @@ check_docker() {
 
 # ── Project name ─────────────────────────────────────────────────────────────
 ask_project_name() {
+    # When piping via `curl | bash`, stdin is the pipe, NOT your terminal.
+    # The script detects this and falls back to /dev/tty for interactive input.
+    # If /dev/tty is also unavailable (some CI containers), it defaults to
+    # "my-semitexa". To avoid ambiguity, always pass a name explicitly:
+    #   curl ... | bash -s my-project
     if [ -n "$PROJECT_NAME" ]; then
         return
     fi
@@ -103,13 +183,20 @@ ask_project_name() {
 }
 
 validate_project_name() {
+    # ALLOWED: letters, digits, hyphens, underscores, dots.
+    # REJECTED: spaces, slashes, @, #, etc. — these break Docker volume mounts
+    # and Composer directory handling across all platforms.
     case "$PROJECT_NAME" in
-        # Must start with letter/digit, only alphanum + hyphen/underscore
         ''|*[!a-zA-Z0-9._-]*)
             error "Invalid project name: '$PROJECT_NAME'. Use only letters, digits, hyphens, underscores, dots."
             exit 1 ;;
     esac
 
+    # An existing directory blocks the install intentionally — this prevents
+    # accidentally clobbering a working project. Remove or rename it first.
+    # PITFALL: If a previous install failed and left a partial directory, the
+    # cleanup trap should have removed it automatically. If it persists (e.g.
+    # the trap was bypassed by SIGKILL), remove it manually: rm -rf <name>
     if [ -e "$PROJECT_NAME" ]; then
         error "A file or directory named '$PROJECT_NAME' already exists."
         printf "\n  Remove it first, or choose a different name.\n\n"
@@ -119,6 +206,9 @@ validate_project_name() {
 
 # ── Fetch latest published version from Packagist ────────────────────────────
 fetch_latest_version() {
+    # Best-effort. On failure (network timeout, proxy, Packagist outage) the
+    # script falls back to the floating package tag, which resolves to
+    # latest-stable at Composer install time (slightly less reproducible).
     _version=""
     if command -v curl >/dev/null 2>&1; then
         _version="$(curl -fsSL "$PACKAGIST_URL" 2>/dev/null \
@@ -147,7 +237,15 @@ run_create_project() {
 
     info "Running: composer create-project ${_package} ${PROJECT_NAME}"
     info "(First run pulls the PHP + Composer Docker image — this may take a minute)\n"
+    # Subsequent runs on the same machine are faster because Docker caches
+    # the composer:2 image layer. Cold installs on slow connections: 3-5 min.
+    # Do not interrupt — the cleanup trap handles partial directories on abort.
 
+    # --user maps host UID/GID so created files are owned by you, not root.
+    # This prevents permission issues when editing files or running git later.
+    # On macOS with Docker Desktop your UID (e.g. 501) maps correctly to host.
+    # --prefer-dist: downloads zip archives, faster than git clone.
+    # --no-progress: cleaner output in CI logs.
     docker run --rm \
         --user "$(id -u):$(id -g)" \
         -v "$(pwd):/app" \
@@ -168,8 +266,15 @@ setup_env() {
         cp "$_example" "$_env_file"
         success ".env created from .env.example"
         info "Edit $PROJECT_NAME/.env before starting if you need custom ports or DB settings."
+        # KEY VARIABLES TO REVIEW BEFORE FIRST START:
+        #   SWOOLE_PORT — HTTP port (default 9502). Change if already in use.
+        #   APP_ENV     — Set to "production" before exposing publicly.
+        #   DB_*        — Wrong values cause a silent boot failure.
+        #   APP_KEY     — Required for encryption. Generate: bin/semitexa key:generate
+        # The server reads .env at boot. Changes after start need a restart.
     elif [ -f "$_env_file" ]; then
         info ".env already exists — not overwritten."
+        # Existing .env is preserved to protect custom config on reinstall.
     fi
 }
 
@@ -178,10 +283,73 @@ make_bin_executable() {
     if [ -f "$_bin" ]; then
         chmod +x "$_bin"
     fi
+    # PITFALL: rsync without -p drops permissions. Fix: chmod +x bin/semitexa
+    # PITFALL: On Windows NTFS volumes mounted in WSL, chmod has no effect.
+    # Workaround: sh bin/semitexa <command> (call sh explicitly).
+}
+
+# ── Shared port helper ───────────────────────────────────────────────────────
+# Reads SWOOLE_PORT from .env with full sanitisation:
+#   - strips inline comments  (SWOOLE_PORT=9502 # default → 9502)
+#   - strips double and single quotes
+#   - strips whitespace
+#   - validates it is a pure integer; falls back to 9502 if not
+# Used by both print_next_steps and check_port_conflicts to guarantee
+# they operate on the same value.
+get_swoole_port() {
+    _p="9502"
+    if [ -f "$PROJECT_NAME/.env" ]; then
+        _p="$(grep -E '^SWOOLE_PORT=' "$PROJECT_NAME/.env" 2>/dev/null \
+            | head -1 \
+            | cut -d= -f2 \
+            | cut -d'#' -f1 \
+            | tr -d "\"'" \
+            | tr -d ' \t' \
+            || true)"
+        # Reject anything that is not a plain integer to avoid passing garbage
+        # to lsof / ss / netstat or printing a misleading URL.
+        case "$_p" in
+            ''|*[!0-9]*) _p="9502" ;;
+        esac
+    fi
+    printf "%s" "$_p"
+}
+
+# ── Port conflict check ──────────────────────────────────────────────────────
+# Detects whether SWOOLE_PORT is already bound before attempting server:start.
+# Tries lsof, then ss, then netstat — whichever is available on the host.
+# If none are available, skips the check and lets the server attempt to bind
+# (it will fail with a clear error from Docker Compose in that case).
+#
+# MUST be called directly (not inside $(...)) so that setting SKIP_START=1
+# propagates to main()'s scope. A subshell would discard the mutation.
+check_port_conflicts() {
+    SKIP_START=0
+    _port="$(get_swoole_port)"
+    _in_use=0
+
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -i :"$_port" -sTCP:LISTEN >/dev/null 2>&1 && _in_use=1 || true
+    elif command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 || true
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 || true
+    fi
+
+    if [ "$_in_use" -eq 1 ]; then
+        warn "Port ${_port} is already bound by another process."
+        warn "Options:"
+        warn "  1. Stop the conflicting process:  lsof -i :${_port}  (macOS/Linux)"
+        warn "                                    netstat -ano | findstr :${_port}  (Windows)"
+        warn "  2. Change SWOOLE_PORT in ${PROJECT_NAME}/.env, then start manually."
+        SKIP_START=1
+    fi
 }
 
 # ── Optional: start server ───────────────────────────────────────────────────
 ask_start_server() {
+    # In automated pipelines (CI, Dockerfile RUN, provisioning scripts),
+    # always pass --start. Without it the script blocks waiting for TTY input.
     if [ "$AUTO_START" -eq 1 ]; then
         return 0
     fi
@@ -191,6 +359,9 @@ ask_start_server() {
     if [ -t 0 ] || [ -e /dev/tty ]; then
         read -r _ans </dev/tty
     fi
+    # Empty input (Enter) defaults to YES.
+    # In non-interactive mode where /dev/tty is absent, _ans stays "Y".
+    # Use --start explicitly in automation to make the intent unambiguous.
 
     case "$_ans" in
         n|N|no|No|NO) return 1 ;;
@@ -199,18 +370,187 @@ ask_start_server() {
 }
 
 start_server() {
-    cd "$PROJECT_NAME"
-    sh bin/semitexa server:start
-    cd ..
+    # Run in a subshell so that 'cd' is isolated. If server:start fails,
+    # the parent shell's working directory stays at the install root —
+    # no stale directory state leaks into subsequent steps or error handlers.
+    ( cd "$PROJECT_NAME" && sh bin/semitexa server:start )
+    # To verify containers came up:   docker compose ps
+    # To watch live logs:             docker compose logs -f
+    # To stop cleanly:                bin/semitexa server:stop
+}
+
+# ── Local domain setup ───────────────────────────────────────────────────────
+
+# Converts any string into a valid RFC 1123 DNS label:
+#   1. Lowercase
+#   2. Replace anything not [a-z0-9-] with a hyphen
+#   3. Collapse consecutive hyphens into one  (--* = one or more hyphens → one)
+#   4. Strip leading and trailing hyphens
+#   5. Truncate to 63 chars (RFC 1035 label limit); re-strip trailing hyphen
+#      that truncation may expose
+sanitize_for_domain() {
+    _s="$(printf "%s" "$1" \
+        | tr 'A-Z' 'a-z' \
+        | sed 's/[^a-z0-9-]/-/g' \
+        | sed 's/--*/-/g' \
+        | sed 's/^-*//' \
+        | sed 's/-*$//')"
+    # cut -c1-63 is POSIX and safe on empty strings
+    _s="$(printf "%s" "$_s" | cut -c1-63 | sed 's/-*$//')"
+    printf "%s" "$_s"
+}
+
+# Returns 0 (valid) or 1 (invalid) for a fully-formed domain.
+# Rules enforced:
+#   - Must end with exactly ".test" (the only TLD allowed for local dev)
+#   - Label (part before .test) must be non-empty
+#   - Label must contain only [a-z0-9-]  (already lowercased at this point)
+#   - Label must not start or end with a hyphen (RFC 1035 §2.3.4)
+#   - Label must be ≤ 63 characters (RFC 1035 §2.3.4)
+validate_local_domain() {
+    _d="$1"
+    # Enforce .test suffix
+    case "$_d" in *.test) ;; *) return 1 ;; esac
+    _label="${_d%.test}"
+    # Non-empty
+    [ -z "$_label" ] && return 1
+    # Only [a-z0-9-]
+    case "$_label" in *[!a-z0-9-]*) return 1 ;; esac
+    # No leading or trailing hyphen
+    case "$_label" in -*|*-) return 1 ;; esac
+    # Max 63 chars — POSIX ${#var} is safe here
+    [ "${#_label}" -gt 63 ] && return 1
+    return 0
+}
+
+# Calls the internal DNS registration module via `bin/semitexa dns:add`.
+# Non-fatal: a failure here warns the user but does NOT abort the installer,
+# because the project itself is already fully installed at this point.
+#
+# Related commands the user can run manually inside the project directory:
+#   bin/semitexa dns:add <domain>     — register a .test domain
+#   bin/semitexa dns:list             — list all registered local domains
+#   bin/semitexa dns:remove <domain>  — remove a registered local domain
+register_local_domain() {
+    _domain="$1"
+    info "Registering ${_domain} with local DNS..."
+    _dns_bin="${PROJECT_NAME}/bin/semitexa"
+    if [ -x "$_dns_bin" ]; then
+        if ( cd "$PROJECT_NAME" && ./bin/semitexa dns:add "$_domain" ); then
+            success "Local domain registered: http://${_domain}"
+            info "To list domains:   bin/semitexa dns:list"
+            info "To remove later:   bin/semitexa dns:remove ${_domain}"
+        else
+            warn "DNS registration failed — run manually once the server is up:"
+            warn "  cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
+        fi
+    else
+        warn "bin/semitexa not executable — skipping DNS registration."
+        warn "Register manually after start: cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
+    fi
+}
+
+# Orchestrates the full domain prompt flow.
+# Sets the global LOCAL_DOMAIN variable — called directly (not in a subshell)
+# so the assignment propagates to main() and print_next_steps().
+#
+# Behaviour by environment:
+#   TTY present      — full interactive prompt (confirm + optional custom name)
+#   AUTO_START=1     — non-interactive: use generated default and register
+#   No TTY, no auto  — skip with a tip for manual registration later
+ask_local_domain() {
+    LOCAL_DOMAIN=""
+    _suggested="$(sanitize_for_domain "$PROJECT_NAME").test"
+
+    # Guard: if PROJECT_NAME sanitizes to nothing (e.g. all special chars),
+    # we cannot generate a safe suggestion — skip gracefully.
+    if [ "$_suggested" = ".test" ]; then
+        warn "Could not derive a safe domain from project name '${PROJECT_NAME}'."
+        warn "Register manually later: bin/semitexa dns:add <name>.test"
+        return
+    fi
+
+    # ── Non-interactive path ──────────────────────────────────────────────────
+    if ! [ -t 0 ] && ! [ -e /dev/tty ]; then
+        if [ "$AUTO_START" -eq 1 ]; then
+            info "Non-interactive mode: registering default domain '${_suggested}'."
+            LOCAL_DOMAIN="$_suggested"
+            register_local_domain "$LOCAL_DOMAIN"
+        else
+            info "Local domain setup skipped (no TTY)."
+            info "Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add <name>.test"
+        fi
+        return
+    fi
+
+    # ── Interactive path ──────────────────────────────────────────────────────
+    printf "\n%s  Local domain setup%s\n" "$C_BOLD" "$C_RESET"
+    printf "  Would you like to register a local .test domain for this project?\n"
+    printf "  %sDefault: %s%s%s  [Y/n]: " "$C_CYAN" "$C_BOLD" "$_suggested" "$C_RESET"
+    read -r _confirm </dev/tty
+
+    case "$_confirm" in
+        n|N|no|No|NO)
+            info "Local domain registration skipped."
+            info "Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add <name>.test"
+            return ;;
+    esac
+
+    printf "  Enter domain name (or press Enter to use %s%s%s): " \
+        "$C_BOLD" "$_suggested" "$C_RESET"
+    read -r _input </dev/tty
+
+    if [ -z "$_input" ]; then
+        LOCAL_DOMAIN="$_suggested"
+    else
+        _input_lower="$(printf "%s" "$_input" | tr 'A-Z' 'a-z')"
+
+        # Determine the label to sanitize based on what the user provided:
+        #   *.test     → strip the suffix, sanitize the label, re-attach .test
+        #   *.anything → warn about wrong TLD, strip it, sanitize, attach .test
+        #   no dot     → treat whole input as the label, attach .test
+        case "$_input_lower" in
+            *.test)
+                _label="${_input_lower%.test}"
+                ;;
+            *.*)
+                _tld="${_input_lower##*.}"
+                warn "'.${_tld}' is not allowed — only .test is supported for local development safety."
+                warn "Automatically replacing with .test."
+                _label="${_input_lower%.*}"
+                ;;
+            *)
+                _label="$_input_lower"
+                ;;
+        esac
+
+        _label="$(sanitize_for_domain "$_label")"
+        LOCAL_DOMAIN="${_label}.test"
+
+        # Inform the user if their input was altered during sanitization
+        if [ "$LOCAL_DOMAIN" != "$_input_lower" ]; then
+            info "Sanitized to: ${LOCAL_DOMAIN}"
+        fi
+    fi
+
+    # Final validation — catches edge cases that sanitization alone cannot
+    # guarantee (e.g. input was entirely special characters, leaving empty label)
+    if ! validate_local_domain "$LOCAL_DOMAIN"; then
+        error "Could not produce a valid .test domain from your input."
+        error "Requirements: [a-z0-9-] only, no leading/trailing hyphens, 1–63 chars before .test"
+        LOCAL_DOMAIN=""
+        info "Skipping. Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add <name>.test"
+        return
+    fi
+
+    success "Domain confirmed: ${LOCAL_DOMAIN}"
+    register_local_domain "$LOCAL_DOMAIN"
 }
 
 # ── Print next steps ─────────────────────────────────────────────────────────
 print_next_steps() {
-    _port="9502"
-    if [ -f "$PROJECT_NAME/.env" ]; then
-        _port="$(grep -E '^SWOOLE_PORT=' "$PROJECT_NAME/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' || echo 9502)"
-        _port="${_port:-9502}"
-    fi
+    # Port is read from .env via get_swoole_port() — reflects any custom value.
+    _port="$(get_swoole_port)"
 
     printf "\n"
     printf "%s╔══════════════════════════════════════════════════════════════╗%s\n" "$C_GREEN$C_BOLD" "$C_RESET"
@@ -226,6 +566,9 @@ print_next_steps() {
     printf "\n"
     printf "  %sOnce running:%s\n"                        "$C_BOLD" "$C_RESET"
     printf "    http://localhost:%s             %s# app%s\n"   "$_port" "$C_YELLOW" "$C_RESET"
+    if [ -n "$LOCAL_DOMAIN" ]; then
+        printf "    http://%s          %s# local domain%s\n"  "$LOCAL_DOMAIN" "$C_YELLOW" "$C_RESET"
+    fi
     printf "    bin/semitexa list              %s# all CLI commands%s\n"           "$C_YELLOW" "$C_RESET"
     printf "    docker compose logs -f         %s# live logs%s\n"                 "$C_YELLOW" "$C_RESET"
     printf "\n"
@@ -234,30 +577,75 @@ print_next_steps() {
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+# STEP ORDER — do not skip steps when recovering from a partial failure:
+#   1. check_docker         — abort before any writes if environment is wrong
+#   2. ask/validate name    — resolve name before touching the filesystem
+#   3. run_create_project   — Composer scaffold (network + disk)
+#   4. setup_env            — .env must exist before server:start reads it
+#   5. make_bin_executable  — chmod must run before server:start calls the bin
+#   6. ask_local_domain     — optional; requires bin to be executable
+#   7. check_port_conflicts — guard before binding a network port
+#   8. start_server         — only when env + permissions + port are confirmed
+#
+# RECOVERING FROM A PARTIAL FAILURE:
+#   The cleanup trap removes the partial directory on abort. Just re-run the
+#   full installer. If you prefer to resume manually, execute the individual
+#   function bodies directly — do NOT re-run the full script while the
+#   directory exists, as validate_project_name will block you.
 main() {
     banner
 
-    step "[1/5] Checking prerequisites..."
+    step "[1/6] Checking prerequisites..."
     check_docker
 
-    step "[2/5] Project name..."
+    step "[2/6] Project name..."
     ask_project_name
     validate_project_name
     info "Creating project: ${C_BOLD}${PROJECT_NAME}${C_RESET}"
 
-    step "[3/5] Installing Semitexa Ultimate..."
+    step "[3/6] Installing Semitexa Ultimate..."
+    # Arm the cleanup trap. From this point onward, any unexpected exit will
+    # remove the partial project directory so the user can re-run cleanly.
+    _CLEANUP_PROJECT="$PROJECT_NAME"
     run_create_project
 
-    step "[4/5] Environment setup..."
+    # Explicit post-install guard: Composer can exit 0 while still failing to
+    # create the directory (e.g., disk full mid-extract, permission error on
+    # the volume mount). Catching this here prevents cryptic downstream errors.
+    if [ ! -d "$PROJECT_NAME" ]; then
+        error "Project directory '${PROJECT_NAME}' was not created."
+        error "Possible causes: disk full, Docker volume permission error, Composer package not found."
+        exit 1
+    fi
+
+    step "[4/6] Environment setup..."
     setup_env
     make_bin_executable
 
-    step "[5/5] Done!"
+    step "[5/6] Local domain (optional)..."
+    # ask_local_domain must run AFTER make_bin_executable so that
+    # register_local_domain can call bin/semitexa dns:add.
+    # It must also run BEFORE print_next_steps so LOCAL_DOMAIN is available
+    # for display. Called directly (not in a subshell) — see LOCAL_DOMAIN note.
+    ask_local_domain
+
+    step "[6/6] Done!"
+    # Disarm the cleanup trap — the install is complete and the directory is
+    # intentional. From here, no automatic removal should happen on exit.
+    _CLEANUP_PROJECT=""
     print_next_steps
 
     if ask_start_server; then
         step "Starting server..."
-        start_server
+        # check_port_conflicts MUST be called directly (not via $()) so that
+        # its mutation of SKIP_START propagates to this scope.
+        check_port_conflicts
+        if [ "$SKIP_START" -eq 1 ]; then
+            warn "Server start skipped due to port conflict."
+            warn "Resolve the conflict, then: cd ${PROJECT_NAME} && bin/semitexa server:start"
+        else
+            start_server
+        fi
     else
         info "Run 'bin/semitexa server:start' when you're ready."
     fi
