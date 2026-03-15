@@ -67,6 +67,14 @@ else
     C_RESET="" C_GREEN="" C_YELLOW="" C_RED="" C_CYAN="" C_BOLD=""
 fi
 
+# tty_available: returns true if /dev/tty can actually be opened for reading.
+# [ -e /dev/tty ] is NOT sufficient — the file exists even when no controlling
+# terminal is attached (e.g. CI containers, tool-spawned shells), but any
+# attempt to read from it then fails with "No such device or address".
+# We test by actually opening the fd in a subshell; the || true keeps set -e
+# from aborting the caller.
+tty_available() { [ -t 0 ] || ( exec 0</dev/tty ) 2>/dev/null; }
+
 info()    { printf "%s  →%s  %s\n"      "$C_CYAN"   "$C_RESET" "$*"; }
 success() { printf "%s  ✓%s  %s\n"      "$C_GREEN"  "$C_RESET" "$*"; }
 warn()    { printf "%s  ⚠%s  %s\n"      "$C_YELLOW" "$C_RESET" "$*" >&2; }
@@ -171,7 +179,7 @@ ask_project_name() {
     fi
 
     # stdin may be the pipe (curl | bash) — use /dev/tty for interactive input
-    if [ -t 0 ] || [ -e /dev/tty ]; then
+    if tty_available; then
         printf "%s  Project name%s [my-semitexa]: " "$C_BOLD" "$C_RESET"
         read -r PROJECT_NAME </dev/tty
         PROJECT_NAME="${PROJECT_NAME:-my-semitexa}"
@@ -315,63 +323,158 @@ get_swoole_port() {
     printf "%s" "$_p"
 }
 
-# ── Port conflict check ──────────────────────────────────────────────────────
-# Detects whether SWOOLE_PORT is already bound before attempting server:start.
+# ── Port utilities ───────────────────────────────────────────────────────────
+
+# Scan upward from PORT+1 until a port is free on both host and Docker.
+# Prints the free port number, or nothing if none found within 100 tries.
+find_free_port() {
+    _base="$1"
+    _try="$(expr "$_base" + 1)"
+    _limit="$(expr "$_base" + 100)"
+    while [ "$_try" -le "$_limit" ]; do
+        _busy=0
+        if command -v lsof >/dev/null 2>&1; then
+            lsof -i :"$_try" >/dev/null 2>&1 && _busy=1 || true
+        elif command -v ss >/dev/null 2>&1; then
+            ss -ltn 2>/dev/null | grep -qE "[: ]${_try}( |$)" && _busy=1 || true
+        elif command -v netstat >/dev/null 2>&1; then
+            netstat -ltn 2>/dev/null | grep -qE "[: ]${_try}( |$)" && _busy=1 || true
+        fi
+        if [ "$_busy" -eq 0 ] && command -v docker >/dev/null 2>&1; then
+            docker ps --format '{{.Ports}}' 2>/dev/null \
+                | grep -q ":${_try}->" && _busy=1 || true
+        fi
+        if [ "$_busy" -eq 0 ]; then
+            printf "%s" "$_try"
+            return
+        fi
+        _try="$(expr "$_try" + 1)"
+    done
+}
+
+# Rewrite SWOOLE_PORT in .env in-place (POSIX-safe: tmp file + mv).
+update_swoole_port() {
+    _new="$1"
+    _env="${PROJECT_NAME}/.env"
+    _tmp="${_env}.tmp"
+    sed "s/^SWOOLE_PORT=.*/SWOOLE_PORT=${_new}/" "$_env" > "$_tmp" && mv "$_tmp" "$_env"
+    success "SWOOLE_PORT updated to ${_new} in .env"
+}
+
+# ── Port conflict resolution ──────────────────────────────────────────────────
+# Detects port conflicts from TWO independent sources, then actively resolves
+# them so the customer never has to fix anything manually:
 #
-# TWO independent checks are required because ports can be claimed in two
-# different ways that are invisible to each other:
+#   Source A — Docker-allocated ports  (`docker ps`)
+#     The most common case in dev environments. Docker's network driver
+#     reserves ports through its proxy/iptables layer — they are invisible
+#     to lsof/ss/netstat, which is why the naive check always missed these.
 #
-#   Check A — host-level sockets (lsof / ss / netstat)
-#     Catches: processes listening directly on the host (nginx, another app).
-#     Does NOT catch: ports allocated by Docker's network driver, because
-#     Docker registers them through its proxy/iptables layer, not as a
-#     conventional listening socket visible to these tools.
+#   Source B — host-level sockets  (lsof / ss / netstat)
+#     Processes listening directly on the host (nginx, other apps).
 #
-#   Check B — Docker-allocated ports (docker ps)
-#     Catches: any running container that already maps host:PORT -> container.
-#     Output format: "0.0.0.0:9502->9502/tcp" — grep for ":PORT->".
-#     This is exactly the class of conflict that causes Docker Compose to fail
-#     with "Bind for 0.0.0.0:PORT failed: port is already allocated".
+# Resolution options offered to the user:
+#   [1] Stop the conflicting Docker container → keep the original port
+#   [2] Auto-select the next free port       → update .env automatically
 #
-# MUST be called directly (not inside $(...)) so that setting SKIP_START=1
-# propagates to main()'s scope. A subshell would discard the mutation.
+# Non-interactive (no TTY): option 2 is applied silently.
+#
+# MUST be called directly (not in a subshell) so SKIP_START propagates.
 check_port_conflicts() {
     SKIP_START=0
     _port="$(get_swoole_port)"
     _in_use=0
-    _conflict_source=""
+    _docker_owner=""
 
-    # Check A: host-level socket listeners
-    # Note: -sTCP:LISTEN is omitted from lsof — it is non-POSIX and
-    # unreliable for Docker-proxied ports; plain -i :PORT is sufficient here.
-    if command -v lsof >/dev/null 2>&1; then
-        lsof -i :"$_port" >/dev/null 2>&1 && _in_use=1 && _conflict_source="host process" || true
-    elif command -v ss >/dev/null 2>&1; then
-        ss -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 && _conflict_source="host process" || true
-    elif command -v netstat >/dev/null 2>&1; then
-        netstat -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 && _conflict_source="host process" || true
+    # Source A: Docker-allocated ports
+    if command -v docker >/dev/null 2>&1; then
+        _docker_owner="$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
+            | grep ":${_port}->" | awk '{print $1}' | head -1)"
+        [ -n "$_docker_owner" ] && _in_use=1
     fi
 
-    # Check B: Docker-allocated ports (runs even if check A already fired,
-    # so the error message can be more specific when both are true)
-    if command -v docker >/dev/null 2>&1; then
-        if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":${_port}->"; then
-            _in_use=1
-            _conflict_source="Docker container"
+    # Source B: host-level sockets (fallback / belt-and-suspenders)
+    if [ "$_in_use" -eq 0 ]; then
+        if command -v lsof >/dev/null 2>&1; then
+            lsof -i :"$_port" >/dev/null 2>&1 && _in_use=1 || true
+        elif command -v ss >/dev/null 2>&1; then
+            ss -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 || true
+        elif command -v netstat >/dev/null 2>&1; then
+            netstat -ltn 2>/dev/null | grep -qE "[: ]${_port}( |$)" && _in_use=1 || true
         fi
     fi
 
-    if [ "$_in_use" -eq 1 ]; then
-        warn "Port ${_port} is already allocated (by a ${_conflict_source})."
-        warn "Options:"
-        warn "  1. Find and stop the owner:"
-        warn "       docker ps | grep :${_port}          (if it is a container)"
-        warn "       lsof -i :${_port}                   (if it is a host process)"
-        warn "       netstat -ano | findstr :${_port}    (Windows)"
-        warn "  2. Change SWOOLE_PORT in ${PROJECT_NAME}/.env, then:"
-        warn "       cd ${PROJECT_NAME} && bin/semitexa server:start"
-        SKIP_START=1
+    [ "$_in_use" -eq 0 ] && return   # no conflict — nothing to do
+
+    # ── Conflict detected: resolve it ────────────────────────────────────────
+    _free="$(find_free_port "$_port")"
+
+    if [ -n "$_docker_owner" ]; then
+        warn "Port ${_port} is held by Docker container: ${_docker_owner}"
+    else
+        warn "Port ${_port} is already in use by a host process."
     fi
+
+    # Non-interactive or --start: silently switch to the next free port
+    if ! tty_available || [ "$AUTO_START" -eq 1 ]; then
+        if [ -n "$_free" ]; then
+            info "Non-interactive: switching to port ${_free} automatically."
+            update_swoole_port "$_free"
+            # SKIP_START stays 0 — start will proceed on the new port
+        else
+            warn "Could not find a free port. Skipping server start."
+            SKIP_START=1
+        fi
+        return
+    fi
+
+    # Interactive: present options
+    printf "\n"
+    if [ -n "$_docker_owner" ]; then
+        printf "  %s[1]%s Stop container '%s' and start on port %s\n" \
+            "$C_BOLD" "$C_RESET" "$_docker_owner" "$_port"
+    fi
+    if [ -n "$_free" ]; then
+        printf "  %s[2]%s Switch to port %s — updates .env automatically\n" \
+            "$C_BOLD" "$C_RESET" "$_free"
+    fi
+    printf "  %s[s]%s Skip — I will start manually\n" "$C_BOLD" "$C_RESET"
+    printf "\n"
+    printf "  Choice: "
+    read -r _choice </dev/tty
+
+    case "$_choice" in
+        1)
+            if [ -n "$_docker_owner" ]; then
+                info "Stopping ${_docker_owner}..."
+                if docker stop "$_docker_owner" >/dev/null 2>&1; then
+                    success "Container stopped. Starting on port ${_port}."
+                    # SKIP_START stays 0
+                else
+                    warn "Could not stop '${_docker_owner}'."
+                    warn "Try manually: docker stop ${_docker_owner}"
+                    SKIP_START=1
+                fi
+            else
+                warn "Option 1 is only available for Docker containers."
+                SKIP_START=1
+            fi
+            ;;
+        2)
+            if [ -n "$_free" ]; then
+                update_swoole_port "$_free"
+                # SKIP_START stays 0 — start on the new port
+            else
+                warn "Could not find a free port automatically."
+                SKIP_START=1
+            fi
+            ;;
+        *)
+            info "Skipping server start."
+            info "Run manually: cd ${PROJECT_NAME} && bin/semitexa server:start"
+            SKIP_START=1
+            ;;
+    esac
 }
 
 # ── Optional: start server ───────────────────────────────────────────────────
@@ -384,7 +487,7 @@ ask_start_server() {
 
     printf "\n%s  Start the server now?%s [Y/n]: " "$C_BOLD" "$C_RESET"
     _ans="Y"
-    if [ -t 0 ] || [ -e /dev/tty ]; then
+    if tty_available; then
         read -r _ans </dev/tty
     fi
     # Empty input (Enter) defaults to YES.
@@ -498,10 +601,13 @@ ask_local_domain() {
         return
     fi
 
-    # ── Non-interactive path ──────────────────────────────────────────────────
-    if ! [ -t 0 ] && ! [ -e /dev/tty ]; then
+    # ── Non-interactive / automated path ────────────────────────────────────
+    # Two conditions skip the interactive prompts:
+    #   1. No usable TTY  — can't ask anything
+    #   2. --start passed — caller explicitly requested zero interaction
+    if ! tty_available || [ "$AUTO_START" -eq 1 ]; then
         if [ "$AUTO_START" -eq 1 ]; then
-            info "Non-interactive mode: registering default domain '${_suggested}'."
+            info "Auto mode (--start): registering default domain '${_suggested}'."
             LOCAL_DOMAIN="$_suggested"
             register_local_domain "$LOCAL_DOMAIN"
         else
