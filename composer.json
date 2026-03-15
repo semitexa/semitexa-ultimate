@@ -14,18 +14,5 @@
         "semitexa/ssr": "*",
         "semitexa/acl": "*",
         "semitexa/docs": "*"
-    },
-    "autoload": {
-        "psr-4": {
-            "App\\Modules\\": "src/modules/",
-            "App\\": "src/"
-        }
-    },
-    "config": {
-        "optimize-autoloader": true,
-        "sort-packages": true,
-        "allow-plugins": {
-            "semitexa/core": true
-        }
     }
 }
