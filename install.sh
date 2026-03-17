@@ -46,7 +46,7 @@ set -e
 # set -e aborts on any non-zero exit. A partial install is worse than a clean
 # failure. The last printed step number tells you exactly where it stopped.
 
-SEMITEXA_VERSION="semitexa/ultimate"
+SEMITEXA_VERSION="${SEMITEXA_VERSION:-semitexa/ultimate}"
 COMPOSER_IMAGE="composer:2"
 PACKAGIST_URL="https://packagist.org/packages/semitexa/ultimate.json"
 # If Packagist is unreachable (air-gapped env, corporate proxy), the script
@@ -206,8 +206,8 @@ validate_project_name() {
     # REJECTED: spaces, slashes, @, #, etc. — these break Docker volume mounts
     # and Composer directory handling across all platforms.
     case "$PROJECT_NAME" in
-        ''|*[!a-zA-Z0-9._-]*)
-            error "Invalid project name: '$PROJECT_NAME'. Use only letters, digits, hyphens, underscores, dots."
+        ''|-*|*[!a-zA-Z0-9._-]*)
+            error "Invalid project name: '$PROJECT_NAME'. Use only letters, digits, hyphens, underscores, dots, and do not start with '-'."
             exit 1 ;;
     esac
 
@@ -247,8 +247,12 @@ fetch_latest_version() {
 run_create_project() {
     _package="$SEMITEXA_VERSION"
 
-    # Try to pin latest stable version for reproducibility
-    _latest="$(fetch_latest_version)"
+    # Only resolve latest when the caller did not pin a version explicitly.
+    if [ "$SEMITEXA_VERSION" = "semitexa/ultimate" ]; then
+        _latest="$(fetch_latest_version)"
+    else
+        _latest=""
+    fi
     if [ -n "$_latest" ]; then
         _package="semitexa/ultimate:${_latest}"
         info "Latest version: ${_latest}"
@@ -496,13 +500,15 @@ ask_start_server() {
         return 0
     fi
 
+    if ! tty_available; then
+        info "Non-interactive mode: skipping server start. Pass --start to auto-start."
+        return 1
+    fi
+
     printf "\n%s  Start the server now?%s [Y/n]: " "$C_BOLD" "$C_RESET"
     _ans="Y"
-    if tty_available; then
-        read -r _ans </dev/tty
-    fi
+    read -r _ans </dev/tty
     # Empty input (Enter) defaults to YES.
-    # In non-interactive mode where /dev/tty is absent, _ans stays "Y".
     # Use --start explicitly in automation to make the intent unambiguous.
 
     case "$_ans" in
@@ -593,10 +599,7 @@ _free_fixed_port() {
     warn "Port ${_ffp} is held by: ${_owner}"
 
     if ! tty_available || [ "$AUTO_START" -eq 1 ]; then
-        if [ "$_owner" != "[host process]" ]; then
-            info "Auto: stopping '${_owner}' to free port ${_ffp}..."
-            docker stop "$_owner" >/dev/null 2>&1 && return 0 || true
-        fi
+        warn "Port ${_ffp} is busy in auto mode — skipping local domain registration."
         return 1
     fi
 
@@ -650,19 +653,19 @@ register_local_domain() {
     # ── Register ──────────────────────────────────────────────────────────────
     info "Registering ${_domain} with local DNS..."
     _dns_bin="${PROJECT_NAME}/bin/semitexa"
-    if [ -x "$_dns_bin" ]; then
-        if ( cd "$PROJECT_NAME" && ./bin/semitexa dns:add "$_domain" ); then
+    if [ -f "$_dns_bin" ]; then
+        if ( cd "$PROJECT_NAME" && sh ./bin/semitexa dns:add "$_domain" ); then
             success "Local domain registered: http://${_domain}"
-            info "To list domains:   bin/semitexa dns:list"
-            info "To remove later:   bin/semitexa dns:remove ${_domain}"
+            info "To list domains:   sh bin/semitexa dns:list"
+            info "To remove later:   sh bin/semitexa dns:remove ${_domain}"
         else
             warn "DNS registration failed — run manually once the server is up:"
-            warn "  cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
+            warn "  cd ${PROJECT_NAME} && sh bin/semitexa dns:add ${_domain}"
             LOCAL_DOMAIN=""
         fi
     else
-        warn "bin/semitexa not executable — skipping DNS registration."
-        warn "Register manually after start: cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
+        warn "bin/semitexa not found — skipping DNS registration."
+        warn "Register manually after start: cd ${PROJECT_NAME} && sh bin/semitexa dns:add ${_domain}"
         LOCAL_DOMAIN=""
     fi
 }
