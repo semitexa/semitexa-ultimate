@@ -1,18 +1,18 @@
 {
     "name": "semitexa/ultimate",
     "description": "Project skeleton: full Semitexa stack for a working SSR site (core + frontend + docs)",
-    "version": "2.0.4",
+    "version": "2.0.6",
     "type": "project",
     "license": "MIT",
     "require": {
         "php": "^8.4",
-        "semitexa/core": "*",
-        "semitexa/auth": "*",
-        "semitexa/authorization": "*",
-        "semitexa/tenancy": "*",
-        "semitexa/locale": "*",
-        "semitexa/orm": "*",
-        "semitexa/ssr": "*",
-        "semitexa/docs": "*"
+        "semitexa/core": "1.1.58",
+        "semitexa/auth": "1.0.12",
+        "semitexa/authorization": "1.0.2",
+        "semitexa/tenancy": "1.0.6",
+        "semitexa/locale": "1.0.9",
+        "semitexa/orm": "1.0.20",
+        "semitexa/ssr": "1.0.30",
+        "semitexa/docs": "1.0.19"
     }
 }
