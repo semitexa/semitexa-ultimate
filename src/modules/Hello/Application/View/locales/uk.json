@@ -1,0 +1,12 @@
+{
+    "hello.title": "Привіт,",
+    "hello.greeting": "Світе!",
+    "hello.subtitle": "Ваш проєкт Semitexa запущено та працює.",
+    "hello.subtitle2": "Ця сторінка згенерована конвеєром <strong>Payload → Handler → Resource → Twig</strong>.",
+    "hello.badge.twig_ready": "Twig готовий",
+    "hello.step1": "Запустіть міграції: <code>./bin/semitexa db:migrate</code>",
+    "hello.step2": "Додайте локальний домен: <code>./bin/semitexa dns:add myapp.test</code>",
+    "hello.step3": "Створіть свій перший модуль у <code>src/modules/</code>",
+    "hello.docs": "Документація",
+    "hello.footer": "Semitexa Ultimate"
+}

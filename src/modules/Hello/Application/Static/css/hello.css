@@ -207,3 +207,38 @@ h1 em {
 .color-swatch--rose    { background: #f43f5e; }
 .color-swatch--amber   { background: #f59e0b; }
 .color-swatch--cyan    { background: #06b6d4; }
+
+/* ── Language switcher ── */
+.lang-switcher {
+    display: flex;
+    justify-content: center;
+    gap: .4rem;
+    margin-bottom: 1.5rem;
+}
+
+.lang-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: .3rem .75rem;
+    font-size: .75rem;
+    font-weight: 600;
+    letter-spacing: .5px;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    text-decoration: none;
+    transition: background .2s, color .2s, border-color .2s;
+}
+
+.lang-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+.lang-btn.active {
+    color: var(--bg);
+    background: var(--accent-hi);
+    border-color: var(--accent-hi);
+}

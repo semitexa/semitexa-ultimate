@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Semitexa — Hello</title>
+    <title>Semitexa — {{ trans('hello.title') }} {{ trans('hello.greeting') }}</title>
     {{ asset_head() }}
 </head>
 <body class="theme-{{ accentColor }}">
@@ -14,25 +14,30 @@
             <div class="logo-text">Semi<span>texa</span></div>
         </div>
 
-        <h1>Hello,<br><em>World!</em></h1>
+        <h1>{{ trans('hello.title') }}<br><em>{{ trans('hello.greeting') }}</em></h1>
 
         <p class="subtitle">
-            Your Semitexa project is up and running.<br>
-            This page is rendered by a <strong>Payload → Handler → Resource → Twig</strong> pipeline.
+            {{ trans('hello.subtitle') }}<br>
+            {{ trans('hello.subtitle2')|raw }}
         </p>
 
         <div class="badges">
             <span class="badge"><span class="dot"></span>PHP {{ phpVersion }}</span>
             <span class="badge"><span class="dot"></span>Swoole {{ swooleVersion }}</span>
-            <span class="badge"><span class="dot"></span>Twig ready</span>
+            <span class="badge"><span class="dot"></span>{{ trans('hello.badge.twig_ready') }}</span>
+        </div>
+
+        <div class="lang-switcher">
+            <a class="lang-btn{{ lang == 'en' ? ' active' : '' }}" href="/?color={{ accentColor }}&lang=en">EN</a>
+            <a class="lang-btn{{ lang == 'uk' ? ' active' : '' }}" href="/?color={{ accentColor }}&lang=uk">UK</a>
         </div>
 
         <div class="color-picker">
-            <a class="color-swatch color-swatch--indigo{{ accentColor == 'indigo' ? ' active' : '' }}" data-color="indigo" href="/?color=indigo"></a>
-            <a class="color-swatch color-swatch--emerald{{ accentColor == 'emerald' ? ' active' : '' }}" data-color="emerald" href="/?color=emerald"></a>
-            <a class="color-swatch color-swatch--rose{{ accentColor == 'rose' ? ' active' : '' }}" data-color="rose" href="/?color=rose"></a>
-            <a class="color-swatch color-swatch--amber{{ accentColor == 'amber' ? ' active' : '' }}" data-color="amber" href="/?color=amber"></a>
-            <a class="color-swatch color-swatch--cyan{{ accentColor == 'cyan' ? ' active' : '' }}" data-color="cyan" href="/?color=cyan"></a>
+            <a class="color-swatch color-swatch--indigo{{ accentColor == 'indigo' ? ' active' : '' }}" data-color="indigo" href="/?color=indigo&lang={{ lang }}"></a>
+            <a class="color-swatch color-swatch--emerald{{ accentColor == 'emerald' ? ' active' : '' }}" data-color="emerald" href="/?color=emerald&lang={{ lang }}"></a>
+            <a class="color-swatch color-swatch--rose{{ accentColor == 'rose' ? ' active' : '' }}" data-color="rose" href="/?color=rose&lang={{ lang }}"></a>
+            <a class="color-swatch color-swatch--amber{{ accentColor == 'amber' ? ' active' : '' }}" data-color="amber" href="/?color=amber&lang={{ lang }}"></a>
+            <a class="color-swatch color-swatch--cyan{{ accentColor == 'cyan' ? ' active' : '' }}" data-color="cyan" href="/?color=cyan&lang={{ lang }}"></a>
         </div>
 
         <hr class="divider">
@@ -40,21 +45,21 @@
         <ul class="steps">
             <li>
                 <span class="num">1</span>
-                <span>Run migrations: <code>./bin/semitexa db:migrate</code></span>
+                <span>{{ trans('hello.step1')|raw }}</span>
             </li>
             <li>
                 <span class="num">2</span>
-                <span>Add a local domain: <code>./bin/semitexa dns:add myapp.test</code></span>
+                <span>{{ trans('hello.step2')|raw }}</span>
             </li>
             <li>
                 <span class="num">3</span>
-                <span>Create your first module inside <code>src/modules/</code></span>
+                <span>{{ trans('hello.step3')|raw }}</span>
             </li>
         </ul>
 
         <p class="footer">
-            <a href="https://semitexa.com/docs" target="_blank">Documentation</a> ·
-            Semitexa Ultimate
+            <a href="https://semitexa.com/docs" target="_blank">{{ trans('hello.docs') }}</a> ·
+            {{ trans('hello.footer') }}
         </p>
 
     </div>

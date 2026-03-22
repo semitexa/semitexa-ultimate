@@ -19,17 +19,23 @@ use Semitexa\Core\Http\PayloadValidationResult;
 class HelloPayload implements ValidatablePayload
 {
     private const array ALLOWED_COLORS = ['indigo', 'emerald', 'rose', 'amber', 'cyan'];
+    private const array ALLOWED_LANGS = ['en', 'uk'];
 
     public string $color = 'indigo';
+    public string $lang = 'en';
 
     public function validate(): PayloadValidationResult
     {
+        $errors = [];
+
         if (!in_array($this->color, self::ALLOWED_COLORS, true)) {
-            return new PayloadValidationResult(false, [
-                'color' => ['Color must be one of: ' . implode(', ', self::ALLOWED_COLORS)],
-            ]);
+            $errors['color'] = ['Color must be one of: ' . implode(', ', self::ALLOWED_COLORS)];
         }
 
-        return new PayloadValidationResult(true);
+        if (!in_array($this->lang, self::ALLOWED_LANGS, true)) {
+            $errors['lang'] = ['Language must be one of: ' . implode(', ', self::ALLOWED_LANGS)];
+        }
+
+        return new PayloadValidationResult($errors === [], $errors);
     }
 }
