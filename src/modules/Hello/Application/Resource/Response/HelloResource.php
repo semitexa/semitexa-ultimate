@@ -25,4 +25,9 @@ class HelloResource extends HtmlResponse implements ResourceInterface
     {
         return $this->with('accentColor', $color);
     }
+
+    public function withLang(string $lang): self
+    {
+        return $this->with('lang', $lang);
+    }
 }
