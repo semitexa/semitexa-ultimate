@@ -1,6 +1,6 @@
 {
     "name": "semitexa/ultimate",
-    "description": "Project skeleton: full Semitexa stack for a working SSR site (core + frontend + docs)",
+    "description": "Semitexa Ultimate - full-stack project skeleton for SSR applications with docs and core modules",
     "version": "2.0.6",
     "type": "project",
     "license": "MIT",
@@ -14,5 +14,14 @@
         "semitexa/orm": "1.0.20",
         "semitexa/ssr": "1.0.30",
         "semitexa/docs": "1.0.19"
-    }
+    },
+    "keywords": [
+        "semitexa",
+        "ultimate",
+        "project-skeleton",
+        "ssr",
+        "twig",
+        "frontend",
+        "starter-kit"
+    ]
 }
