@@ -14,5 +14,15 @@
         "semitexa/orm": "1.0.20",
         "semitexa/ssr": "1.0.30",
         "semitexa/docs": "1.0.19"
-    }
+    },
+    "keywords": [
+        "semitexa",
+        "ultimate",
+        "twig",
+        "rendering",
+        "frontend",
+        "documentation",
+        "guides",
+        "architecture"
+    ]
 }
