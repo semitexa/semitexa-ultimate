@@ -1,0 +1,7 @@
+/vendor/
+.env
+var/cache/*
+var/log/*
+var/docs/*
+var/dns/*
+!.gitkeep

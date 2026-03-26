@@ -4,6 +4,11 @@
     "version": "2.0.6",
     "type": "project",
     "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Semitexa\\Ultimate\\": "src/"
+        }
+    },
     "require": {
         "php": "^8.4",
         "semitexa/core": "*",
