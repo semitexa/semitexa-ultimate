@@ -1,0 +1,29 @@
+# Optional: MySQL for ORM. Used automatically when DB_DRIVER is set in .env.
+# Start: docker compose -f docker-compose.yml -f docker-compose.mysql.yml up -d
+# Or: bin/semitexa server:start (uses this file automatically when DB_DRIVER is set).
+services:
+  app:
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_DATABASE: ${DB_DATABASE:-semitexa}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mysql_data:

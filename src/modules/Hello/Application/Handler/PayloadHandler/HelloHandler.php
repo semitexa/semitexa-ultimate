@@ -15,12 +15,9 @@ final class HelloHandler implements TypedHandlerInterface
 {
     public function handle(HelloPayload $payload, HelloResource $resource): HelloResource
     {
-        LocaleContextStore::setLocale($payload->lang);
-
         return $resource
             ->withPhpVersion(PHP_VERSION)
             ->withSwooleVersion(defined('SWOOLE_VERSION') ? SWOOLE_VERSION : 'n/a')
-            ->withAccentColor($payload->color)
-            ->withLang($payload->lang);
+            ->withLang(LocaleContextStore::getLocale());
     }
 }

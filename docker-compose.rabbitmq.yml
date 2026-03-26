@@ -1,0 +1,21 @@
+# Optional: use with docker-compose.yml when EVENTS_ASYNC=1 in .env.
+# Start: docker compose -f docker-compose.yml -f docker-compose.rabbitmq.yml up -d
+# Or: bin/semitexa server:start (it uses this file automatically when EVENTS_ASYNC=1).
+# Healthcheck interval is 30s to avoid high CPU from frequent rabbitmq-diagnostics.
+services:
+  app:
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s

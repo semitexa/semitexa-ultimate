@@ -3,66 +3,74 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Semitexa — {{ trans('hello.title') }} {{ trans('hello.greeting') }}</title>
+    <title>Semitexa — {{ trans('hello.headline') }}</title>
+    {{ __ssr_preload_hints|default('')|raw }}
     {{ asset_head() }}
 </head>
-<body class="theme-{{ accentColor }}">
-    <div class="card">
+<body{{ __ssr_handle_attr|default('')|raw }}>
+    <div class="hello-page">
+        <div class="hello-page__orb hello-page__orb--left"></div>
+        <div class="hello-page__orb hello-page__orb--right"></div>
 
-        <div class="logo">
-            <div class="logo-icon">⬡</div>
-            <div class="logo-text">Semi<span>texa</span></div>
-        </div>
+        <main class="hero-card">
+            <div class="hero-card__meta">
+                <div class="logo-lockup logo-lockup--meta" data-logo-lockup>
+                    <div class="logo-mark" aria-hidden="true">
+                        <span class="logo-mark__beam logo-mark__beam--north"></span>
+                        <span class="logo-mark__beam logo-mark__beam--east"></span>
+                        <span class="logo-mark__beam logo-mark__beam--south"></span>
+                        <span class="logo-mark__beam logo-mark__beam--west"></span>
+                        <span class="logo-mark__core"></span>
+                    </div>
 
-        <h1>{{ trans('hello.title') }}<br><em>{{ trans('hello.greeting') }}</em></h1>
+                    <div class="logo-wordmark" aria-label="Semitexa">
+                        <span class="logo-wordmark__full">{{ trans('hello.brand_full') }}<span>{{ trans('hello.brand_accent') }}</span></span>
+                    </div>
+                </div>
 
-        <p class="subtitle">
-            {{ trans('hello.subtitle') }}<br>
-            {{ trans('hello.subtitle2')|raw }}
-        </p>
+                <div class="lang-switcher">
+                    <a class="lang-btn{{ lang == 'en' ? ' active' : '' }}" href="{{ locale_switch_url('en') }}">EN</a>
+                    <a class="lang-btn{{ lang == 'uk' ? ' active' : '' }}" href="{{ locale_switch_url('uk') }}">UK</a>
+                </div>
+            </div>
 
-        <div class="badges">
-            <span class="badge"><span class="dot"></span>PHP {{ phpVersion }}</span>
-            <span class="badge"><span class="dot"></span>Swoole {{ swooleVersion }}</span>
-            <span class="badge"><span class="dot"></span>{{ trans('hello.badge.twig_ready') }}</span>
-        </div>
+            <p class="hero-card__eyebrow">{{ trans('hello.eyebrow') }}</p>
+            <h1>{{ trans('hello.headline') }}</h1>
 
-        <div class="lang-switcher">
-            <a class="lang-btn{{ lang == 'en' ? ' active' : '' }}" href="/?color={{ accentColor }}&lang=en">EN</a>
-            <a class="lang-btn{{ lang == 'uk' ? ' active' : '' }}" href="/?color={{ accentColor }}&lang=uk">UK</a>
-        </div>
+            <p class="hero-card__lede">
+                {{ trans('hello.lede') }}
+            </p>
 
-        <div class="color-picker">
-            <a class="color-swatch color-swatch--indigo{{ accentColor == 'indigo' ? ' active' : '' }}" data-color="indigo" href="/?color=indigo&lang={{ lang }}"></a>
-            <a class="color-swatch color-swatch--emerald{{ accentColor == 'emerald' ? ' active' : '' }}" data-color="emerald" href="/?color=emerald&lang={{ lang }}"></a>
-            <a class="color-swatch color-swatch--rose{{ accentColor == 'rose' ? ' active' : '' }}" data-color="rose" href="/?color=rose&lang={{ lang }}"></a>
-            <a class="color-swatch color-swatch--amber{{ accentColor == 'amber' ? ' active' : '' }}" data-color="amber" href="/?color=amber&lang={{ lang }}"></a>
-            <a class="color-swatch color-swatch--cyan{{ accentColor == 'cyan' ? ' active' : '' }}" data-color="cyan" href="/?color=cyan&lang={{ lang }}"></a>
-        </div>
+            <div class="signal-strip">
+                <span class="signal-chip"><span class="signal-chip__dot"></span>PHP {{ phpVersion }}</span>
+                <span class="signal-chip"><span class="signal-chip__dot"></span>Swoole {{ swooleVersion }}</span>
+                <span class="signal-chip"><span class="signal-chip__dot"></span>{{ trans('hello.badge.architecture') }}</span>
+                <span class="signal-chip"><span class="signal-chip__dot"></span>{{ trans('hello.badge.ssr') }}</span>
+            </div>
 
-        <hr class="divider">
+            <div class="cta-row">
+                <a class="cta cta--primary" href="https://semitexa.com/" target="_blank" rel="noopener noreferrer">{{ trans('hello.visit_site') }}</a>
+                <a class="cta cta--ghost" href="https://semitexa.com/docs" target="_blank" rel="noopener noreferrer">{{ trans('hello.docs') }}</a>
+            </div>
 
-        <ul class="steps">
-            <li>
-                <span class="num">1</span>
-                <span>{{ trans('hello.step1')|raw }}</span>
-            </li>
-            <li>
-                <span class="num">2</span>
-                <span>{{ trans('hello.step2')|raw }}</span>
-            </li>
-            <li>
-                <span class="num">3</span>
-                <span>{{ trans('hello.step3')|raw }}</span>
-            </li>
-        </ul>
+            <div class="guides-intro">
+                <p class="guides-intro__eyebrow">{{ trans('hello.deferred_eyebrow') }}</p>
+                <p class="guides-intro__body">{{ trans('hello.deferred_body') }}</p>
+            </div>
 
-        <p class="footer">
-            <a href="https://semitexa.com/docs" target="_blank">{{ trans('hello.docs') }}</a> ·
-            {{ trans('hello.footer') }}
-        </p>
+            <div class="guides">
+                {{ layout_slot_deferred('guide_01') }}
+                {{ layout_slot_deferred('guide_02') }}
+                {{ layout_slot_deferred('guide_03') }}
+            </div>
 
+            <footer class="hero-card__footer">
+                <span>{{ trans('hello.footer') }}</span>
+            </footer>
+        </main>
     </div>
+    {{ __ssr_deferred_manifest|default('')|raw }}
+    {{ __ssr_runtime_script|default('')|raw }}
     {{ asset_body() }}
 </body>
 </html>

@@ -1,0 +1,26 @@
+# Optional: Redis for cache/sessions. Used when REDIS_HOST is set in .env.
+# Start: docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d
+# Or: bin/semitexa server:start (uses this file automatically when REDIS_HOST is set).
+services:
+  app:
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  redis_data:

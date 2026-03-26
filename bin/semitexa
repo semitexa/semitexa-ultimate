@@ -1,0 +1,612 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# Semitexa CLI — universal entry point (POSIX shell, no PHP required on host)
+#
+# Usage:  bin/semitexa <command> [arguments...]
+#
+# Server lifecycle commands (server:start, server:stop, server:restart) are
+# handled natively in this shell script via Docker Compose.
+#
+# DNS management commands (dns:add, dns:remove, dns:list, dns:start, dns:stop)
+# manage a lightweight dnsmasq container for local multi-tenancy testing.
+#
+# All other commands are proxied into the running "app" container so PHP
+# execution always uses the exact same runtime that powers the framework.
+#
+# Compatible with: macOS, Linux, Windows (Git Bash / WSL / MSYS2)
+# Architecture:    AMD64 and ARM64 (Apple Silicon, Raspberry Pi, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+set -e
+
+# ── Resolve project root (follow symlinks, works on macOS + Linux) ──────────
+resolve_script_dir() {
+    _source="$0"
+    while [ -L "$_source" ]; do
+        _dir="$(cd -P "$(dirname "$_source")" && pwd)"
+        _source="$(readlink "$_source")"
+        case "$_source" in
+            /*) ;;
+            *)  _source="$_dir/$_source" ;;
+        esac
+    done
+    cd -P "$(dirname "$_source")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_dir)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT" || {
+    printf '[ERROR] Failed to enter project root: %s\n' "$PROJECT_ROOT" >&2
+    exit 1
+}
+
+# ── Colour helpers (safe for non-tty / Windows) ────────────────────────────
+if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
+    C_RESET="$(tput sgr0 2>/dev/null || true)"
+    C_GREEN="$(tput setaf 2 2>/dev/null || true)"
+    C_YELLOW="$(tput setaf 3 2>/dev/null || true)"
+    C_RED="$(tput setaf 1 2>/dev/null || true)"
+    C_CYAN="$(tput setaf 6 2>/dev/null || true)"
+    C_BOLD="$(tput bold 2>/dev/null || true)"
+else
+    C_RESET="" C_GREEN="" C_YELLOW="" C_RED="" C_CYAN="" C_BOLD=""
+fi
+
+info()    { printf "%s[INFO]%s  %s\n"    "$C_CYAN"   "$C_RESET" "$*"; }
+success() { printf "%s[OK]%s    %s\n"    "$C_GREEN"  "$C_RESET" "$*"; }
+warn()    { printf "%s[WARN]%s  %s\n"    "$C_YELLOW" "$C_RESET" "$*" >&2; }
+error()   { printf "%s[ERROR]%s %s\n"    "$C_RED"    "$C_RESET" "$*" >&2; }
+
+# ── .env reader (POSIX-safe, no bashisms) ───────────────────────────────────
+env_val() {
+    _key="$1" _default="$2" _file="$PROJECT_ROOT/.env"
+    if [ -f "$_file" ]; then
+        _val="$(grep -E "^[[:space:]]*${_key}[[:space:]]*=" "$_file" 2>/dev/null | tail -1 | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+        if [ -n "$_val" ]; then printf '%s' "$_val"; return; fi
+    fi
+    printf '%s' "$_default"
+}
+
+# ── Docker Compose helpers ──────────────────────────────────────────────────
+has_compose() {
+    docker compose version >/dev/null 2>&1 && return 0
+    docker-compose version >/dev/null 2>&1 && return 0
+    return 1
+}
+
+compose_bin() {
+    if docker compose version >/dev/null 2>&1; then
+        echo "docker compose"
+    elif docker-compose version >/dev/null 2>&1; then
+        echo "docker-compose"
+    else
+        error "Docker Compose not found. Install Docker Desktop or docker-compose."
+        exit 1
+    fi
+}
+
+compose_args() {
+    _args="-f docker-compose.yml"
+    _has_overlay=0
+
+    if [ -f "$PROJECT_ROOT/docker-compose.rabbitmq.yml" ]; then
+        _async="$(env_val EVENTS_ASYNC 0)"
+        case "$_async" in 1|true|yes) _args="$_args -f docker-compose.rabbitmq.yml"; _has_overlay=1 ;; esac
+    fi
+    if [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
+        _db="$(env_val DB_DRIVER "")"
+        if [ -n "$_db" ]; then _args="$_args -f docker-compose.mysql.yml"; _has_overlay=1; fi
+    fi
+    if [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ]; then
+        _redis="$(env_val REDIS_HOST "")"
+        if [ -n "$_redis" ]; then _args="$_args -f docker-compose.redis.yml"; _has_overlay=1; fi
+    fi
+    if [ -f "$PROJECT_ROOT/docker-compose.ollama.yml" ]; then
+        _llm_provider="$(env_val LLM_PROVIDER "")"
+        if [ "$_llm_provider" = "ollama" ]; then _args="$_args -f docker-compose.ollama.yml"; _has_overlay=1; fi
+    fi
+    if [ -f "$PROJECT_ROOT/docker-compose.dns.yml" ]; then
+        _args="$_args -f docker-compose.dns.yml"
+        _has_overlay=1
+    fi
+
+    if [ "$_has_overlay" -eq 0 ]; then
+        echo ""
+    else
+        echo "$_args"
+    fi
+}
+
+run_compose() {
+    _compose="$(compose_bin)"
+    _overlays="$(compose_args)"
+    if [ -n "$_overlays" ]; then
+        # shellcheck disable=SC2086
+        $_compose $_overlays "$@"
+    else
+        $_compose "$@"
+    fi
+}
+
+is_app_running() {
+    _compose="$(compose_bin)"
+    _overlays="$(compose_args)"
+    if [ -n "$_overlays" ]; then
+        # shellcheck disable=SC2086
+        _status="$($_compose $_overlays ps --format '{{.State}}' app 2>/dev/null || true)"
+    else
+        _status="$($_compose ps --format '{{.State}}' app 2>/dev/null || true)"
+    fi
+    case "$_status" in
+        *running*) return 0 ;;
+        *)         return 1 ;;
+    esac
+}
+
+wait_for_service() {
+    _service_name="$1" _host="$2" _port="$3" _max_attempts="$4" _delay="$5" _initial_wait="${6:-0}"
+
+    if [ "$_initial_wait" -gt 0 ]; then
+        info "Waiting ${_initial_wait}s for $_service_name to initialise..."
+        sleep "$_initial_wait"
+    fi
+
+    _attempt=1
+    while [ "$_attempt" -le "$_max_attempts" ]; do
+        if run_compose exec -T app sh -c "
+            (echo > /dev/tcp/$_host/$_port) 2>/dev/null ||
+            nc -z $_host $_port 2>/dev/null ||
+            timeout 3 sh -c \"cat < /dev/null > /dev/tcp/$_host/$_port\" 2>/dev/null
+        " >/dev/null 2>&1; then
+            success "$_service_name: reachable"
+            return 0
+        fi
+        _attempt=$((_attempt + 1))
+        [ "$_attempt" -le "$_max_attempts" ] && sleep "$_delay"
+    done
+
+    warn "$_service_name: not reachable after $_max_attempts attempts (may still be starting)"
+    return 1
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+#  server:start
+# ═══════════════════════════════════════════════════════════════════════
+cmd_server_start() {
+    printf "\n%s%s Semitexa — Starting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+
+    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        error "docker-compose.yml not found."
+        info  "Run: bin/semitexa init"
+        exit 1
+    fi
+
+    _overlays="$(compose_args)"
+    [ -n "$_overlays" ] && info "Compose files: $_overlays"
+
+    # ── Pre-flight Checks (Proxy & DNS) ──────────────────────────────
+    if [ -f "$PROJECT_ROOT/docker-compose.dns.yml" ]; then
+        if command -v ss >/dev/null 2>&1; then
+            _port80_pid="$(ss -ltnp 2>/dev/null | awk '$4 ~ /:80$/ {print $6}' | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n 1)"
+            if [ -n "$_port80_pid" ]; then
+                _port80_proc="$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "unknown")"
+                if [ "$_port80_proc" != "docker-proxy" ] && [ "$_port80_proc" != "docker" ] && [ "$_port80_proc" != "dockerd" ]; then
+                    warn "Port 80 is occupied by '$_port80_proc' (PID: $_port80_pid)."
+                    warn "The Nginx Proxy container will fail to start."
+                    printf "%s? Do you want to stop it now? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
+                    read -r _ans </dev/tty
+                    if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
+                        sudo systemctl stop "$_port80_proc" 2>/dev/null || sudo kill -9 "$_port80_pid"
+                        success "Attempted to stop $_port80_proc."
+                    fi
+                    echo ""
+                fi
+            fi
+        fi
+
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet systemd-resolved; then
+            _needs_restart=0
+            if grep -qi "^DNSStubListener=no" /etc/systemd/resolved.conf 2>/dev/null; then
+                warn "systemd-resolved has DNSStubListener=no (breaks local .dev resolution)."
+                printf "%s? Do you want to fix this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
+                read -r _ans </dev/tty
+                if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
+                    sudo sed -i 's/^DNSStubListener=no/DNSStubListener=yes/i' /etc/systemd/resolved.conf
+                    success "Set DNSStubListener=yes"
+                    _needs_restart=1
+                fi
+            fi
+            if [ ! -f /etc/systemd/resolved.conf.d/semitexa.conf ]; then
+                info "Local .dev domains are not yet bound to the Semitexa DNS container."
+                printf "%s? Do you want to configure this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
+                read -r _ans </dev/tty
+                if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
+                    sudo mkdir -p /etc/systemd/resolved.conf.d/
+                    printf "[Resolve]\nDNS=127.0.0.1:5553\nDomains=~dev ~local ~test\n" | sudo tee /etc/systemd/resolved.conf.d/semitexa.conf >/dev/null
+                    success "Created /etc/systemd/resolved.conf.d/semitexa.conf"
+                    _needs_restart=1
+                fi
+            fi
+            if [ "$_needs_restart" -eq 1 ]; then
+                info "Restarting systemd-resolved to apply changes..."
+                sudo systemctl restart systemd-resolved
+                sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+                success "systemd-resolved restarted and configured!"
+                echo ""
+            fi
+        fi
+    fi
+
+    info "Starting containers..."
+    run_compose up -d --build
+
+    _port="$(env_val SWOOLE_PORT {{ default_swoole_port }})"
+    printf "\n"
+    success "Semitexa environment started!"
+    info "App:  ${C_GREEN}http://localhost:${_port}${C_RESET}"
+    info "Logs: docker compose logs -f"
+    info "Stop: bin/semitexa server:stop"
+
+    _async="$(env_val EVENTS_ASYNC 0)"
+    case "$_async" in
+        1|true|yes)
+            [ -f "$PROJECT_ROOT/docker-compose.rabbitmq.yml" ] && wait_for_service "RabbitMQ" "rabbitmq" "5672" 3 2 1 || true
+            ;;
+    esac
+
+    _db="$(env_val DB_DRIVER "")"
+    [ -n "$_db" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ] && wait_for_service "MySQL" "mysql" "3306" 5 4 20 || true
+
+    _redis="$(env_val REDIS_HOST "")"
+    [ -n "$_redis" ] && [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ] && wait_for_service "Redis" "redis" "6379" 3 2 1 || true
+
+    if [ -f "$PROJECT_ROOT/docker-compose.dns.yml" ] && [ -f "$PROJECT_ROOT/var/dns/domains.conf" ]; then
+        _count="$(grep -c '^address=' "$PROJECT_ROOT/var/dns/domains.conf" 2>/dev/null || echo 0)"
+        [ "$_count" -gt 0 ] && info "DNS: $_count local domain(s) configured (bin/semitexa dns:list)"
+    fi
+
+    printf "\n"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+#  server:stop
+# ═══════════════════════════════════════════════════════════════════════
+cmd_server_stop() {
+    printf "\n%s%s Semitexa — Stopping Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+
+    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        warn "docker-compose.yml not found. Nothing to stop."
+        exit 0
+    fi
+
+    info "Stopping containers..."
+    run_compose down
+    success "Semitexa environment stopped."
+
+    for _pidfile in "$PROJECT_ROOT/var/swoole.pid" "$PROJECT_ROOT/var/run/semitexa.pid"; do
+        if [ -f "$_pidfile" ]; then
+            _pid="$(cat "$_pidfile" 2>/dev/null || true)"
+            [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true
+            rm -f "$_pidfile"
+        fi
+    done
+
+    printf "\n"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+#  server:restart
+# ═══════════════════════════════════════════════════════════════════════
+cmd_server_restart() {
+    _service="${1:-}"
+    printf "\n%s%s Semitexa — Restarting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+
+    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        error "docker-compose.yml not found."
+        exit 1
+    fi
+
+    if [ -n "$_service" ]; then
+        info "Restarting service: $_service"
+        run_compose restart "$_service"
+    else
+        info "Restarting all containers..."
+        run_compose restart
+    fi
+
+    success "Semitexa environment restarted!"
+    printf "\n"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+#  DNS Management
+# ═══════════════════════════════════════════════════════════════════════
+DNS_DIR="$PROJECT_ROOT/var/dns"
+DNS_CONF="$DNS_DIR/dnsmasq.conf"
+DNS_DOMAINS="$DNS_DIR/domains.conf"
+DNS_COMPOSE="$PROJECT_ROOT/docker-compose.dns.yml"
+
+dns_ensure_dir() { mkdir -p "$DNS_DIR"; }
+
+dns_ensure_config() {
+    dns_ensure_dir
+    if [ ! -f "$DNS_CONF" ]; then
+        cat > "$DNS_CONF" << 'DNSMASQ_CONF'
+port=53
+no-resolv
+no-daemon
+log-queries
+conf-file=/etc/dnsmasq.d/domains.conf
+DNSMASQ_CONF
+    fi
+    [ ! -f "$DNS_DOMAINS" ] && printf "# Semitexa local domains\n" > "$DNS_DOMAINS"
+}
+
+dns_ensure_compose() {
+    if [ ! -f "$DNS_COMPOSE" ]; then
+        cat > "$DNS_COMPOSE" << 'DNS_YML'
+# Semitexa Local DNS & Nginx Proxy
+services:
+  dns:
+    image: alpine:3.21
+    restart: unless-stopped
+    command: ["sh", "-c", "apk add --no-cache dnsmasq && dnsmasq --keep-in-foreground --conf-file=/etc/dnsmasq.d/dnsmasq.conf"]
+    ports:
+      - "127.0.0.1:5553:53/udp"
+      - "127.0.0.1:5553:53/tcp"
+    volumes:
+      - ./var/dns/dnsmasq.conf:/etc/dnsmasq.d/dnsmasq.conf:ro
+      - ./var/dns/domains.conf:/etc/dnsmasq.d/domains.conf:ro
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "nslookup", "localhost", "127.0.0.1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    command: >
+      sh -c '
+      echo "server {
+        listen 80 default_server;
+        server_name _;
+        location / {
+          proxy_pass http://app:${SWOOLE_PORT:-9502};
+          proxy_set_header Host $$host;
+          proxy_set_header X-Real-IP $$remote_addr;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+      }" > /etc/nginx/conf.d/default.conf && nginx -g "daemon off;"'
+    depends_on:
+      - app
+DNS_YML
+        info "Created docker-compose.dns.yml"
+    fi
+}
+
+cmd_dns_add() {
+    _domain="${1:-}" _ip="${2:-127.0.0.1}"
+    if [ -z "$_domain" ]; then
+        error "Usage: bin/semitexa dns:add <domain> [ip]"
+        exit 1
+    fi
+    dns_ensure_config
+    dns_ensure_compose
+
+    if grep -q "^address=/${_domain}/" "$DNS_DOMAINS" 2>/dev/null; then
+        _escaped="$(echo "$_domain" | sed 's/[.]/\\./g')"
+        sed -i.bak "s|^address=/${_escaped}/.*|address=/${_domain}/${_ip}|" "$DNS_DOMAINS"
+        rm -f "${DNS_DOMAINS}.bak"
+        success "Updated: $_domain → $_ip"
+    else
+        echo "address=/${_domain}/${_ip}" >> "$DNS_DOMAINS"
+        success "Added: $_domain → $_ip"
+    fi
+
+    _compose="$(compose_bin)"
+    _st="$($_compose -f docker-compose.yml -f docker-compose.dns.yml ps --format '{{.State}}' dns 2>/dev/null || true)"
+    case "$_st" in *running*) $_compose -f docker-compose.yml -f docker-compose.dns.yml restart dns proxy; success "DNS restarted." ;; esac
+}
+
+cmd_dns_remove() {
+    _domain="${1:-}"
+    [ -z "$_domain" ] && { error "Usage: bin/semitexa dns:remove <domain>"; exit 1; }
+    dns_ensure_config
+    if ! grep -q "^address=/${_domain}/" "$DNS_DOMAINS" 2>/dev/null; then
+        warn "Domain '$_domain' not found."; exit 0
+    fi
+    _escaped="$(echo "$_domain" | sed 's/[.]/\\./g')"
+    sed -i.bak "/^address=\/${_escaped}\//d" "$DNS_DOMAINS"; rm -f "${DNS_DOMAINS}.bak"
+    success "Removed: $_domain"
+    _compose="$(compose_bin)"
+    _st="$($_compose -f docker-compose.yml -f docker-compose.dns.yml ps --format '{{.State}}' dns 2>/dev/null || true)"
+    case "$_st" in *running*) $_compose -f docker-compose.yml -f docker-compose.dns.yml restart dns proxy ;; esac
+}
+
+cmd_dns_list() {
+    printf "\n%s%s Semitexa — Local DNS Domains %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    dns_ensure_config
+    _count=0
+    if [ -f "$DNS_DOMAINS" ]; then
+        while IFS= read -r _line; do
+            case "$_line" in address=/*) _domain="$(echo "$_line" | sed 's|address=/\([^/]*\)/.*|\1|')"; _ip="$(echo "$_line" | sed 's|address=/[^/]*/||')"; printf "  %s%-30s%s → %s\n" "$C_GREEN" "$_domain" "$C_RESET" "$_ip"; _count=$((_count + 1)) ;; esac
+        done < "$DNS_DOMAINS"
+    fi
+    printf "\n"
+    [ "$_count" -eq 0 ] && info "No domains configured. Add one: bin/semitexa dns:add shop.local"
+    [ "$_count" -gt 0 ] && info "$_count domain(s) configured."
+    printf "\n"
+}
+
+cmd_dns_start() { dns_ensure_config; dns_ensure_compose; _compose="$(compose_bin)"; $_compose -f docker-compose.yml -f docker-compose.dns.yml up -d dns proxy; success "DNS (5553) and Proxy (80) started."; }
+cmd_dns_stop()  { [ ! -f "$DNS_COMPOSE" ] && { info "No DNS configured."; exit 0; }; _compose="$(compose_bin)"; $_compose -f docker-compose.yml -f docker-compose.dns.yml stop dns proxy; success "DNS and Proxy stopped."; }
+cmd_dns_restart() { [ ! -f "$DNS_COMPOSE" ] && { info "No DNS configured."; exit 0; }; _compose="$(compose_bin)"; $_compose -f docker-compose.yml -f docker-compose.dns.yml restart dns proxy; success "DNS and Proxy restarted."; }
+
+# ═══════════════════════════════════════════════════════════════════════
+cmd_list() {
+    printf "\n%s%s Semitexa Framework %s— CLI Commands\n\n" "$C_BOLD" "$C_GREEN" "$C_CYAN"
+    printf "%s%s Shell Commands (no PHP required):%s\n" "$C_BOLD" "$C_YELLOW" "$C_RESET"
+    printf "  %-32s %s\n" "install"       "Run composer install inside Docker (no local PHP needed)"
+    printf "  %-32s %s\n" "server:start"   "Start Semitexa environment (Docker Compose)"
+    printf "  %-32s %s\n" "server:stop"    "Stop Semitexa environment"
+    printf "  %-32s %s\n" "server:restart" "Restart Semitexa environment"
+    printf "  %-32s %s\n" "dns:add <domain> [ip]" "Add local domain"
+    printf "  %-32s %s\n" "dns:remove <domain>"   "Remove local domain"
+    printf "  %-32s %s\n" "dns:list"              "List configured local domains"
+    printf "  %-32s %s\n" "dns:start"             "Start DNS container"
+    printf "  %-32s %s\n" "dns:stop"              "Stop DNS container"
+    printf "  %-32s %s\n" "dns:restart"           "Restart DNS container"
+    printf "  %-32s %s\n" "self-test"             "Verify setup"
+    printf "  %-32s %s\n" "list"                  "Show this help"
+
+    printf "\n%s%s PHP Commands (proxied to app container):%s\n" "$C_BOLD" "$C_YELLOW" "$C_RESET"
+    if is_app_running; then
+        run_compose exec -T app php vendor/bin/semitexa list --raw 2>/dev/null | while IFS= read -r _line; do
+            _cmd="$(echo "$_line" | awk '{print $1}')"; _desc="$(echo "$_line" | sed 's/^[^ ]* *//')"
+            case "$_cmd" in server:start|server:stop|server:restart|list|"") continue ;; esac
+            printf "  %-32s %s\n" "$_cmd" "$_desc"
+        done
+    else
+        info "(Start the server first to see all PHP commands)"
+    fi
+    printf "\n"
+}
+
+cmd_self_test() {
+    printf "\n%s%s Semitexa — Self Test %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    _ok=0 _warn=0 _fail=0
+    if command -v docker >/dev/null 2>&1; then success "Docker: $(docker --version 2>/dev/null)"; _ok=$((_ok+1)); else error "Docker: not found"; _fail=$((_fail+1)); fi
+    if has_compose; then success "Compose: $(docker compose version 2>/dev/null || docker-compose version 2>/dev/null)"; _ok=$((_ok+1)); else error "Compose: not found"; _fail=$((_fail+1)); fi
+    for _f in docker-compose.yml Dockerfile server.php .env composer.json; do
+        if [ -f "$PROJECT_ROOT/$_f" ]; then success "File: $_f"; _ok=$((_ok+1)); else
+            if [ "$_f" = ".env" ]; then warn "File: $_f (missing)"; _warn=$((_warn+1)); else error "File: $_f (missing)"; _fail=$((_fail+1)); fi
+        fi
+    done
+    [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ] && { success "File: vendor/bin/semitexa"; _ok=$((_ok+1)); } || { error "File: vendor/bin/semitexa (missing)"; _fail=$((_fail+1)); }
+    _arch="$(uname -m 2>/dev/null || echo unknown)"
+    case "$_arch" in x86_64|amd64) success "Arch: AMD64" ;; aarch64|arm64) success "Arch: ARM64" ;; *) warn "Arch: $_arch (untested)" ;; esac
+    if is_app_running; then success "App container: running"; _ok=$((_ok+1)); else info "App container: not running"; fi
+    printf "\n  Results: %s%d OK%s, %s%d Warn%s, %s%d Error%s\n\n" "$C_GREEN" "$_ok" "$C_RESET" "$C_YELLOW" "$_warn" "$C_RESET" "$C_RED" "$_fail" "$C_RESET"
+    [ "$_fail" -gt 0 ] && exit 1; exit 0
+}
+
+cmd_install() {
+    printf "\n%s%s Semitexa — Install Dependencies %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    if ! has_compose; then error "Docker Compose is required. Install Docker Desktop or docker-compose."; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/Dockerfile" ]; then error "Dockerfile not found. Cannot build container for installation."; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/composer.json" ]; then error "composer.json not found. Is this a Semitexa project?"; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/.env" ]; then
+        if [ -f "$PROJECT_ROOT/.env.example" ]; then info "Creating .env from .env.example..."; cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"; success ".env created. Edit it later if needed."
+        elif [ -f "$PROJECT_ROOT/env.example" ]; then info "Creating .env from env.example..."; cp "$PROJECT_ROOT/env.example" "$PROJECT_ROOT/.env"; success ".env created. Edit it later if needed."
+        else warn "No .env, .env.example, or env.example found. Creating minimal .env..."; printf 'APP_ENV=dev\nAPP_DEBUG=1\nSWOOLE_HOST=0.0.0.0\nSWOOLE_PORT=9502\n' > "$PROJECT_ROOT/.env"; fi
+    fi
+    info "Building Docker image and running composer install inside container..."
+    info "(This may take a few minutes on the first run)\n"
+    _compose="$(compose_bin)"; $_compose build app
+    $_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist
+    if [ $? -eq 0 ]; then printf "\n"; success "Dependencies installed successfully!"; info "Next: bin/semitexa server:start"
+    else printf "\n"; error "Installation failed. Check the output above."; exit 1; fi
+    printf "\n"
+}
+
+cmd_init() {
+    if ! has_compose; then error "Docker is required. Install Docker Desktop."; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/Dockerfile" ]; then error "Dockerfile not found."; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/.env" ]; then
+        if [ -f "$PROJECT_ROOT/.env.example" ]; then cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"
+        elif [ -f "$PROJECT_ROOT/env.example" ]; then cp "$PROJECT_ROOT/env.example" "$PROJECT_ROOT/.env"
+        else printf 'APP_ENV=dev\nAPP_DEBUG=1\nSWOOLE_HOST=0.0.0.0\nSWOOLE_PORT=9502\n' > "$PROJECT_ROOT/.env"; fi
+    fi
+    info "Running init via Docker..."
+    _compose="$(compose_bin)"; $_compose run --rm --no-deps --user "$(id -u):$(id -g)" app php vendor/bin/semitexa init "$@"
+}
+
+cmd_proxy() {
+    if command -v php >/dev/null 2>&1; then
+        if [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ]; then
+            if is_app_running; then
+                if [ -t 0 ] && [ -t 1 ]; then run_compose exec app php vendor/bin/semitexa "$@"; else run_compose exec -T app php vendor/bin/semitexa "$@"; fi
+            elif has_compose; then
+                if [ -f "$PROJECT_ROOT/.env" ]; then
+                    warn "App container is not running."
+                    info "Starting container to run command..."
+                    _compose="$(compose_bin)"
+                    _overlays="$(compose_args)"
+                    if [ -n "$_overlays" ]; then
+                        # shellcheck disable=SC2086
+                        $_compose $_overlays up -d app
+                    else
+                        $_compose up -d app
+                    fi
+                    info "Waiting for app container to be ready..."
+                    _attempt=1
+                    _ready=0
+                    while [ "$_attempt" -le 30 ]; do
+                        if $_compose ps --format '{{.State}}' app 2>/dev/null | grep -q running; then
+                            _ready=1
+                            break
+                        fi
+                        _attempt=$((_attempt + 1))
+                        sleep 1
+                    done
+                    if [ "$_ready" -ne 1 ]; then
+                        error "App container failed to reach running state after 30 seconds."
+                        exit 1
+                    fi
+                    if [ -t 0 ] && [ -t 1 ]; then run_compose exec app php vendor/bin/semitexa "$@"; else run_compose exec -T app php vendor/bin/semitexa "$@"; fi
+                else
+                    info "Running locally with PHP (no .env file for Docker)..."
+                    php "$PROJECT_ROOT/vendor/bin/semitexa" "$@"
+                fi
+            else
+                info "Running locally with PHP (Docker not available)..."
+                php "$PROJECT_ROOT/vendor/bin/semitexa" "$@"
+            fi
+        else
+            error "vendor/bin/semitexa not found. Run: bin/semitexa install"
+            exit 1
+        fi
+    else
+        if has_compose; then
+            if is_app_running; then
+                if [ -t 0 ] && [ -t 1 ]; then run_compose exec app php vendor/bin/semitexa "$@"; else run_compose exec -T app php vendor/bin/semitexa "$@"; fi
+            else
+                error "App container is not running."
+                info "Start with: bin/semitexa server:start"
+                exit 1
+            fi
+        else
+            error "PHP is not available and Docker is not running."
+            info "Either start Docker and run: bin/semitexa server:start"
+            info "Or install PHP locally"
+            exit 1
+        fi
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+COMMAND="${1:-}"
+[ -z "$COMMAND" ] && { cmd_list; exit 0; }
+shift
+case "$COMMAND" in
+    server:start)    cmd_server_start "$@" ;;
+    server:stop)     cmd_server_stop "$@" ;;
+    server:restart)  _svc=""; while [ $# -gt 0 ]; do case "$1" in --service=*) _svc="${1#--service=}" ;; -s) shift; _svc="${1:-}" ;; *) _svc="$1" ;; esac; shift; done; cmd_server_restart "$_svc" ;;
+    dns:add)         cmd_dns_add "$@" ;;
+    dns:remove)      cmd_dns_remove "$@" ;;
+    dns:list)        cmd_dns_list "$@" ;;
+    dns:start)       cmd_dns_start "$@" ;;
+    dns:stop)        cmd_dns_stop "$@" ;;
+    dns:restart)     cmd_dns_restart "$@" ;;
+    install)         cmd_install "$@" ;;
+    list|help|--help|-h) cmd_list "$@" ;;
+    self-test)       cmd_self_test "$@" ;;
+    init)            cmd_init "$@" ;;
+    *)               cmd_proxy "$COMMAND" "$@" ;;
+esac

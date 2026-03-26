@@ -46,12 +46,10 @@ set -e
 # set -e aborts on any non-zero exit. A partial install is worse than a clean
 # failure. The last printed step number tells you exactly where it stopped.
 
-SEMITEXA_VERSION="${SEMITEXA_VERSION:-semitexa/ultimate}"
-COMPOSER_IMAGE="composer:2"
-PACKAGIST_URL="https://packagist.org/packages/semitexa/ultimate.json"
-# If Packagist is unreachable (air-gapped env, corporate proxy), the script
-# falls back to the floating "semitexa/ultimate" tag automatically.
-# For fully reproducible installs, pin externally: SEMITEXA_VERSION=semitexa/ultimate:1.2.3
+INSTALLER_IMAGE="${SEMITEXA_INSTALLER_IMAGE:-semitexa/installer}"
+# Host-side installer delegates project scaffolding to the Semitexa installer
+# image. The generated project then performs dependency bootstrap in its own
+# `setup` container on first `docker compose up -d`.
 
 # ── Colour helpers ───────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
@@ -223,71 +221,27 @@ validate_project_name() {
     fi
 }
 
-# ── Fetch latest published version from Packagist ────────────────────────────
-fetch_latest_version() {
-    # Best-effort. On failure (network timeout, proxy, Packagist outage) the
-    # script falls back to the floating package tag, which resolves to
-    # latest-stable at Composer install time (slightly less reproducible).
-    _version=""
-    if command -v curl >/dev/null 2>&1; then
-        _version="$(curl -fsSL "$PACKAGIST_URL" 2>/dev/null \
-            | grep -o '"latest-stable":"[^"]*"' \
-            | head -1 \
-            | sed 's/"latest-stable":"//;s/"//')"
-    elif command -v wget >/dev/null 2>&1; then
-        _version="$(wget -qO- "$PACKAGIST_URL" 2>/dev/null \
-            | grep -o '"latest-stable":"[^"]*"' \
-            | head -1 \
-            | sed 's/"latest-stable":"//;s/"//')"
-    fi
-    printf "%s" "${_version:-}"
-}
-
-# ── composer create-project ──────────────────────────────────────────────────
 run_create_project() {
-    _package="$SEMITEXA_VERSION"
+    info "Running host-side scaffold via Docker image: ${INSTALLER_IMAGE}"
+    info "(First run may pull the installer image — this may take a minute)\n"
 
-    # Only resolve latest when the caller did not pin a version explicitly.
-    if [ "$SEMITEXA_VERSION" = "semitexa/ultimate" ]; then
-        _latest="$(fetch_latest_version)"
-    else
-        _latest=""
-    fi
-    if [ -n "$_latest" ]; then
-        _package="semitexa/ultimate:${_latest}"
-        info "Latest version: ${_latest}"
-    fi
+    mkdir -p "$PROJECT_NAME"
 
-    info "Running: composer create-project ${_package} ${PROJECT_NAME}"
-    info "(First run pulls the PHP + Composer Docker image — this may take a minute)\n"
-    # Subsequent runs on the same machine are faster because Docker caches
-    # the composer:2 image layer. Cold installs on slow connections: 3-5 min.
-    # Do not interrupt — the cleanup trap handles partial directories on abort.
-
-    # --user maps host UID/GID so created files are owned by you, not root.
-    # This prevents permission issues when editing files or running git later.
-    # On macOS with Docker Desktop your UID (e.g. 501) maps correctly to host.
-    # --prefer-dist: downloads zip archives, faster than git clone.
-    # --no-progress: cleaner output in CI logs.
     docker run --rm \
-        --user "$(id -u):$(id -g)" \
-        -v "$(pwd):/app" \
-        -w /app \
-        "$COMPOSER_IMAGE" \
-        create-project "$_package" "$PROJECT_NAME" \
-        --no-interaction \
-        --prefer-dist \
-        --no-progress
+        -v "$(pwd)/${PROJECT_NAME}:/app" \
+        "$INSTALLER_IMAGE" \
+        install
 }
 
 # ── Post-install setup ───────────────────────────────────────────────────────
 setup_env() {
     _env_file="$PROJECT_NAME/.env"
     _example="$PROJECT_NAME/.env.example"
+    [ -f "$_example" ] || _example="$PROJECT_NAME/env.example"
 
     if [ ! -f "$_env_file" ] && [ -f "$_example" ]; then
         cp "$_example" "$_env_file"
-        success ".env created from .env.example"
+        success ".env created from $(basename "$_example")"
         info "Edit $PROJECT_NAME/.env before starting if you need custom ports or DB settings."
         # KEY VARIABLES TO REVIEW BEFORE FIRST START:
         #   SWOOLE_PORT — HTTP port (default 9502). Change if already in use.
@@ -803,7 +757,7 @@ print_next_steps() {
 # STEP ORDER — do not skip steps when recovering from a partial failure:
 #   1. check_docker         — abort before any writes if environment is wrong
 #   2. ask/validate name    — resolve name before touching the filesystem
-#   3. run_create_project   — Composer scaffold (network + disk)
+#   3. run_create_project   — Docker-based scaffold into the new project dir
 #   4. setup_env            — .env must exist before server:start reads it
 #   5. make_bin_executable  — chmod must run before server:start calls the bin
 #   6. ask_local_domain     — optional; requires bin to be executable
@@ -832,12 +786,12 @@ main() {
     _CLEANUP_PROJECT="$PROJECT_NAME"
     run_create_project
 
-    # Explicit post-install guard: Composer can exit 0 while still failing to
-    # create the directory (e.g., disk full mid-extract, permission error on
-    # the volume mount). Catching this here prevents cryptic downstream errors.
-    if [ ! -d "$PROJECT_NAME" ]; then
-        error "Project directory '${PROJECT_NAME}' was not created."
-        error "Possible causes: disk full, Docker volume permission error, Composer package not found."
+    # Explicit post-install guard: the Docker-based scaffold can still fail to
+    # materialize the project directory fully (e.g. disk full, volume mount
+    # permission issue). Catching this here prevents cryptic downstream errors.
+    if [ ! -f "$PROJECT_NAME/bin/semitexa" ] || [ ! -f "$PROJECT_NAME/server.php" ]; then
+        error "Project scaffold in '${PROJECT_NAME}' is incomplete."
+        error "Possible causes: disk full, Docker volume permission error, or installer image failure."
         exit 1
     fi
 
