@@ -12,8 +12,12 @@ RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev git unzip \
     && make -j$(nproc) && make install \
     && docker-php-ext-enable swoole \
     && pecl install redis \
-    && docker-php-ext-enable redis
+    && docker-php-ext-enable redis \
+    && addgroup -g 1000 -S semitexa \
+    && adduser -u 1000 -S -G semitexa -h /var/www/html semitexa
 
 WORKDIR /var/www/html
+
+USER semitexa
 
 CMD ["php", "server.php"]

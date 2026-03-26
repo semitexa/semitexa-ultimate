@@ -32,6 +32,7 @@ final class InitCommand extends Command
         'docker-compose.rabbitmq.yml' => 'docker-compose.rabbitmq.yml',
         'docker-compose.mysql.yml' => 'docker-compose.mysql.yml',
         'docker-compose.redis.yml' => 'docker-compose.redis.yml',
+        'docker-compose.ollama.yml' => 'docker-compose.ollama.yml',
         'docker-compose.dns.yml' => 'docker-compose.dns.yml',
         'phpunit.xml.dist' => 'phpunit.xml.dist',
         'bin/semitexa' => 'bin/semitexa',
@@ -132,6 +133,7 @@ final class InitCommand extends Command
             'docker-compose.rabbitmq.yml',
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
+            'docker-compose.ollama.yml',
             'docker-compose.dns.yml',
             'phpunit.xml.dist',
             'bin/semitexa',
@@ -173,7 +175,9 @@ final class InitCommand extends Command
             }
         }
 
-        $this->patchComposerAutoload($root, $io, $force);
+        if (!$this->patchComposerAutoload($root, $io, $force)) {
+            return Command::FAILURE;
+        }
 
         $io->success('Project structure created.');
         $io->text([
@@ -205,6 +209,7 @@ final class InitCommand extends Command
             'docker-compose.rabbitmq.yml',
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
+            'docker-compose.ollama.yml',
             'docker-compose.dns.yml',
             'phpunit.xml.dist',
             'bin/semitexa',
@@ -224,27 +229,29 @@ final class InitCommand extends Command
             $io->note('Skipped (exists): ' . $path . ' (use --force to overwrite)');
         }
 
-        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.example, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, dns overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.example, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama, dns overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
         $io->text('.env is never touched. Copy new vars from .env.example to .env if needed.');
 
         return Command::SUCCESS;
     }
 
-    private function patchComposerAutoload(string $root, SymfonyStyle $io, bool $force): void
+    private function patchComposerAutoload(string $root, SymfonyStyle $io, bool $force): bool
     {
         $path = $root . '/composer.json';
         if (!is_file($path)) {
-            return;
+            return true;
         }
 
         $fileContent = file_get_contents($path);
         if ($fileContent === false) {
-            return;
+            $io->error('Failed to read composer.json.');
+            return false;
         }
 
         $json = json_decode($fileContent, true);
         if (!is_array($json)) {
-            return;
+            $io->error('composer.json is not valid JSON.');
+            return false;
         }
 
         $autoload = $json['autoload'] ?? [];
@@ -254,11 +261,17 @@ final class InitCommand extends Command
                 $psr4['App\\Modules\\'] = 'src/modules/';
                 $json['autoload'] = array_merge($autoload, ['psr-4' => $psr4]);
                 $encoded = json_encode($json, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-                if ($encoded !== false && file_put_contents($path, $encoded) !== false) {
-                    $io->text('Updated composer.json: autoload.psr-4 "App\\Modules\\": "src/modules/"');
+                if ($encoded === false) {
+                    $io->error('Failed to encode composer.json.');
+                    return false;
                 }
+                if (file_put_contents($path, $encoded) === false) {
+                    $io->error('Failed to update composer.json.');
+                    return false;
+                }
+                $io->text('Updated composer.json: autoload.psr-4 "App\\Modules\\": "src/modules/"');
             }
-            return;
+            return true;
         }
 
         $psr4['App\\'] = 'src/';
@@ -268,12 +281,18 @@ final class InitCommand extends Command
 
         $encoded = json_encode($json, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
         if ($encoded === false) {
-            return;
+            $io->error('Failed to encode composer.json.');
+            return false;
         }
 
-        if (file_put_contents($path, $encoded) !== false) {
-            $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/"');
+        if (file_put_contents($path, $encoded) === false) {
+            $io->error('Failed to update composer.json.');
+            return false;
         }
+
+        $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/"');
+
+        return true;
     }
 
     private function findScaffoldRoot(string $projectRoot): ?string

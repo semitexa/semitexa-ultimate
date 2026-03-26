@@ -21,4 +21,4 @@ Entry point for new projects. Pulls Core, Auth, Authorization, Tenancy, Locale, 
 
 ## Notes
 
-Run `docker run --rm -v $(pwd):/app semitexa/installer install` to scaffold a new project, then `docker compose up -d` to start.
+Run `docker run --rm -v "$(pwd)":/app semitexa/installer install` to scaffold a new project, then `bin/semitexa server:start` to start.

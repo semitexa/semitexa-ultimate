@@ -119,4 +119,4 @@ cp .env.example .env
 bin/semitexa server:start
 ```
 
-4. Default URL: http://0.0.0.0:{{ default_swoole_port }} (see .env SWOOLE_PORT). See vendor/semitexa/core/docs/RUNNING.md for details.
+4. Default URL: http://localhost:{{ default_swoole_port }} (see .env SWOOLE_PORT). See vendor/semitexa/core/docs/RUNNING.md for details.

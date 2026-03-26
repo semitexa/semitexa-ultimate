@@ -237,10 +237,11 @@ run_create_project() {
 setup_env() {
     _env_file="$PROJECT_NAME/.env"
     _example="$PROJECT_NAME/.env.example"
+    [ -f "$_example" ] || _example="$PROJECT_NAME/env.example"
 
     if [ ! -f "$_env_file" ] && [ -f "$_example" ]; then
         cp "$_example" "$_env_file"
-        success ".env created from .env.example"
+        success ".env created from $(basename "$_example")"
         info "Edit $PROJECT_NAME/.env before starting if you need custom ports or DB settings."
         # KEY VARIABLES TO REVIEW BEFORE FIRST START:
         #   SWOOLE_PORT — HTTP port (default 9502). Change if already in use.
@@ -788,9 +789,9 @@ main() {
     # Explicit post-install guard: the Docker-based scaffold can still fail to
     # materialize the project directory fully (e.g. disk full, volume mount
     # permission issue). Catching this here prevents cryptic downstream errors.
-    if [ ! -d "$PROJECT_NAME" ]; then
-        error "Project directory '${PROJECT_NAME}' was not created."
-        error "Possible causes: disk full, Docker volume permission error, Composer package not found."
+    if [ ! -f "$PROJECT_NAME/bin/semitexa" ] || [ ! -f "$PROJECT_NAME/server.php" ]; then
+        error "Project scaffold in '${PROJECT_NAME}' is incomplete."
+        error "Possible causes: disk full, Docker volume permission error, or installer image failure."
         exit 1
     fi
 

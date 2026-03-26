@@ -34,6 +34,10 @@ resolve_script_dir() {
 
 SCRIPT_DIR="$(resolve_script_dir)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT" || {
+    error "Failed to enter project root: $PROJECT_ROOT"
+    exit 1
+}
 
 # ── Colour helpers (safe for non-tty / Windows) ────────────────────────────
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
@@ -95,6 +99,10 @@ compose_args() {
     if [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ]; then
         _redis="$(env_val REDIS_HOST "")"
         if [ -n "$_redis" ]; then _args="$_args -f docker-compose.redis.yml"; _has_overlay=1; fi
+    fi
+    if [ -f "$PROJECT_ROOT/docker-compose.ollama.yml" ]; then
+        _llm_provider="$(env_val LLM_PROVIDER "")"
+        if [ "$_llm_provider" = "ollama" ]; then _args="$_args -f docker-compose.ollama.yml"; _has_overlay=1; fi
     fi
     if [ -f "$PROJECT_ROOT/docker-compose.dns.yml" ]; then
         _args="$_args -f docker-compose.dns.yml"
@@ -274,22 +282,12 @@ cmd_server_stop() {
     run_compose down
     success "Semitexa environment stopped."
 
-    _port="$(env_val SWOOLE_PORT {{ default_swoole_port }})"
-    _pids=""
-    if command -v ss >/dev/null 2>&1; then
-        _pids="$(ss -ltnp 2>/dev/null | awk -v port=":${_port}" '$4 ~ port {print $6}' | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | sort -u)"
-    elif command -v lsof >/dev/null 2>&1; then
-        _pids="$(lsof -ti ":${_port}" 2>/dev/null || true)"
-    fi
-    if [ -n "$_pids" ]; then
-        info "Killing leftover processes on port $_port..."
-        echo "$_pids" | while IFS= read -r _pid; do
-            [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true
-        done
-    fi
-
     for _pidfile in "$PROJECT_ROOT/var/swoole.pid" "$PROJECT_ROOT/var/run/semitexa.pid"; do
-        [ -f "$_pidfile" ] && rm -f "$_pidfile"
+        if [ -f "$_pidfile" ]; then
+            _pid="$(cat "$_pidfile" 2>/dev/null || true)"
+            [ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true
+            rm -f "$_pidfile"
+        fi
     done
 
     printf "\n"
@@ -505,7 +503,8 @@ cmd_install() {
     if [ ! -f "$PROJECT_ROOT/composer.json" ]; then error "composer.json not found. Is this a Semitexa project?"; exit 1; fi
     if [ ! -f "$PROJECT_ROOT/.env" ]; then
         if [ -f "$PROJECT_ROOT/.env.example" ]; then info "Creating .env from .env.example..."; cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"; success ".env created. Edit it later if needed."
-        else warn "No .env or .env.example found. Creating minimal .env..."; printf 'APP_ENV=dev\nAPP_DEBUG=1\nSWOOLE_HOST=0.0.0.0\nSWOOLE_PORT=9502\n' > "$PROJECT_ROOT/.env"; fi
+        elif [ -f "$PROJECT_ROOT/env.example" ]; then info "Creating .env from env.example..."; cp "$PROJECT_ROOT/env.example" "$PROJECT_ROOT/.env"; success ".env created. Edit it later if needed."
+        else warn "No .env, .env.example, or env.example found. Creating minimal .env..."; printf 'APP_ENV=dev\nAPP_DEBUG=1\nSWOOLE_HOST=0.0.0.0\nSWOOLE_PORT=9502\n' > "$PROJECT_ROOT/.env"; fi
     fi
     info "Building Docker image and running composer install inside container..."
     info "(This may take a few minutes on the first run)\n"
@@ -521,6 +520,7 @@ cmd_init() {
     if [ ! -f "$PROJECT_ROOT/Dockerfile" ]; then error "Dockerfile not found."; exit 1; fi
     if [ ! -f "$PROJECT_ROOT/.env" ]; then
         if [ -f "$PROJECT_ROOT/.env.example" ]; then cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"
+        elif [ -f "$PROJECT_ROOT/env.example" ]; then cp "$PROJECT_ROOT/env.example" "$PROJECT_ROOT/.env"
         else printf 'APP_ENV=dev\nAPP_DEBUG=1\nSWOOLE_HOST=0.0.0.0\nSWOOLE_PORT=9502\n' > "$PROJECT_ROOT/.env"; fi
     fi
     info "Running init via Docker..."
