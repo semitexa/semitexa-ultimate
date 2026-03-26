@@ -35,7 +35,7 @@ resolve_script_dir() {
 SCRIPT_DIR="$(resolve_script_dir)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT" || {
-    error "Failed to enter project root: $PROJECT_ROOT"
+    printf '[ERROR] Failed to enter project root: %s\n' "$PROJECT_ROOT" >&2
     exit 1
 }
 
