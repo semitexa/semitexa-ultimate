@@ -51,6 +51,10 @@ INSTALLER_IMAGE="${SEMITEXA_INSTALLER_IMAGE:-semitexa/installer}"
 # image. The generated project then performs dependency bootstrap in its own
 # `setup` container on first `docker compose up -d`.
 
+DEMO_IMAGE="${SEMITEXA_DEMO_IMAGE:-semitexa/demo}"
+# Optional demo package image. Adds working example code to the project so
+# developers can explore the framework without writing anything from scratch.
+
 # ── Colour helpers ───────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
     C_RESET="$(tput sgr0 2>/dev/null   || true)"
@@ -158,7 +162,18 @@ check_docker() {
     fi
 
     if ! docker info >/dev/null 2>&1; then
-        error "Docker daemon is not running. Start Docker and try again."
+        _derr="$(docker info 2>&1 || true)"
+        case "$_derr" in
+            *"permission denied"*|*"Got permission denied"*|*"connect: permission denied"*)
+                error "Docker permission denied."
+                printf "  Add your user to the 'docker' group:\n"
+                printf "    sudo usermod -aG docker \$(whoami)\n"
+                printf "  Then log out and back in, and re-run the installer.\n"
+                ;;
+            *)
+                error "Docker daemon is not running. Start Docker and try again."
+                ;;
+        esac
         exit 1
     fi
 
@@ -174,6 +189,203 @@ check_docker() {
 
     success "Docker $(docker --version | awk '{print $3}' | tr -d ',')" \
         "/ Compose $(docker compose version --short 2>/dev/null || echo 'v2')"
+}
+
+# ── Docker permission check (Linux only) ─────────────────────────────────────
+# Docker Desktop on macOS/Windows manages socket access automatically.
+# On Linux, /var/run/docker.sock is owned by root:docker. The user must be in
+# the 'docker' group — otherwise every docker call requires sudo, and container
+# volumes produce root-owned files that break every subsequent step.
+#
+# Called with the script arguments ("$@") so that check_docker_permissions can
+# re-exec this script via 'sg docker' after adding the user to the group,
+# allowing the install to continue in the same terminal without a re-login.
+check_docker_permissions() {
+    # macOS / Windows: Docker Desktop owns the socket — nothing to check.
+    _os="$(uname -s 2>/dev/null || echo Unknown)"
+    case "$_os" in Linux) ;; *) return ;; esac
+
+    # ── Running as root ───────────────────────────────────────────────────────
+    # Root can run docker, but containers create root-owned files in volumes.
+    # That breaks setup_env, make_bin_executable, and server:start.
+    if [ "$(id -u)" -eq 0 ]; then
+        warn "Running as root."
+        warn "Docker containers will create files owned by root inside ./${PROJECT_NAME:-<project>}."
+        warn "Recommended: use a regular user that belongs to the 'docker' group."
+        printf "\n"
+        if tty_available; then
+            printf "  %sContinue as root anyway?%s [y/N]: " "$C_BOLD" "$C_RESET"
+            read -r _root_ans </dev/tty
+            case "$_root_ans" in
+                y|Y|yes|Yes|YES) return ;;
+            esac
+            info "Aborted. Re-run as a non-root user."
+            exit 0
+        fi
+        warn "Non-interactive: continuing as root (file ownership issues may follow)."
+        return
+    fi
+
+    # ── Docker works fine ─────────────────────────────────────────────────────
+    docker info >/dev/null 2>&1 && return
+
+    # ── Classify the failure ──────────────────────────────────────────────────
+    _derr="$(docker info 2>&1 || true)"
+    case "$_derr" in
+        *"permission denied"*|*"Got permission denied"*|*"connect: permission denied"*) ;;
+        *)
+            # Daemon not running, socket missing, etc. — let check_docker handle it.
+            return
+            ;;
+    esac
+
+    _user="$(id -un)"
+    printf "\n"
+    error "Docker permission denied for user '${_user}'."
+
+    # ── docker group does not exist ───────────────────────────────────────────
+    if ! grep -q "^docker:" /etc/group 2>/dev/null && \
+       ! getent group docker >/dev/null 2>&1; then
+        printf "\n"
+        warn "The 'docker' group does not exist — Docker may be installed incorrectly."
+        printf "  Reinstall: %shttps://docs.docker.com/engine/install/%s\n\n" "$C_CYAN" "$C_RESET"
+        exit 1
+    fi
+
+    # ── Determine group membership ────────────────────────────────────────────
+    # _in_effective: user is in docker group in THIS session (id -nG shows it)
+    # _in_configured: user is in docker group in /etc/group (takes effect after re-login)
+    _in_effective=0
+    id -nG 2>/dev/null | tr ' ' '\n' | grep -qx "docker" && _in_effective=1
+
+    _in_configured=0
+    _gmembers="$(getent group docker 2>/dev/null | cut -d: -f4 \
+        || grep "^docker:" /etc/group 2>/dev/null | cut -d: -f4 \
+        || true)"
+    printf "%s" "$_gmembers" | tr ',' '\n' | grep -qx "$_user" && _in_configured=1
+
+    # ── In /etc/group but session not refreshed yet ───────────────────────────
+    if [ "$_in_effective" -eq 0 ] && [ "$_in_configured" -eq 1 ]; then
+        printf "\n"
+        warn "'${_user}' is already in the docker group, but this terminal session"
+        warn "was opened before the change took effect."
+        printf "\n"
+        printf "  %sOption A%s — open a new terminal and re-run the installer.\n" \
+            "$C_BOLD" "$C_RESET"
+        if command -v sg >/dev/null 2>&1 && [ -f "$0" ]; then
+            printf "  %sOption B%s — continue right now (activates the group in this shell):\n" \
+                "$C_BOLD" "$C_RESET"
+            printf "\n"
+            if tty_available; then
+                printf "  %sContinue without re-login?%s [Y/n]: " "$C_BOLD" "$C_RESET"
+                read -r _sg_ans </dev/tty
+                case "$_sg_ans" in
+                    n|N|no|No|NO)
+                        info "OK. Open a new terminal and re-run the installer."
+                        exit 1
+                        ;;
+                    *)
+                        info "Restarting with docker group active..."
+                        exec sg docker -c "sh \"$0\" \"$@\""
+                        ;;
+                esac
+            fi
+        fi
+        printf "\n"
+        info "Open a new terminal and re-run the installer."
+        exit 1
+    fi
+
+    # ── User is NOT in the docker group at all ────────────────────────────────
+    printf "\n"
+    warn "User '${_user}' is not in the 'docker' group."
+    printf "\n"
+    printf "  Without this:\n"
+    printf "    • docker requires sudo on every call\n"
+    printf "    • volume mounts create root-owned files  (chmod/chown issues)\n"
+    printf "    • bin/semitexa server:start will fail without sudo\n"
+    printf "\n"
+    printf "  Fix: %ssudo usermod -aG docker %s%s\n" "$C_BOLD" "$_user" "$C_RESET"
+    printf "\n"
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        error "'sudo' is not available on this system."
+        printf "  As root, run:  usermod -aG docker %s\n" "$_user"
+        printf "  Then log out and back in, and re-run the installer.\n\n"
+        exit 1
+    fi
+
+    if ! tty_available; then
+        error "Non-interactive mode: cannot run sudo interactively."
+        printf "  Fix manually:\n"
+        printf "    sudo usermod -aG docker %s\n" "$_user"
+        printf "  Then log out and back in, and re-run the installer.\n\n"
+        exit 1
+    fi
+
+    printf "  %sAdd '${_user}' to the docker group now?%s (requires sudo) [Y/n]: " \
+        "$C_BOLD" "$C_RESET"
+    read -r _add_ans </dev/tty
+    case "$_add_ans" in
+        n|N|no|No|NO)
+            warn "Skipped. Files created by Docker containers may be owned by root."
+            warn "Fix later: sudo usermod -aG docker ${_user}  (then re-login)"
+            printf "\n"
+            # User explicitly chose to skip — continue and let the ownership
+            # fix in run_create_project handle the fallout as best it can.
+            return
+            ;;
+    esac
+
+    if ! sudo usermod -aG docker "$_user"; then
+        error "sudo usermod failed."
+        printf "  Run manually: sudo usermod -aG docker %s\n" "$_user"
+        printf "  Then log out and back in, and re-run the installer.\n\n"
+        exit 1
+    fi
+
+    success "Added '${_user}' to the 'docker' group."
+    printf "\n"
+
+    # Best path: re-exec this script via sg so the group is active immediately.
+    if command -v sg >/dev/null 2>&1 && [ -f "$0" ]; then
+        printf "  %sContinue the installer with the new group active now?%s [Y/n]: " \
+            "$C_BOLD" "$C_RESET"
+        read -r _reexec_ans </dev/tty
+        case "$_reexec_ans" in
+            n|N|no|No|NO)
+                printf "\n"
+                info "OK. When ready:"
+                info "  1. Log out and back in (or open a new terminal)"
+                info "  2. Re-run: sh $0 $*"
+                printf "\n"
+                exit 0
+                ;;
+            *)
+                info "Restarting with docker group active..."
+                exec sg docker -- sh "$0" "$@"
+                # exec replaces the process — lines below only run if exec fails.
+                warn "'sg' failed to re-exec. Open a new terminal and re-run."
+                exit 1
+                ;;
+        esac
+    fi
+
+    # sg not available or running via curl|bash (no script file) — give instructions.
+    info "Group change saved. Apply it without logging out:"
+    info "  newgrp docker   (opens a new shell with the group active)"
+    printf "\n"
+    info "Then re-run the installer:"
+    if [ -f "$0" ]; then
+        info "  sh $0 $*"
+    else
+        _rerun="curl -fsSL https://semitexa.com/install.sh | bash"
+        [ -n "$PROJECT_NAME" ] && _rerun="${_rerun} -s ${PROJECT_NAME}"
+        [ "$AUTO_START" -eq 1 ]  && _rerun="${_rerun} --start"
+        info "  ${_rerun}"
+    fi
+    printf "\n"
+    exit 0
 }
 
 # ── Project name ─────────────────────────────────────────────────────────────
@@ -231,6 +443,38 @@ run_create_project() {
         -v "$(pwd)/${PROJECT_NAME}:/app" \
         "$INSTALLER_IMAGE" \
         install
+
+    # ── Fix file ownership ─────────────────────────────────────────────────────
+    # The installer image typically runs as root (UID 0), so every file it writes
+    # to the volume ends up owned by root on the host. This breaks every subsequent
+    # step: setup_env (can't write .env), make_bin_executable (can't chmod),
+    # and server:start (can't write var/ at runtime).
+    #
+    # Fix order:
+    #   1. Plain chown -R  — works when the user already owns the socket (docker group)
+    #   2. Alpine container — needs only docker (no sudo), uses root inside the
+    #      volume to chown on the host filesystem
+    #   3. Manual sudo hint — last resort if both above fail
+    _uid="$(id -u)"
+    _gid="$(id -g)"
+    _dir_owner="$(stat -c '%u' "$PROJECT_NAME" 2>/dev/null \
+        || stat -f '%u' "$PROJECT_NAME" 2>/dev/null \
+        || echo "$_uid")"
+
+    if [ "$_dir_owner" != "$_uid" ]; then
+        info "Fixing file ownership (container created files as UID ${_dir_owner})..."
+        if chown -R "${_uid}:${_gid}" "$PROJECT_NAME" 2>/dev/null; then
+            success "Ownership fixed → $(id -un):$(id -gn)"
+        elif docker run --rm \
+                -v "$(pwd):/work" \
+                alpine \
+                chown -R "${_uid}:${_gid}" "/work/${PROJECT_NAME}" 2>/dev/null; then
+            success "Ownership fixed via Docker Alpine → $(id -un):$(id -gn)"
+        else
+            warn "Could not fix file ownership automatically."
+            warn "Run before continuing: sudo chown -R $(id -un):$(id -gn) ./${PROJECT_NAME}"
+        fi
+    fi
 }
 
 # ── Post-install setup ───────────────────────────────────────────────────────
@@ -724,6 +968,89 @@ ask_local_domain() {
     register_local_domain "$LOCAL_DOMAIN"
 }
 
+# ── Demo package ─────────────────────────────────────────────────────────────
+# Semitexa Demo is a standalone Composer package (semitexa/demo) that ships
+# working example code for developers to explore, run, and copy from.
+# It installs into vendor/ like any other package and is removable at any time:
+#   cd <project> && composer remove semitexa/demo
+
+ask_install_demo() {
+    # Non-interactive without --start: silently skip (can't prompt).
+    if ! tty_available && [ "$AUTO_START" -ne 1 ]; then
+        return
+    fi
+    # Fully automated (--start): skip without prompting.
+    if [ "$AUTO_START" -eq 1 ]; then
+        info "Auto mode: skipping demo. Add it later: cd ${PROJECT_NAME} && bin/semitexa demo:install"
+        return
+    fi
+
+    printf "\n"
+    printf "%s  ╭──────────────────────────────────────────────────────────────╮%s\n" "$C_CYAN$C_BOLD" "$C_RESET"
+    printf "%s  │   First time with Semitexa? Explore it with the Demo.        │%s\n" "$C_CYAN$C_BOLD" "$C_RESET"
+    printf "%s  ╰──────────────────────────────────────────────────────────────╯%s\n" "$C_CYAN$C_BOLD" "$C_RESET"
+    printf "\n"
+    printf "  %sSemitexa Demo%s is a Composer package with working example code\n" "$C_BOLD" "$C_RESET"
+    printf "  you can read, run, and copy from right away:\n"
+    printf "\n"
+    printf "    %s•%s REST API endpoints with typed payloads and handlers\n"    "$C_GREEN" "$C_RESET"
+    printf "    %s•%s Authentication flow  (login, token refresh, logout)\n"    "$C_GREEN" "$C_RESET"
+    printf "    %s•%s Event dispatching and async background jobs\n"            "$C_GREEN" "$C_RESET"
+    printf "    %s•%s Module structure and DI wiring you can copy-paste\n"      "$C_GREEN" "$C_RESET"
+    printf "\n"
+    printf "  Installs as a regular package in %svendor/%s — remove it anytime:\n" "$C_BOLD" "$C_RESET"
+    printf "  %scomposer remove semitexa/demo%s\n" "$C_CYAN" "$C_RESET"
+    printf "\n"
+
+    printf "  %sInstall Semitexa Demo?%s [y/N]: " "$C_BOLD" "$C_RESET"
+    read -r _demo_ans </dev/tty
+
+    case "$_demo_ans" in
+        y|Y|yes|Yes|YES)
+            install_demo
+            ;;
+        *)
+            info "Skipped. You can add it later from inside your project:"
+            info "  cd ${PROJECT_NAME} && bin/semitexa demo:install"
+            printf "\n"
+            ;;
+    esac
+}
+
+install_demo() {
+    info "Installing Semitexa Demo..."
+    info "(Pulling demo image — this may take a moment)\n"
+
+    if docker run --rm \
+            -v "$(pwd)/${PROJECT_NAME}:/app" \
+            "$DEMO_IMAGE" \
+            install; then
+
+        # Fix ownership — demo image may run as root just like the installer image.
+        _uid="$(id -u)"
+        _gid="$(id -g)"
+        _vendor_owner="$(stat -c '%u' "${PROJECT_NAME}/vendor" 2>/dev/null \
+            || stat -f '%u' "${PROJECT_NAME}/vendor" 2>/dev/null \
+            || echo "$_uid")"
+        if [ "$_vendor_owner" != "$_uid" ]; then
+            chown -R "${_uid}:${_gid}" "$PROJECT_NAME" 2>/dev/null \
+            || docker run --rm -v "$(pwd):/work" alpine \
+                chown -R "${_uid}:${_gid}" "/work/${PROJECT_NAME}" 2>/dev/null \
+            || warn "Could not fix demo file ownership. Run: sudo chown -R $(id -un):$(id -gn) ./${PROJECT_NAME}"
+        fi
+
+        printf "\n"
+        success "Semitexa Demo installed (semitexa/demo)."
+        info "Start the server and explore the demo routes to see it in action."
+        info "Remove when done: cd ${PROJECT_NAME} && composer remove semitexa/demo"
+        printf "\n"
+    else
+        warn "Demo installation failed — the image may not be available yet."
+        warn "Try again later: cd ${PROJECT_NAME} && bin/semitexa demo:install"
+        printf "\n"
+    fi
+}
+
 # ── Print next steps ─────────────────────────────────────────────────────────
 print_next_steps() {
     # Port is read from .env via get_swoole_port() — reflects any custom value.
@@ -755,14 +1082,16 @@ print_next_steps() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 # STEP ORDER — do not skip steps when recovering from a partial failure:
-#   1. check_docker         — abort before any writes if environment is wrong
-#   2. ask/validate name    — resolve name before touching the filesystem
-#   3. run_create_project   — Docker-based scaffold into the new project dir
-#   4. setup_env            — .env must exist before server:start reads it
-#   5. make_bin_executable  — chmod must run before server:start calls the bin
-#   6. ask_local_domain     — optional; requires bin to be executable
-#   7. check_port_conflicts — guard before binding a network port
-#   8. start_server         — only when env + permissions + port are confirmed
+#   1. check_docker_permissions — Linux only: ensure user is in docker group
+#      check_docker             — abort before any writes if environment is wrong
+#   2. ask/validate name        — resolve name before touching the filesystem
+#   3. run_create_project       — Docker-based scaffold + fix file ownership
+#   4. setup_env                — .env must exist before server:start reads it
+#   5. make_bin_executable      — chmod must run before server:start calls the bin
+#   6. ask_local_domain         — optional; requires bin to be executable
+#   7. ask_install_demo         — optional; offers working example code
+#   8. check_port_conflicts     — guard before binding a network port
+#   9. start_server             — only when env + permissions + port are confirmed
 #
 # RECOVERING FROM A PARTIAL FAILURE:
 #   The cleanup trap removes the partial directory on abort. Just re-run the
@@ -772,15 +1101,19 @@ print_next_steps() {
 main() {
     banner
 
-    step "[1/6] Checking prerequisites..."
+    step "[1/7] Checking prerequisites..."
+    # check_docker_permissions must run before check_docker: it distinguishes
+    # "permission denied" (fixable by adding to docker group) from "daemon not
+    # running" and offers an interactive resolution with sudo + optional re-exec.
+    check_docker_permissions "$@"
     check_docker
 
-    step "[2/6] Project name..."
+    step "[2/7] Project name..."
     ask_project_name
     validate_project_name
     info "Creating project: ${C_BOLD}${PROJECT_NAME}${C_RESET}"
 
-    step "[3/6] Installing Semitexa Ultimate..."
+    step "[3/7] Installing Semitexa Ultimate..."
     # Arm the cleanup trap. From this point onward, any unexpected exit will
     # remove the partial project directory so the user can re-run cleanly.
     _CLEANUP_PROJECT="$PROJECT_NAME"
@@ -795,18 +1128,23 @@ main() {
         exit 1
     fi
 
-    step "[4/6] Environment setup..."
+    step "[4/7] Environment setup..."
     setup_env
     make_bin_executable
 
-    step "[5/6] Local domain (optional)..."
+    step "[5/7] Local domain (optional)..."
     # ask_local_domain must run AFTER make_bin_executable so that
     # register_local_domain can call bin/semitexa dns:add.
     # It must also run BEFORE print_next_steps so LOCAL_DOMAIN is available
     # for display. Called directly (not in a subshell) — see LOCAL_DOMAIN note.
     ask_local_domain
 
-    step "[6/6] Done!"
+    step "[6/7] Semitexa Demo (optional)..."
+    # Offer working example code the developer can explore immediately.
+    # Must run AFTER make_bin_executable (demo:remove uses bin/semitexa).
+    ask_install_demo
+
+    step "[7/7] Done!"
     # Disarm the cleanup trap — the install is complete and the directory is
     # intentional. From here, no automatic removal should happen on exit.
     _CLEANUP_PROJECT=""

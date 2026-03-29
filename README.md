@@ -19,6 +19,25 @@ Entry point for new projects. Pulls Core, Auth, Authorization, Tenancy, Locale, 
 - `bin/semitexa` CLI wrapper for container commands
 - Includes core auth/tenancy/i18n/ORM/SSR stack
 
+## Deferred SSE Defaults
+
+Starter projects generated from `semitexa/ultimate` ship with safe SSR deferred defaults:
+
+- `SSR_DEFERRED_PERSISTENT_SSE=false`
+- `SSR_DEFERRED_PERSISTENT_SSE_REQUIRE_AUTH=true`
+
+This means deferred SSR streams late HTML blocks once and closes the SSE connection. Persistent reconnect-capable SSE must be enabled explicitly and still requires an authenticated session by default.
+
+## robots.txt Fallback
+
+Starter projects also inherit the SSR `robots.txt` fallback. If you do not add a real `robots.txt` file, Semitexa serves a minimal one automatically with crawler hints for machine-readable page documents.
+
+Optional env hints:
+
+- `ROBOTS_SITEMAP_URL=https://example.com/sitemap.xml`
+- `ROBOTS_HOST=example.com`
+- `AI_SITEMAP_URL=https://example.com/sitemap.json`
+
 ## Notes
 
 Run `docker run --rm -v "$(pwd)":/app semitexa/installer install` to scaffold a new project, then `bin/semitexa server:start` to start.

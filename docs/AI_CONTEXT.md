@@ -24,6 +24,7 @@ Project-specific guidance lives in `docs/`. Framework reference stays in package
 2. Remember the app runs in a loop. Static state can leak across requests.
 3. Prefer PHP attributes over config files for routes, events, and services.
 4. Use DTOs for requests and responses instead of passing loose arrays.
+5. Keep `SSR_DEFERRED_PERSISTENT_SSE=false` unless a route explicitly needs persistent live updates and you have reviewed the capacity/security impact.
 
 ## Common tasks
 

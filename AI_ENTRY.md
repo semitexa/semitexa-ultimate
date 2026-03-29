@@ -115,6 +115,8 @@ Table: Contract (interface) | Implementations (module → class) | Active. Use w
 cp .env.example .env
 ```
 
+`SSR_DEFERRED_PERSISTENT_SSE=false` is the default. Keep it that way for public pages unless you intentionally need long-lived live updates.
+
 ```bash
 bin/semitexa server:start
 ```
