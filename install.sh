@@ -286,7 +286,7 @@ check_docker_permissions() {
                         ;;
                     *)
                         info "Restarting with docker group active..."
-                        exec sg docker -- sh "$0" "$@"
+                        exec sg docker -c "sh \"$0\" \"$@\""
                         ;;
                 esac
             fi
