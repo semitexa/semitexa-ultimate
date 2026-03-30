@@ -1,0 +1,1 @@
+{"version":2,"defects":[],"times":{"Semitexa\\Ultimate\\Tests\\Unit\\Hello\\GuideSlotTemplateDataHandlerTest::testSanitizeGuideBodyEscapesUnsafeMarkupButKeepsCodeBlocks":0.003}}

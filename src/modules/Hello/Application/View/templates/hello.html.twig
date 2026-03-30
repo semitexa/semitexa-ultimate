@@ -4,16 +4,34 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Semitexa — {{ trans('hello.headline') }}</title>
+    <script>
+        (function () {
+            try {
+                var theme = window.localStorage.getItem('semitexa_demo_theme');
+                if (theme !== 'light' && theme !== 'dark') {
+                    theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                document.documentElement.setAttribute('data-demo-theme', theme);
+            } catch (error) {
+                document.documentElement.setAttribute('data-demo-theme', 'light');
+            }
+        })();
+    </script>
     {{ __ssr_preload_hints|default('')|raw }}
     {{ asset_head() }}
 </head>
-<body{{ __ssr_handle_attr|default('')|raw }}>
-    <div class="hello-page">
-        <div class="hello-page__orb hello-page__orb--left"></div>
-        <div class="hello-page__orb hello-page__orb--right"></div>
+<body
+    class="hello-page"
+    data-theme-label-dark="{{ trans('hello.dark_mode') }}"
+    data-theme-label-light="{{ trans('hello.light_mode') }}"
+    {{ __ssr_handle_attr|default('')|raw }}
+>
+    <div class="hello-page__glow hello-page__glow--north"></div>
+    <div class="hello-page__glow hello-page__glow--east"></div>
 
-        <main class="hero-card">
-            <div class="hero-card__meta">
+    <main class="hello-shell">
+        <section class="hello-surface hello-surface--hero">
+            <header class="hello-topbar">
                 <div class="logo-lockup logo-lockup--meta" data-logo-lockup>
                     <div class="logo-mark" aria-hidden="true">
                         <span class="logo-mark__beam logo-mark__beam--north"></span>
@@ -28,31 +46,84 @@
                     </div>
                 </div>
 
-                <div class="lang-switcher">
-                    <a class="lang-btn{{ lang == 'en' ? ' active' : '' }}" href="{{ locale_switch_url('en') }}">EN</a>
-                    <a class="lang-btn{{ lang == 'uk' ? ' active' : '' }}" href="{{ locale_switch_url('uk') }}">UK</a>
+                <div class="hello-topbar__actions">
+                    <span class="hello-badge{{ demoInstalledLocally ? ' hello-badge--online' : '' }}">
+                        {{ demoInstalledLocally ? trans('hello.demo_local') : trans('hello.demo_remote') }}
+                    </span>
+
+                    <div class="hello-theme-switch">
+                        <span class="hello-theme-switch__text" aria-hidden="true" data-demo-theme-text>{{ trans('hello.dark_mode') }}</span>
+                        <button
+                            class="hello-theme-switch__toggle"
+                            type="button"
+                            aria-label="{{ trans('hello.toggle_theme') }}"
+                            aria-pressed="false"
+                            data-demo-theme-toggle
+                        >
+                            <span class="hello-theme-switch__track" aria-hidden="true">
+                                <span class="hello-theme-switch__thumb"></span>
+                            </span>
+                        </button>
+                    </div>
+
+                    <nav class="lang-switcher" aria-label="{{ trans('hello.language_switcher') }}">
+                        <a class="lang-btn{{ lang == 'en' ? ' active' : '' }}" href="{{ locale_switch_url('en') }}">EN</a>
+                        <a class="lang-btn{{ lang == 'uk' ? ' active' : '' }}" href="{{ locale_switch_url('uk') }}">UK</a>
+                    </nav>
                 </div>
+            </header>
+
+            <div class="hello-hero">
+                <div class="hello-hero__copy">
+                    <p class="hello-hero__eyebrow">{{ trans('hello.eyebrow') }}</p>
+                    <h1>{{ trans('hello.headline') }}</h1>
+
+                    <p class="hello-hero__lede">
+                        {{ trans('hello.lede') }}
+                    </p>
+
+                    <div class="signal-strip">
+                        <span class="signal-chip"><span class="signal-chip__dot"></span>PHP {{ phpVersion }}</span>
+                        <span class="signal-chip"><span class="signal-chip__dot"></span>Swoole {{ swooleVersion }}</span>
+                        <span class="signal-chip"><span class="signal-chip__dot"></span>{{ trans('hello.badge.architecture') }}</span>
+                        <span class="signal-chip"><span class="signal-chip__dot"></span>{{ trans('hello.badge.ssr') }}</span>
+                    </div>
+
+                    <div class="cta-row">
+                        <a class="cta cta--primary" href="https://semitexa.com/" target="_blank" rel="noopener noreferrer">{{ trans('hello.visit_site') }}</a>
+                        <a class="cta cta--ghost" href="https://semitexa.com/docs" target="_blank" rel="noopener noreferrer">{{ trans('hello.docs') }}</a>
+                        <a
+                            class="cta cta--soft"
+                            href="{{ demoUrl }}"
+                            {% if demoUrlIsExternal %}target="_blank" rel="noopener noreferrer"{% endif %}
+                        >{{ trans('hello.learn_more') }}</a>
+                    </div>
+                </div>
+
+                <aside class="hello-surface hello-surface--aside">
+                    <p class="hello-panel__eyebrow">{{ trans('hello.guide_eyebrow') }}</p>
+                    <h2>{{ trans('hello.guide_title') }}</h2>
+                    <p class="hello-panel__body">{{ trans('hello.guide_body') }}</p>
+
+                    <div class="hello-panel__grid">
+                        <div class="hello-panel__metric">
+                            <span class="hello-panel__metric-label">{{ trans('hello.metric.module') }}</span>
+                            <code>src/modules/Hello</code>
+                        </div>
+                        <div class="hello-panel__metric">
+                            <span class="hello-panel__metric-label">{{ trans('hello.metric.demo') }}</span>
+                            <span>{{ demoInstalledLocally ? trans('hello.metric.demo_local') : trans('hello.metric.demo_remote') }}</span>
+                        </div>
+                    </div>
+
+                    <p class="hello-panel__hint">
+                        {{ demoInstalledLocally ? trans('hello.demo_hint_local') : trans('hello.demo_hint_remote') }}
+                    </p>
+                </aside>
             </div>
+        </section>
 
-            <p class="hero-card__eyebrow">{{ trans('hello.eyebrow') }}</p>
-            <h1>{{ trans('hello.headline') }}</h1>
-
-            <p class="hero-card__lede">
-                {{ trans('hello.lede') }}
-            </p>
-
-            <div class="signal-strip">
-                <span class="signal-chip"><span class="signal-chip__dot"></span>PHP {{ phpVersion }}</span>
-                <span class="signal-chip"><span class="signal-chip__dot"></span>Swoole {{ swooleVersion }}</span>
-                <span class="signal-chip"><span class="signal-chip__dot"></span>{{ trans('hello.badge.architecture') }}</span>
-                <span class="signal-chip"><span class="signal-chip__dot"></span>{{ trans('hello.badge.ssr') }}</span>
-            </div>
-
-            <div class="cta-row">
-                <a class="cta cta--primary" href="https://semitexa.com/" target="_blank" rel="noopener noreferrer">{{ trans('hello.visit_site') }}</a>
-                <a class="cta cta--ghost" href="https://semitexa.com/docs" target="_blank" rel="noopener noreferrer">{{ trans('hello.docs') }}</a>
-            </div>
-
+        <section class="hello-surface hello-surface--guides">
             <div class="guides-intro">
                 <p class="guides-intro__eyebrow">{{ trans('hello.deferred_eyebrow') }}</p>
                 <p class="guides-intro__body">{{ trans('hello.deferred_body') }}</p>
@@ -63,14 +134,16 @@
                 {{ layout_slot_deferred('guide_02') }}
                 {{ layout_slot_deferred('guide_03') }}
             </div>
+        </section>
 
-            <footer class="hero-card__footer">
-                <span>{{ trans('hello.footer') }}</span>
-            </footer>
-        </main>
-    </div>
+        <footer class="hello-footer">
+            <span>{{ trans('hello.footer') }}</span>
+        </footer>
+    </main>
+
     {{ __ssr_deferred_manifest|default('')|raw }}
     {{ __ssr_runtime_script|default('')|raw }}
+    <script src="/assets/Hello/js/hello.js" defer></script>
     {{ asset_body() }}
 </body>
 </html>

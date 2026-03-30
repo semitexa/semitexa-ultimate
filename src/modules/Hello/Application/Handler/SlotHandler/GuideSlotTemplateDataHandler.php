@@ -42,7 +42,7 @@ final class GuideSlotTemplateDataHandler implements TypedSlotHandlerInterface
 
     private function sleepForSlot(string $index): void
     {
-        if (Environment::getEnvValue('HELLO_DEMO_DELAY', '0') !== '1') {
+        if (Environment::getEnvValue('HELLO_DEMO_DELAY', '1') !== '1') {
             return;
         }
 
