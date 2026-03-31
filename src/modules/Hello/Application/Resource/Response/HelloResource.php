@@ -25,4 +25,19 @@ class HelloResource extends HtmlResponse implements ResourceInterface
     {
         return $this->with('lang', $lang);
     }
+
+    public function withDemoUrl(string $url): self
+    {
+        return $this->with('demoUrl', $url);
+    }
+
+    public function withDemoUrlIsExternal(bool $isExternal): self
+    {
+        return $this->with('demoUrlIsExternal', $isExternal);
+    }
+
+    public function withDemoInstalledLocally(bool $isInstalledLocally): self
+    {
+        return $this->with('demoInstalledLocally', $isInstalledLocally);
+    }
 }

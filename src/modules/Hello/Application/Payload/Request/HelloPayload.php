@@ -10,9 +10,9 @@ use Semitexa\Core\Attributes\AsPayload;
 
 #[PublicEndpoint]
 #[AsPayload(
-    responseWith: HelloResource::class,
     path: '/',
     methods: ['GET'],
+    responseWith: HelloResource::class,
 )]
 class HelloPayload
 {

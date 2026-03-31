@@ -1,0 +1,16 @@
+{
+    "name": "semitexa/hello-starter",
+    "description": "Semitexa Ultimate starter hello module",
+    "type": "semitexa-module",
+    "autoload": {
+        "psr-4": {
+            "App\\Modules\\Hello\\": "."
+        }
+    },
+    "extra": {
+        "semitexa-module": {
+            "name": "Hello",
+            "template_alias": "project-layouts-Hello"
+        }
+    }
+}
