@@ -5,9 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Semitexa — {{ trans('hello.headline') }}</title>
     <script>
+        window.SEMITEXA_DEMO_THEME_KEY = 'semitexa_demo_theme';
+    </script>
+    <script>
         (function () {
             try {
-                var theme = window.localStorage.getItem('semitexa_demo_theme');
+                var themeKey = window.SEMITEXA_DEMO_THEME_KEY || 'semitexa_demo_theme';
+                var theme = window.localStorage.getItem(themeKey);
                 if (theme !== 'light' && theme !== 'dark') {
                     theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
                 }

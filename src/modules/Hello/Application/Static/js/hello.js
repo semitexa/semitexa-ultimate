@@ -1,4 +1,4 @@
-var THEME_STORAGE_KEY = 'semitexa_demo_theme';
+var THEME_STORAGE_KEY = window.SEMITEXA_DEMO_THEME_KEY || 'semitexa_demo_theme';
 
 function applyTheme(theme) {
     var resolvedTheme = theme === 'dark' ? 'dark' : 'light';

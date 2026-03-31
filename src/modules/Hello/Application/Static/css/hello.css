@@ -71,7 +71,7 @@ html {
         linear-gradient(180deg, #fbf4eb 0%, #f5ede3 55%, #efe1cf 100%);
 }
 
-:root[data-demo-theme="dark"] html {
+html[data-demo-theme="dark"] {
     background:
         radial-gradient(circle at 14% 10%, rgba(239, 140, 104, 0.18), transparent 20%),
         radial-gradient(circle at 84% 16%, rgba(113, 152, 177, 0.16), transparent 18%),

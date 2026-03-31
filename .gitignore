@@ -10,6 +10,7 @@ var/log/*
 var/cache/*
 !var/log/.gitkeep
 !var/cache/.gitkeep
+.phpunit.result.cache
 
 # OS
 .DS_Store
