@@ -21,7 +21,7 @@
     "hello.metric.module": "Встановлений модуль",
     "hello.metric.demo": "Режим Demo-посилання",
     "hello.metric.demo_local": "Локальний маршрут /demo",
-    "hello.metric.demo_remote": "demo.semitexa.com",
+    "hello.metric.demo_remote": "framework.semitexa.com",
     "hello.demo_hint_local": "У цій інсталяції знайдено Semitexa Demo, тому CTA відкриває ваш локальний /demo.",
     "hello.demo_hint_remote": "Semitexa Demo не встановлена в цьому проєкті, тому CTA веде на офіційний хостований showcase.",
     "hello.deferred_eyebrow": "Демо deferred блоків",

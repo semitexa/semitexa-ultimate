@@ -21,7 +21,7 @@
     "hello.metric.module": "Installed module",
     "hello.metric.demo": "Demo link mode",
     "hello.metric.demo_local": "Local /demo route",
-    "hello.metric.demo_remote": "demo.semitexa.com",
+    "hello.metric.demo_remote": "framework.semitexa.com",
     "hello.demo_hint_local": "Semitexa Demo was detected in this installation, so the CTA opens your local /demo experience.",
     "hello.demo_hint_remote": "Semitexa Demo is not installed in this project, so the CTA points to the official hosted showcase.",
     "hello.deferred_eyebrow": "Deferred blocks demo",

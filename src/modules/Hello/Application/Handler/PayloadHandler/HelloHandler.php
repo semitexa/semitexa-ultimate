@@ -9,6 +9,7 @@ use App\Modules\Hello\Application\Resource\Response\HelloResource;
 use Semitexa\Core\Attributes\AsPayloadHandler;
 use Semitexa\Core\Contract\TypedHandlerInterface;
 use Semitexa\Locale\Context\LocaleContextStore;
+use Semitexa\Tenancy\Support\TenantUrlResolver;
 
 #[AsPayloadHandler(payload: HelloPayload::class, resource: HelloResource::class)]
 final class HelloHandler implements TypedHandlerInterface
@@ -32,14 +33,16 @@ final class HelloHandler implements TypedHandlerInterface
     private function resolveDemoLink(): array
     {
         if (class_exists('Semitexa\\Demo\\Application\\Payload\\Request\\DemoHomePayload')) {
+            $demoUrl = TenantUrlResolver::resolveUrl('demo', '/demo') ?? '/demo';
+
             return [
-                'url' => '/demo',
+                'url' => $demoUrl,
                 'external' => false,
             ];
         }
 
         return [
-            'url' => 'https://demo.semitexa.com/demo/',
+            'url' => TenantUrlResolver::resolveUrl('demo', '/demo', true) ?? 'https://framework.semitexa.com/demo',
             'external' => true,
         ];
     }
