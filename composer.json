@@ -1,7 +1,7 @@
 {
     "name": "semitexa/ultimate",
     "description": "Semitexa Ultimate - full-stack project skeleton for SSR applications with docs and core modules",
-    "version": "2.0.6",
+    "version": "v2.0.8",
     "type": "project",
     "license": "MIT",
     "autoload": {
