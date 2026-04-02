@@ -386,6 +386,14 @@ router_compose() {
     $_compose -f "$ROUTER_COMPOSE" "$@"
 }
 
+tty_available() {
+    [ -t 0 ] && [ -e /dev/tty ]
+}
+
+sudo_ready() {
+    sudo -n true >/dev/null 2>&1
+}
+
 router_configure_resolved_for_test() {
     if ! command -v systemctl >/dev/null 2>&1 || ! systemctl is-active --quiet systemd-resolved; then
         return 0
@@ -394,38 +402,64 @@ router_configure_resolved_for_test() {
     _needs_restart=0
     if grep -qi "^DNSStubListener=no" /etc/systemd/resolved.conf 2>/dev/null; then
         warn "systemd-resolved has DNSStubListener=no (breaks shared .test resolution)."
-        printf "%s? Do you want to fix this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
-        read -r _ans </dev/tty
+        if tty_available; then
+            printf "%s? Do you want to fix this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
+            read -r _ans </dev/tty
+        elif sudo_ready; then
+            _ans="y"
+        else
+            warn "Skipping DNSStubListener fix (no TTY and sudo requires a password)."
+            _ans="n"
+        fi
         if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
-            sudo sed -i 's/^DNSStubListener=no/DNSStubListener=yes/i' /etc/systemd/resolved.conf
-            success "Set DNSStubListener=yes"
-            _needs_restart=1
+            if sudo sed -i 's/^DNSStubListener=no/DNSStubListener=yes/i' /etc/systemd/resolved.conf; then
+                success "Set DNSStubListener=yes"
+                _needs_restart=1
+            else
+                warn "Failed to set DNSStubListener=yes."
+            fi
         fi
     fi
 
     if [ ! -f /etc/systemd/resolved.conf.d/semitexa-router.conf ]; then
         info "Shared Semitexa router is not yet bound to .test."
-        printf "%s? Do you want to configure this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
-        read -r _ans </dev/tty
+        if tty_available; then
+            printf "%s? Do you want to configure this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
+            read -r _ans </dev/tty
+        elif sudo_ready; then
+            _ans="y"
+        else
+            warn "Skipping automatic .test resolver setup (no TTY and sudo requires a password)."
+            _ans="n"
+        fi
         if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
-            sudo mkdir -p /etc/systemd/resolved.conf.d/
-            printf "[Resolve]\nDNS=127.0.0.1:5553\nDomains=~test\n" | sudo tee /etc/systemd/resolved.conf.d/semitexa-router.conf >/dev/null
-            success "Created /etc/systemd/resolved.conf.d/semitexa-router.conf"
-            _needs_restart=1
+            if sudo mkdir -p /etc/systemd/resolved.conf.d/ \
+                && printf "[Resolve]\nDNS=127.0.0.1:5553\nDomains=~test\n" | sudo tee /etc/systemd/resolved.conf.d/semitexa-router.conf >/dev/null; then
+                success "Created /etc/systemd/resolved.conf.d/semitexa-router.conf"
+                _needs_restart=1
+            else
+                warn "Failed to create /etc/systemd/resolved.conf.d/semitexa-router.conf."
+            fi
         fi
     fi
 
     if [ "$_needs_restart" -eq 1 ]; then
         info "Restarting systemd-resolved to apply shared .test routing..."
-        sudo systemctl restart systemd-resolved
-        sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-        success "systemd-resolved restarted and configured!"
-        echo ""
+        if sudo systemctl restart systemd-resolved \
+            && sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; then
+            success "systemd-resolved restarted and configured!"
+            echo ""
+        else
+            warn "Failed to restart systemd-resolved cleanly."
+        fi
     fi
 }
 
 router_hosts_remove_domain() {
     _domain="$1"
+    if ! grep -q "^[[:space:]]*127\\.0\\.0\\.1[[:space:]].*${_domain}.*# semitexa-router\$" /etc/hosts 2>/dev/null; then
+        return 0
+    fi
     _tmp="$(mktemp)"
     grep -v "^[[:space:]]*127\\.0\\.0\\.1[[:space:]].*${_domain}.*# semitexa-router\$" /etc/hosts > "$_tmp" 2>/dev/null || true
     sudo tee /etc/hosts >/dev/null < "$_tmp"
