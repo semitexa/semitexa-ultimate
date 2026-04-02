@@ -445,10 +445,9 @@ run_create_project() {
         install
 
     # ── Fix file ownership ─────────────────────────────────────────────────────
-    # The installer image typically runs as root (UID 0), so every file it writes
-    # to the volume ends up owned by root on the host. This breaks every subsequent
-    # step: setup_env (can't write .env), make_bin_executable (can't chmod),
-    # and server:start (can't write var/ at runtime).
+    # The installer image runs as root (UID 0), so every file it writes to the
+    # volume ends up owned by root on the host — including the project directory
+    # itself when Docker creates it. Always chown regardless of current owner:
     #
     # Fix order:
     #   1. Plain chown -R  — works when the user already owns the socket (docker group)
@@ -457,23 +456,18 @@ run_create_project() {
     #   3. Manual sudo hint — last resort if both above fail
     _uid="$(id -u)"
     _gid="$(id -g)"
-    _dir_owner="$(stat -c '%u' "$PROJECT_NAME" 2>/dev/null \
-        || stat -f '%u' "$PROJECT_NAME" 2>/dev/null \
-        || echo "$_uid")"
 
-    if [ "$_dir_owner" != "$_uid" ]; then
-        info "Fixing file ownership (container created files as UID ${_dir_owner})..."
-        if chown -R "${_uid}:${_gid}" "$PROJECT_NAME" 2>/dev/null; then
-            success "Ownership fixed → $(id -un):$(id -gn)"
-        elif docker run --rm \
-                -v "$(pwd):/work" \
-                alpine \
-                chown -R "${_uid}:${_gid}" "/work/${PROJECT_NAME}" 2>/dev/null; then
-            success "Ownership fixed via Docker Alpine → $(id -un):$(id -gn)"
-        else
-            warn "Could not fix file ownership automatically."
-            warn "Run before continuing: sudo chown -R $(id -un):$(id -gn) ./${PROJECT_NAME}"
-        fi
+    info "Fixing file ownership (container writes files as root)..."
+    if chown -R "${_uid}:${_gid}" "$PROJECT_NAME" 2>/dev/null; then
+        success "Ownership fixed → $(id -un):$(id -gn)"
+    elif docker run --rm \
+            -v "$(pwd):/work" \
+            alpine \
+            chown -R "${_uid}:${_gid}" "/work/${PROJECT_NAME}" 2>/dev/null; then
+        success "Ownership fixed via Docker Alpine → $(id -un):$(id -gn)"
+    else
+        warn "Could not fix file ownership automatically."
+        warn "Run before continuing: sudo chown -R $(id -un):$(id -gn) ./${PROJECT_NAME}"
     fi
 }
 
