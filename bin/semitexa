@@ -239,7 +239,7 @@ cmd_server_start() {
     info "Starting containers..."
     run_compose up -d --build
 
-    _port="$(env_val SWOOLE_PORT {{ default_swoole_port }})"
+    _port="$(env_val SWOOLE_PORT 8080)"
     printf "\n"
     success "Semitexa environment started!"
     info "App:  ${C_GREEN}http://localhost:${_port}${C_RESET}"
