@@ -104,8 +104,8 @@ _on_exit() {
     if [ -n "$_p" ] && [ -d "$_p" ]; then
         printf "\n" >&2
         warn "Install did not complete — removing partial directory: ./${_p}"
-        # Docker containers (dnsmasq, app) create root-owned files inside the
-        # project dir (e.g. var/dns/dnsmasq.conf). Plain rm -rf fails on those.
+        # Docker containers can create root-owned files inside the project dir.
+        # Plain rm -rf fails on those.
         # Fall back to a throwaway Alpine container that has root on the volume.
         if ! rm -rf "$_p" 2>/dev/null; then
             if command -v docker >/dev/null 2>&1; then
@@ -809,54 +809,64 @@ _free_fixed_port() {
     return 1
 }
 
-# Calls the internal DNS registration module via `bin/semitexa dns:add`.
+# Calls the shared local router registration module via
+# `bin/semitexa local-domain:add`.
 # Non-fatal: a failure here warns the user but does NOT abort the installer.
 #
-# PORT GATE — all fixed ports used by docker-compose.dns.yml are checked
-# BEFORE calling dns:add. If any conflict cannot be resolved we skip domain
-# registration entirely, leaving LOCAL_DOMAIN="" so server:start never
-# includes docker-compose.dns.yml and the app starts cleanly on its own port.
+# PORT GATE — all fixed ports used by the shared local router are checked
+# BEFORE calling local-domain:add. If any conflict cannot be resolved we skip
+# domain registration entirely, leaving LOCAL_DOMAIN="" so server:start still
+# starts the app cleanly on its own port.
 #
-#   Port 80   — Nginx reverse proxy (docker-compose.dns.yml: proxy service)
-#   Port 5553 — dnsmasq local DNS   (docker-compose.dns.yml: dns service)
+#   Port 80   — shared Nginx reverse proxy
+#   Port 5553 — shared local DNS (dns mode only)
 #
 # Related commands the user can run manually inside the project directory:
-#   bin/semitexa dns:add <domain>     — register a .test domain
-#   bin/semitexa dns:list             — list all registered local domains
-#   bin/semitexa dns:remove <domain>  — remove a registered local domain
+#   bin/semitexa local-domain:add <domain.test>     — register a .test domain
+#   bin/semitexa local-domain:list                  — list registered domains
+#   bin/semitexa local-domain:remove <domain.test>  — remove a registered domain
+#   bin/semitexa local-domain:mode [dns|hosts]      — inspect or switch mode
 register_local_domain() {
     _domain="$1"
+    _router_mode="hosts"
+    _ports="80"
 
-    # ── Fixed-port gate for docker-compose.dns.yml ────────────────────────────
-    if [ -f "${PROJECT_NAME}/docker-compose.dns.yml" ]; then
-        info "Checking ports required by local DNS services..."
-        for _dns_port in 80 5553; do
-            if ! _free_fixed_port "$_dns_port"; then
-                warn "Cannot free port ${_dns_port} — skipping domain registration."
-                warn "App will still start on its own port."
-                warn "Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add ${_domain}"
-                LOCAL_DOMAIN=""
-                return
-            fi
-        done
-    fi
-
-    # ── Register ──────────────────────────────────────────────────────────────
-    info "Registering ${_domain} with local DNS..."
     _dns_bin="${PROJECT_NAME}/bin/semitexa"
     if [ -f "$_dns_bin" ]; then
-        if ( cd "$PROJECT_NAME" && sh ./bin/semitexa dns:add "$_domain" ); then
+        _router_mode="$(
+            cd "$PROJECT_NAME" && sh ./bin/semitexa local-domain:mode 2>/dev/null || printf 'hosts'
+        )"
+    fi
+    if [ "$_router_mode" = "dns" ]; then
+        _ports="80 5553"
+    fi
+
+    info "Checking ports required by the shared local router (${_router_mode} mode)..."
+    for _dns_port in $_ports; do
+        if ! _free_fixed_port "$_dns_port"; then
+            warn "Cannot free port ${_dns_port} — skipping domain registration."
+            warn "App will still start on its own port."
+            warn "Register later: cd ${PROJECT_NAME} && bin/semitexa local-domain:add ${_domain}"
+            LOCAL_DOMAIN=""
+            return
+        fi
+    done
+
+    # ── Register ──────────────────────────────────────────────────────────────
+    info "Registering ${_domain} with the shared local router..."
+    if [ -f "$_dns_bin" ]; then
+        if ( cd "$PROJECT_NAME" && sh ./bin/semitexa local-domain:add "$_domain" ); then
             success "Local domain registered: http://${_domain}"
-            info "To list domains:   sh bin/semitexa dns:list"
-            info "To remove later:   sh bin/semitexa dns:remove ${_domain}"
+            info "To list domains:   sh bin/semitexa local-domain:list"
+            info "To remove later:   sh bin/semitexa local-domain:remove ${_domain}"
         else
-            warn "DNS registration failed — run manually once the server is up:"
-            warn "  cd ${PROJECT_NAME} && sh bin/semitexa dns:add ${_domain}"
+            warn "Local domain registration failed — run manually once the server is up:"
+            warn "  cd ${PROJECT_NAME} && sh bin/semitexa local-domain:add ${_domain}"
             LOCAL_DOMAIN=""
         fi
     else
-        warn "bin/semitexa not found — skipping DNS registration."
-        warn "Register manually after start: cd ${PROJECT_NAME} && sh bin/semitexa dns:add ${_domain}"
+        warn "bin/semitexa not found — skipping local domain registration."
+        warn "Register manually after start: cd ${PROJECT_NAME} && sh bin/semitexa local-domain:add ${_domain}"
         LOCAL_DOMAIN=""
     fi
 }
@@ -877,7 +887,7 @@ ask_local_domain() {
     # we cannot generate a safe suggestion — skip gracefully.
     if [ "$_suggested" = ".test" ]; then
         warn "Could not derive a safe domain from project name '${PROJECT_NAME}'."
-        warn "Register manually later: bin/semitexa dns:add <name>.test"
+        warn "Register manually later: bin/semitexa local-domain:add <name>.test"
         return
     fi
 
@@ -892,7 +902,7 @@ ask_local_domain() {
             register_local_domain "$LOCAL_DOMAIN"
         else
             info "Local domain setup skipped (no TTY)."
-            info "Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add <name>.test"
+            info "Register later: cd ${PROJECT_NAME} && bin/semitexa local-domain:add <name>.test"
         fi
         return
     fi
@@ -906,7 +916,7 @@ ask_local_domain() {
     case "$_confirm" in
         n|N|no|No|NO)
             info "Local domain registration skipped."
-            info "Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add <name>.test"
+            info "Register later: cd ${PROJECT_NAME} && bin/semitexa local-domain:add <name>.test"
             return ;;
     esac
 
@@ -953,7 +963,7 @@ ask_local_domain() {
         error "Could not produce a valid .test domain from your input."
         error "Requirements: [a-z0-9-] only, no leading/trailing hyphens, 1–63 chars before .test"
         LOCAL_DOMAIN=""
-        info "Skipping. Register later: cd ${PROJECT_NAME} && bin/semitexa dns:add <name>.test"
+        info "Skipping. Register later: cd ${PROJECT_NAME} && bin/semitexa local-domain:add <name>.test"
         return
     fi
 
@@ -1110,7 +1120,7 @@ main() {
 
     step "[5/7] Local domain (optional)..."
     # ask_local_domain must run AFTER make_bin_executable so that
-    # register_local_domain can call bin/semitexa dns:add.
+    # register_local_domain can call bin/semitexa local-domain:add.
     # It must also run BEFORE print_next_steps so LOCAL_DOMAIN is available
     # for display. Called directly (not in a subshell) — see LOCAL_DOMAIN note.
     ask_local_domain

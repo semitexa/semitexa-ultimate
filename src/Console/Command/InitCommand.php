@@ -33,7 +33,6 @@ final class InitCommand extends Command
         'docker-compose.mysql.yml' => 'docker-compose.mysql.yml',
         'docker-compose.redis.yml' => 'docker-compose.redis.yml',
         'docker-compose.ollama.yml' => 'docker-compose.ollama.yml',
-        'docker-compose.dns.yml' => 'docker-compose.dns.yml',
         'phpunit.xml.dist' => 'phpunit.xml.dist',
         'bin/semitexa' => 'bin/semitexa',
         '.gitignore' => 'gitignore',
@@ -134,7 +133,6 @@ final class InitCommand extends Command
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
             'docker-compose.ollama.yml',
-            'docker-compose.dns.yml',
             'phpunit.xml.dist',
             'bin/semitexa',
             '.gitignore',
@@ -210,7 +208,6 @@ final class InitCommand extends Command
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
             'docker-compose.ollama.yml',
-            'docker-compose.dns.yml',
             'phpunit.xml.dist',
             'bin/semitexa',
             '.gitignore',
@@ -229,7 +226,7 @@ final class InitCommand extends Command
             $io->note('Skipped (exists): ' . $path . ' (use --force to overwrite)');
         }
 
-        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.example, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama, dns overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.example, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
         $io->text('.env is never touched. Copy new vars from .env.example to .env if needed.');
 
         return Command::SUCCESS;
