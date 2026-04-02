@@ -453,6 +453,7 @@ cmd_list() {
     printf "\n%s%s Semitexa Framework %s— CLI Commands\n\n" "$C_BOLD" "$C_GREEN" "$C_CYAN"
     printf "%s%s Shell Commands (no PHP required):%s\n" "$C_BOLD" "$C_YELLOW" "$C_RESET"
     printf "  %-32s %s\n" "install"       "Run composer install inside Docker (no local PHP needed)"
+    printf "  %-32s %s\n" "demo:install"  "Install semitexa/demo inside Docker"
     printf "  %-32s %s\n" "server:start"   "Start Semitexa environment (Docker Compose)"
     printf "  %-32s %s\n" "server:stop"    "Stop Semitexa environment"
     printf "  %-32s %s\n" "server:restart" "Restart Semitexa environment"
@@ -512,6 +513,26 @@ cmd_install() {
     $_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist
     if [ $? -eq 0 ]; then printf "\n"; success "Dependencies installed successfully!"; info "Next: bin/semitexa server:start"
     else printf "\n"; error "Installation failed. Check the output above."; exit 1; fi
+    printf "\n"
+}
+
+cmd_demo_install() {
+    printf "\n%s%s Semitexa — Install Demo %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    if ! has_compose; then error "Docker Compose is required. Install Docker Desktop or docker-compose."; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/Dockerfile" ]; then error "Dockerfile not found. Cannot build container for demo installation."; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/composer.json" ]; then error "composer.json not found. Is this a Semitexa project?"; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/.env" ]; then
+        if [ -f "$PROJECT_ROOT/.env.example" ]; then info "Creating .env from .env.example..."; cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"; success ".env created. Edit it later if needed."
+        elif [ -f "$PROJECT_ROOT/env.example" ]; then info "Creating .env from env.example..."; cp "$PROJECT_ROOT/env.example" "$PROJECT_ROOT/.env"; success ".env created. Edit it later if needed."
+        else warn "No .env, .env.example, or env.example found. Creating minimal .env..."; printf 'APP_ENV=dev\nAPP_DEBUG=1\nSWOOLE_HOST=0.0.0.0\nSWOOLE_PORT=9502\n' > "$PROJECT_ROOT/.env"; fi
+    fi
+    info "Installing semitexa/demo via Composer inside Docker..."
+    info "(This may take a few minutes on the first run)\n"
+    _compose="$(compose_bin)"; $_compose build app
+    $_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer config repositories.semitexa-demo vcs https://github.com/semitexa/semitexa-demo.git
+    $_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer require semitexa/demo:* --no-interaction --prefer-dist
+    if [ $? -eq 0 ]; then printf "\n"; success "Semitexa Demo installed (semitexa/demo)."; info "Start or restart the server to load the new routes."; info "Remove when done: composer remove semitexa/demo"
+    else printf "\n"; error "Demo installation failed. Check the output above."; exit 1; fi
     printf "\n"
 }
 
@@ -605,6 +626,7 @@ case "$COMMAND" in
     dns:stop)        cmd_dns_stop "$@" ;;
     dns:restart)     cmd_dns_restart "$@" ;;
     install)         cmd_install "$@" ;;
+    demo:install)    cmd_demo_install "$@" ;;
     list|help|--help|-h) cmd_list "$@" ;;
     self-test)       cmd_self_test "$@" ;;
     init)            cmd_init "$@" ;;
