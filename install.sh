@@ -1116,7 +1116,7 @@ main() {
     # Explicit post-install guard: the Docker-based scaffold can still fail to
     # materialize the project directory fully (e.g. disk full, volume mount
     # permission issue). Catching this here prevents cryptic downstream errors.
-    if [ ! -f "$PROJECT_NAME/bin/semitexa" ] || [ ! -f "$PROJECT_NAME/server.php" ]; then
+    if [ ! -f "$PROJECT_NAME/bin/semitexa" ] || [ ! -f "$PROJECT_NAME/scripts/bootstrap-project.sh" ] || [ ! -f "$PROJECT_NAME/docker-compose.yml" ]; then
         error "Project scaffold in '${PROJECT_NAME}' is incomplete."
         error "Possible causes: disk full, Docker volume permission error, or installer image failure."
         exit 1
