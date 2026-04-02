@@ -251,6 +251,52 @@ router_registry_count() {
     find "$ROUTER_REGISTRY_DIR" -maxdepth 1 -type f -name '*.env' 2>/dev/null | wc -l | tr -d ' '
 }
 
+router_collect_project_domains() {
+    _env_file="$PROJECT_ROOT/.env"
+    [ -f "$_env_file" ] || return 0
+
+    grep -E '^[[:space:]]*[A-Z0-9_]*DOMAIN[A-Z0-9_]*[[:space:]]*=' "$_env_file" 2>/dev/null \
+        | while IFS= read -r _line; do
+            _value="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+            printf '%s\n' "$_value" | tr ', ' '\n\n' | while IFS= read -r _candidate; do
+                _candidate="$(printf '%s' "$_candidate" | tr '[:upper:]' '[:lower:]')"
+                [ -n "$_candidate" ] || continue
+                if router_validate_domain "$_candidate"; then
+                    printf '%s\n' "$_candidate"
+                fi
+            done
+        done | sort -u
+}
+
+router_sync_project_domains() {
+    _domains="$(router_collect_project_domains || true)"
+    [ -n "$_domains" ] || return 0
+
+    _saved_project_root="$PROJECT_ROOT"
+    _port="$(env_val SWOOLE_PORT 8080)"
+    _mode="$(router_mode_get)"
+
+    router_ensure_dirs
+
+    for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ "$PROJECT_ROOT" = "$_saved_project_root" ] || continue
+        if ! printf '%s\n' "$_domains" | grep -Fx -- "$DOMAIN" >/dev/null 2>&1; then
+            rm -f "$_entry"
+        fi
+    done
+
+    PROJECT_ROOT="$_saved_project_root"
+    printf '%s\n' "$_domains" | while IFS= read -r _domain; do
+        [ -n "$_domain" ] || continue
+        router_registry_write_entry "$_domain" "$_port" "$_mode"
+    done
+    PROJECT_ROOT="$_saved_project_root"
+}
+
 router_project_domain_count() {
     _project_root="${1:-$PROJECT_ROOT}"
     _saved_project_root="$PROJECT_ROOT"
@@ -268,7 +314,8 @@ router_project_domain_count() {
 }
 
 project_has_shared_domains() {
-    [ "$(router_project_domain_count "$PROJECT_ROOT")" -gt 0 ]
+    [ "$(router_project_domain_count "$PROJECT_ROOT")" -gt 0 ] && return 0
+    [ -n "$(router_collect_project_domains || true)" ]
 }
 
 router_generate_nginx_config() {
@@ -496,10 +543,12 @@ router_start_for_mode() {
         dns)
             router_apply_name_resolution
             router_compose up -d dns proxy
+            router_compose restart dns proxy >/dev/null 2>&1 || true
             ;;
         hosts)
             router_compose up -d proxy
             router_compose stop dns >/dev/null 2>&1 || true
+            router_compose restart proxy >/dev/null 2>&1 || true
             ;;
     esac
 }
@@ -683,6 +732,7 @@ cmd_server_start() {
 
     # ── Pre-flight Checks (Proxy & DNS) ──────────────────────────────
     if project_has_shared_domains; then
+        router_sync_project_domains
         if command -v ss >/dev/null 2>&1; then
             _port80_pid="$(ss -ltnp 2>/dev/null | awk '$4 ~ /:80$/ {print $6}' | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n 1)"
             if [ -n "$_port80_pid" ]; then
