@@ -11,7 +11,7 @@
     },
     "require": {
         "php": "^8.4",
-        "semitexa/core": "1.1.63",
+        "semitexa/core": "1.1.64",
         "semitexa/docs": "1.0.22",
         "semitexa/auth": "1.0.15",
         "semitexa/authorization": "1.0.5",
@@ -28,7 +28,7 @@
         "semitexa/orm": "1.0.23",
         "semitexa/search": "1.0.3",
         "semitexa/mail": "0.0.4",
-        "semitexa/media": "0.0.5",
+        "semitexa/media": "0.0.6",
         "semitexa/llm": "1.0.3",
         "semitexa/scheduler": "0.0.4",
         "semitexa/blockchain": "1.0.6"
