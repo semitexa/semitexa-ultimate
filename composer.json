@@ -10,7 +10,7 @@
     },
     "require": {
         "php": "^8.4",
-        "semitexa/core": "1.1.61",
+        "semitexa/core": "1.1.62",
         "semitexa/docs": "1.0.22",
         "semitexa/auth": "1.0.15",
         "semitexa/authorization": "1.0.5",
