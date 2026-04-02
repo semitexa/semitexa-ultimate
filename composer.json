@@ -1,48 +1,48 @@
 {
-  "name": "semitexa/ultimate",
-  "description": "Semitexa Ultimate - full-stack project skeleton for SSR applications with docs and core modules",
-  "type": "project",
-  "license": "MIT",
-  "autoload": {
-    "psr-4": {
-      "App\\": "src/",
-      "Semitexa\\Ultimate\\": "src/"
-    }
-  },
-  "require": {
-    "php": "^8.4",
-    "semitexa/core": "1.1.62",
-    "semitexa/docs": "1.0.22",
-    "semitexa/auth": "1.0.15",
-    "semitexa/authorization": "1.0.5",
-    "semitexa/rbac": "1.0.5",
-    "semitexa/api": "0.1.3",
-    "semitexa/webhooks": "0.1.3",
-    "semitexa/workflow": "0.0.4",
-    "semitexa/cache": "1.0.3",
-    "semitexa/storage": "0.0.9",
-    "semitexa/ssr": "1.0.33",
-    "semitexa/dev": "1.0.3",
-    "semitexa/tenancy": "1.0.9",
-    "semitexa/locale": "1.0.12",
-    "semitexa/orm": "1.0.23",
-    "semitexa/search": "1.0.3",
-    "semitexa/mail": "0.0.4",
-    "semitexa/media": "0.0.4",
-    "semitexa/llm": "1.0.3",
-    "semitexa/scheduler": "0.0.4",
-    "semitexa/blockchain": "1.0.6"
-  },
-  "require-dev": {
-    "semitexa/testing": "1.0.10"
-  },
-  "keywords": [
-    "semitexa",
-    "ultimate",
-    "project-skeleton",
-    "ssr",
-    "twig",
-    "frontend",
-    "starter-kit"
-  ]
+    "name": "semitexa/ultimate",
+    "description": "Semitexa Ultimate - full-stack project skeleton for SSR applications with docs and core modules",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/",
+            "Semitexa\\Ultimate\\": "src/"
+        }
+    },
+    "require": {
+        "php": "^8.4",
+        "semitexa/core": "1.1.63",
+        "semitexa/docs": "1.0.22",
+        "semitexa/auth": "1.0.15",
+        "semitexa/authorization": "1.0.5",
+        "semitexa/rbac": "1.0.5",
+        "semitexa/api": "0.1.3",
+        "semitexa/webhooks": "0.1.3",
+        "semitexa/workflow": "0.0.4",
+        "semitexa/cache": "1.0.3",
+        "semitexa/storage": "0.0.9",
+        "semitexa/ssr": "1.0.33",
+        "semitexa/dev": "1.0.3",
+        "semitexa/tenancy": "1.0.9",
+        "semitexa/locale": "1.0.12",
+        "semitexa/orm": "1.0.23",
+        "semitexa/search": "1.0.3",
+        "semitexa/mail": "0.0.4",
+        "semitexa/media": "0.0.5",
+        "semitexa/llm": "1.0.3",
+        "semitexa/scheduler": "0.0.4",
+        "semitexa/blockchain": "1.0.6"
+    },
+    "require-dev": {
+        "semitexa/testing": "1.0.10"
+    },
+    "keywords": [
+        "semitexa",
+        "ultimate",
+        "project-skeleton",
+        "ssr",
+        "twig",
+        "frontend",
+        "starter-kit"
+    ]
 }
