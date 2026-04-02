@@ -11,7 +11,7 @@
   },
   "require": {
     "php": "^8.4",
-    "semitexa/core": "^1.1",
+    "semitexa/core": "1.1.62",
     "semitexa/docs": "1.0.22",
     "semitexa/auth": "1.0.15",
     "semitexa/authorization": "1.0.5",
@@ -34,7 +34,7 @@
     "semitexa/blockchain": "1.0.6"
   },
   "require-dev": {
-    "semitexa/testing": "^1.0"
+    "semitexa/testing": "1.0.10"
   },
   "keywords": [
     "semitexa",
