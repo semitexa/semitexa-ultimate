@@ -51,7 +51,6 @@ INSTALLER_IMAGE="${SEMITEXA_INSTALLER_IMAGE:-semitexa/installer}"
 # image. The generated project then performs dependency bootstrap in its own
 # `setup` container on first `docker compose up -d`.
 
-DEMO_IMAGE="${SEMITEXA_DEMO_IMAGE:-semitexa/demo}"
 # Optional demo package image. Adds working example code to the project so
 # developers can explore the framework without writing anything from scratch.
 
@@ -1013,33 +1012,16 @@ ask_install_demo() {
 
 install_demo() {
     info "Installing Semitexa Demo..."
-    info "(Pulling demo image — this may take a moment)\n"
+    info "(Running Composer inside the project Docker image — this may take a moment)\n"
 
-    if docker run --rm \
-            -v "$(pwd)/${PROJECT_NAME}:/app" \
-            "$DEMO_IMAGE" \
-            install; then
-
-        # Fix ownership — demo image may run as root just like the installer image.
-        _uid="$(id -u)"
-        _gid="$(id -g)"
-        _vendor_owner="$(stat -c '%u' "${PROJECT_NAME}/vendor" 2>/dev/null \
-            || stat -f '%u' "${PROJECT_NAME}/vendor" 2>/dev/null \
-            || echo "$_uid")"
-        if [ "$_vendor_owner" != "$_uid" ]; then
-            chown -R "${_uid}:${_gid}" "$PROJECT_NAME" 2>/dev/null \
-            || docker run --rm -v "$(pwd):/work" alpine \
-                chown -R "${_uid}:${_gid}" "/work/${PROJECT_NAME}" 2>/dev/null \
-            || warn "Could not fix demo file ownership. Run: sudo chown -R $(id -un):$(id -gn) ./${PROJECT_NAME}"
-        fi
-
+    if (cd "$PROJECT_NAME" && sh bin/semitexa demo:install); then
         printf "\n"
         success "Semitexa Demo installed (semitexa/demo)."
         info "Start the server and explore the demo routes to see it in action."
         info "Remove when done: cd ${PROJECT_NAME} && composer remove semitexa/demo"
         printf "\n"
     else
-        warn "Demo installation failed — the image may not be available yet."
+        warn "Demo installation failed."
         warn "Try again later: cd ${PROJECT_NAME} && bin/semitexa demo:install"
         printf "\n"
     fi
