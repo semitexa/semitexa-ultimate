@@ -38,6 +38,10 @@ Optional env hints:
 - `ROBOTS_HOST=example.com`
 - `AI_SITEMAP_URL=https://example.com/sitemap.json`
 
+## Package Registry
+
+`semitexa/ultimate` pins exact Semitexa package versions, but it intentionally does not hardcode a private Composer repository URL into `composer.json`. Generated projects are expected to resolve these internal packages through the Composer repository and credentials configured in the installation environment.
+
 ## Notes
 
 Run `docker run --rm -v "$(pwd)":/app semitexa/installer install` to scaffold a new project, then `bin/semitexa server:start` to start.
