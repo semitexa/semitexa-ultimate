@@ -828,9 +828,21 @@ _free_fixed_port() {
 #   bin/semitexa local-domain:mode [dns|hosts]      — inspect or switch mode
 register_local_domain() {
     _domain="$1"
+    _router_mode="hosts"
+    _ports="80"
 
-    info "Checking ports required by the shared local router..."
-    for _dns_port in 80 5553; do
+    _dns_bin="${PROJECT_NAME}/bin/semitexa"
+    if [ -f "$_dns_bin" ]; then
+        _router_mode="$(
+            cd "$PROJECT_NAME" && sh ./bin/semitexa local-domain:mode 2>/dev/null || printf 'hosts'
+        )"
+    fi
+    if [ "$_router_mode" = "dns" ]; then
+        _ports="80 5553"
+    fi
+
+    info "Checking ports required by the shared local router (${_router_mode} mode)..."
+    for _dns_port in $_ports; do
         if ! _free_fixed_port "$_dns_port"; then
             warn "Cannot free port ${_dns_port} — skipping domain registration."
             warn "App will still start on its own port."
@@ -842,7 +854,6 @@ register_local_domain() {
 
     # ── Register ──────────────────────────────────────────────────────────────
     info "Registering ${_domain} with the shared local router..."
-    _dns_bin="${PROJECT_NAME}/bin/semitexa"
     if [ -f "$_dns_bin" ]; then
         if ( cd "$PROJECT_NAME" && sh ./bin/semitexa local-domain:add "$_domain" ); then
             success "Local domain registered: http://${_domain}"
