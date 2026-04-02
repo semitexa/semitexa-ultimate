@@ -7,8 +7,8 @@
 # Server lifecycle commands (server:start, server:stop, server:restart) are
 # handled natively in this shell script via Docker Compose.
 #
-# DNS management commands (dns:add, dns:remove, dns:list, dns:start, dns:stop)
-# manage a lightweight dnsmasq container for local multi-tenancy testing.
+# Local routing commands (local-router:* and local-domain:*) manage the shared
+# Semitexa workstation router for .test domains.
 #
 # All other commands are proxied into the running "app" container so PHP
 # execution always uses the exact same runtime that powers the framework.
@@ -104,11 +104,6 @@ compose_args() {
         _llm_provider="$(env_val LLM_PROVIDER "")"
         if [ "$_llm_provider" = "ollama" ]; then _args="$_args -f docker-compose.ollama.yml"; _has_overlay=1; fi
     fi
-    if [ -f "$PROJECT_ROOT/docker-compose.dns.yml" ]; then
-        _args="$_args -f docker-compose.dns.yml"
-        _has_overlay=1
-    fi
-
     if [ "$_has_overlay" -eq 0 ]; then
         echo ""
     else
@@ -168,6 +163,475 @@ wait_for_service() {
     return 1
 }
 
+# ── Shared local router helpers ─────────────────────────────────────────────
+SEMITEXA_HOME="${SEMITEXA_HOME:-$HOME/.semitexa}"
+ROUTER_ROOT="$SEMITEXA_HOME/router"
+ROUTER_COMPOSE="$ROUTER_ROOT/docker-compose.yml"
+ROUTER_MODE_FILE="$ROUTER_ROOT/mode"
+ROUTER_REGISTRY_DIR="$ROUTER_ROOT/registry/domains"
+ROUTER_NGINX_DIR="$ROUTER_ROOT/nginx/generated"
+ROUTER_DNS_DIR="$ROUTER_ROOT/dns/generated"
+ROUTER_NGINX_DEFAULT="$ROUTER_NGINX_DIR/default.conf"
+ROUTER_NGINX_DOMAINS="$ROUTER_NGINX_DIR/domains.conf"
+ROUTER_DNSMASQ_CONF="$ROUTER_DNS_DIR/dnsmasq.conf"
+ROUTER_DNS_DOMAINS="$ROUTER_DNS_DIR/domains.conf"
+
+router_ensure_dirs() {
+    mkdir -p "$ROUTER_ROOT" "$ROUTER_REGISTRY_DIR" "$ROUTER_NGINX_DIR" "$ROUTER_DNS_DIR"
+}
+
+router_entry_key() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.-' '_'
+}
+
+router_entry_path() {
+    printf '%s/%s.env' "$ROUTER_REGISTRY_DIR" "$(router_entry_key "$1")"
+}
+
+router_mode_get() {
+    if [ -f "$ROUTER_MODE_FILE" ]; then
+        _mode="$(tr -d '[:space:]' < "$ROUTER_MODE_FILE" 2>/dev/null || true)"
+        case "$_mode" in dns|hosts) printf '%s' "$_mode"; return ;; esac
+    fi
+    printf 'dns'
+}
+
+router_mode_set() {
+    _mode="$1"
+    case "$_mode" in
+        dns|hosts) ;;
+        *)
+            error "Unsupported local router mode: $_mode"
+            exit 1
+            ;;
+    esac
+    router_ensure_dirs
+    printf '%s\n' "$_mode" > "$ROUTER_MODE_FILE"
+}
+
+router_validate_domain() {
+    _domain="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$_domain" in
+        *.test) ;;
+        *) return 1 ;;
+    esac
+    _label="${_domain%.test}"
+    [ -n "$_label" ] || return 1
+    case "$_label" in
+        *[!a-z0-9.-]*|-*|*-) return 1 ;;
+    esac
+    return 0
+}
+
+router_registry_write_entry() {
+    _domain="$1"
+    _upstream_port="$2"
+    _mode="$3"
+    _path="$(router_entry_path "$_domain")"
+    _compose_project_name="$(basename "$PROJECT_ROOT")"
+
+    router_ensure_dirs
+    cat > "$_path" <<EOF
+DOMAIN=$_domain
+PROJECT_ROOT=$PROJECT_ROOT
+COMPOSE_PROJECT_NAME=$_compose_project_name
+UPSTREAM_HOST=host.docker.internal
+UPSTREAM_PORT=$_upstream_port
+MODE=$_mode
+UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+EOF
+}
+
+router_registry_delete_entry() {
+    _domain="$1"
+    rm -f "$(router_entry_path "$_domain")"
+}
+
+router_registry_count() {
+    find "$ROUTER_REGISTRY_DIR" -maxdepth 1 -type f -name '*.env' 2>/dev/null | wc -l | tr -d ' '
+}
+
+router_project_domain_count() {
+    _project_root="${1:-$PROJECT_ROOT}"
+    _saved_project_root="$PROJECT_ROOT"
+    _count=0
+    for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ "$PROJECT_ROOT" = "$_project_root" ] || continue
+        _count=$((_count + 1))
+    done
+    PROJECT_ROOT="$_saved_project_root"
+    printf '%s' "$_count"
+}
+
+project_has_shared_domains() {
+    [ "$(router_project_domain_count "$PROJECT_ROOT")" -gt 0 ]
+}
+
+router_generate_nginx_config() {
+    router_ensure_dirs
+    _saved_project_root="$PROJECT_ROOT"
+    cat > "$ROUTER_NGINX_DEFAULT" <<'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+
+    default_type text/plain;
+
+    location / {
+        return 404 "Semitexa local router: domain is not registered or its upstream is unavailable.\n";
+    }
+}
+EOF
+
+    : > "$ROUTER_NGINX_DOMAINS"
+    for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ -n "$DOMAIN" ] || continue
+        [ -n "$UPSTREAM_PORT" ] || continue
+        cat >> "$ROUTER_NGINX_DOMAINS" <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location / {
+        proxy_pass http://$UPSTREAM_HOST:$UPSTREAM_PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+
+EOF
+    done
+    PROJECT_ROOT="$_saved_project_root"
+}
+
+router_generate_dns_config() {
+    router_ensure_dirs
+    _saved_project_root="$PROJECT_ROOT"
+    cat > "$ROUTER_DNSMASQ_CONF" <<'EOF'
+port=53
+no-resolv
+no-daemon
+log-queries
+conf-file=/etc/dnsmasq.d/domains.conf
+EOF
+
+    : > "$ROUTER_DNS_DOMAINS"
+    for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        DOMAIN='' MODE=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ -n "$DOMAIN" ] || continue
+        printf 'address=/%s/127.0.0.1\n' "$DOMAIN" >> "$ROUTER_DNS_DOMAINS"
+    done
+    PROJECT_ROOT="$_saved_project_root"
+}
+
+router_generate_compose() {
+    router_ensure_dirs
+    cat > "$ROUTER_COMPOSE" <<EOF
+services:
+  dns:
+    image: alpine:3.21
+    container_name: semitexa-router-dns
+    restart: unless-stopped
+    command: ["sh", "-c", "apk add --no-cache dnsmasq && dnsmasq --keep-in-foreground --conf-file=/etc/dnsmasq.d/dnsmasq.conf"]
+    ports:
+      - "127.0.0.1:5553:53/udp"
+      - "127.0.0.1:5553:53/tcp"
+    volumes:
+      - $ROUTER_DNSMASQ_CONF:/etc/dnsmasq.d/dnsmasq.conf:ro
+      - $ROUTER_DNS_DOMAINS:/etc/dnsmasq.d/domains.conf:ro
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "nslookup", "localhost", "127.0.0.1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  proxy:
+    image: nginx:alpine
+    container_name: semitexa-router-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - $ROUTER_NGINX_DEFAULT:/etc/nginx/conf.d/default.conf:ro
+      - $ROUTER_NGINX_DOMAINS:/etc/nginx/conf.d/semitexa-domains.conf:ro
+EOF
+}
+
+router_render() {
+    router_generate_compose
+    router_generate_nginx_config
+    router_generate_dns_config
+}
+
+router_compose() {
+    _compose="$(compose_bin)"
+    $_compose -f "$ROUTER_COMPOSE" "$@"
+}
+
+router_configure_resolved_for_test() {
+    if ! command -v systemctl >/dev/null 2>&1 || ! systemctl is-active --quiet systemd-resolved; then
+        return 0
+    fi
+
+    _needs_restart=0
+    if grep -qi "^DNSStubListener=no" /etc/systemd/resolved.conf 2>/dev/null; then
+        warn "systemd-resolved has DNSStubListener=no (breaks shared .test resolution)."
+        printf "%s? Do you want to fix this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
+        read -r _ans </dev/tty
+        if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
+            sudo sed -i 's/^DNSStubListener=no/DNSStubListener=yes/i' /etc/systemd/resolved.conf
+            success "Set DNSStubListener=yes"
+            _needs_restart=1
+        fi
+    fi
+
+    if [ ! -f /etc/systemd/resolved.conf.d/semitexa-router.conf ]; then
+        info "Shared Semitexa router is not yet bound to .test."
+        printf "%s? Do you want to configure this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
+        read -r _ans </dev/tty
+        if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
+            sudo mkdir -p /etc/systemd/resolved.conf.d/
+            printf "[Resolve]\nDNS=127.0.0.1:5553\nDomains=~test\n" | sudo tee /etc/systemd/resolved.conf.d/semitexa-router.conf >/dev/null
+            success "Created /etc/systemd/resolved.conf.d/semitexa-router.conf"
+            _needs_restart=1
+        fi
+    fi
+
+    if [ "$_needs_restart" -eq 1 ]; then
+        info "Restarting systemd-resolved to apply shared .test routing..."
+        sudo systemctl restart systemd-resolved
+        sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+        success "systemd-resolved restarted and configured!"
+        echo ""
+    fi
+}
+
+router_hosts_remove_domain() {
+    _domain="$1"
+    _tmp="$(mktemp)"
+    grep -v "^[[:space:]]*127\\.0\\.0\\.1[[:space:]].*${_domain}.*# semitexa-router\$" /etc/hosts > "$_tmp" 2>/dev/null || true
+    sudo tee /etc/hosts >/dev/null < "$_tmp"
+    rm -f "$_tmp"
+}
+
+router_hosts_ensure_domain() {
+    _domain="$1"
+    if grep -q "^[[:space:]]*127\\.0\\.0\\.1[[:space:]].*${_domain}.*# semitexa-router\$" /etc/hosts 2>/dev/null; then
+        return 0
+    fi
+    printf '127.0.0.1 %s # semitexa-router\n' "$_domain" | sudo tee -a /etc/hosts >/dev/null
+}
+
+router_apply_name_resolution() {
+    _mode="$(router_mode_get)"
+    _domain="${1:-}"
+
+    case "$_mode" in
+        dns)
+            router_configure_resolved_for_test
+            [ -n "$_domain" ] && router_hosts_remove_domain "$_domain" >/dev/null 2>&1 || true
+            ;;
+        hosts)
+            [ -n "$_domain" ] && router_hosts_ensure_domain "$_domain"
+            ;;
+    esac
+}
+
+router_start_for_mode() {
+    _mode="$(router_mode_get)"
+    router_render
+    case "$_mode" in
+        dns)
+            router_apply_name_resolution
+            router_compose up -d dns proxy
+            ;;
+        hosts)
+            router_compose up -d proxy
+            router_compose stop dns >/dev/null 2>&1 || true
+            ;;
+    esac
+}
+
+cmd_local_router_init() {
+    printf "\n%s%s Semitexa — Shared Local Router Init %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    router_ensure_dirs
+    router_mode_set "$(router_mode_get)"
+    router_render
+    success "Shared local router workspace prepared at $ROUTER_ROOT"
+    info "Mode: $(router_mode_get)"
+    printf "\n"
+}
+
+cmd_local_router_start() {
+    printf "\n%s%s Semitexa — Shared Local Router Start %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    cmd_local_router_init >/dev/null
+    router_start_for_mode
+    success "Shared local router started."
+    info "Mode: $(router_mode_get)"
+    printf "\n"
+}
+
+cmd_local_router_stop() {
+    printf "\n%s%s Semitexa — Shared Local Router Stop %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    if [ ! -f "$ROUTER_COMPOSE" ]; then
+        info "Shared local router is not initialized."
+        exit 0
+    fi
+    router_compose down
+    success "Shared local router stopped."
+    printf "\n"
+}
+
+cmd_local_router_restart() {
+    printf "\n%s%s Semitexa — Shared Local Router Restart %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    cmd_local_router_init >/dev/null
+    router_render
+    _mode="$(router_mode_get)"
+    case "$_mode" in
+        dns)
+            router_compose restart dns proxy
+            ;;
+        hosts)
+            router_compose restart proxy
+            ;;
+    esac
+    success "Shared local router restarted."
+    printf "\n"
+}
+
+cmd_local_router_doctor() {
+    printf "\n%s%s Semitexa — Shared Local Router Doctor %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    if [ ! -d "$ROUTER_ROOT" ]; then
+        warn "Shared local router workspace does not exist."
+        info "Run: bin/semitexa local-router:init"
+        exit 1
+    fi
+
+    info "Root: $ROUTER_ROOT"
+    info "Mode: $(router_mode_get)"
+    info "Registered domains: $(router_registry_count)"
+
+    if [ -f "$ROUTER_COMPOSE" ]; then
+        printf "\n"
+        router_compose ps || true
+    fi
+
+    printf "\n"
+    cmd_local_domain_list
+}
+
+cmd_local_domain_mode() {
+    _mode="${1:-}"
+    if [ -z "$_mode" ]; then
+        printf "%s\n" "$(router_mode_get)"
+        exit 0
+    fi
+    router_mode_set "$_mode"
+    router_render
+    success "Shared local router mode set to $_mode."
+    case "$_mode" in
+        dns)
+            info "Restart the shared router to enable shared .test DNS."
+            ;;
+        hosts)
+            info "Future domain registrations will write /etc/hosts entries."
+            ;;
+    esac
+}
+
+cmd_local_domain_add() {
+    _domain="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$_domain" ]; then
+        error "Usage: bin/semitexa local-domain:add <domain.test>"
+        exit 1
+    fi
+    if ! router_validate_domain "$_domain"; then
+        error "Only valid .test domains are supported."
+        exit 1
+    fi
+
+    _port="$(env_val SWOOLE_PORT 8080)"
+    cmd_local_router_init >/dev/null
+    router_registry_write_entry "$_domain" "$_port" "$(router_mode_get)"
+    router_render
+    router_apply_name_resolution "$_domain"
+    if [ -f "$ROUTER_COMPOSE" ]; then
+        router_start_for_mode
+        if [ "$(router_mode_get)" = "dns" ]; then
+            router_compose restart dns proxy >/dev/null 2>&1 || true
+        else
+            router_compose restart proxy >/dev/null 2>&1 || true
+        fi
+    fi
+
+    success "Registered shared local domain: $_domain -> http://host.docker.internal:${_port}"
+}
+
+cmd_local_domain_remove() {
+    _domain="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$_domain" ]; then
+        error "Usage: bin/semitexa local-domain:remove <domain.test>"
+        exit 1
+    fi
+    _path="$(router_entry_path "$_domain")"
+    if [ ! -f "$_path" ]; then
+        warn "Domain '$_domain' is not registered in the shared router."
+        exit 0
+    fi
+
+    router_registry_delete_entry "$_domain"
+    router_render
+    router_hosts_remove_domain "$_domain" >/dev/null 2>&1 || true
+    if [ -f "$ROUTER_COMPOSE" ]; then
+        if [ "$(router_mode_get)" = "dns" ]; then
+            router_compose restart dns proxy >/dev/null 2>&1 || true
+        else
+            router_compose restart proxy >/dev/null 2>&1 || true
+        fi
+    fi
+
+    success "Removed shared local domain: $_domain"
+}
+
+cmd_local_domain_list() {
+    printf "\n%s%s Semitexa — Shared Local Domains %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    router_ensure_dirs
+    _saved_project_root="$PROJECT_ROOT"
+    _count=0
+    for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        DOMAIN='' UPSTREAM_PORT='' PROJECT_ROOT='' MODE=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ -n "$DOMAIN" ] || continue
+        printf "  %s%-30s%s → host.docker.internal:%s [%s]\n" "$C_GREEN" "$DOMAIN" "$C_RESET" "$UPSTREAM_PORT" "$MODE"
+        _count=$((_count + 1))
+    done
+    printf "\n"
+    [ "$_count" -eq 0 ] && info "No shared local domains registered."
+    [ "$_count" -gt 0 ] && info "$_count shared domain(s) configured."
+    PROJECT_ROOT="$_saved_project_root"
+    printf "\n"
+}
+
 # ═══════════════════════════════════════════════════════════════════════
 #  server:start
 # ═══════════════════════════════════════════════════════════════════════
@@ -184,14 +648,14 @@ cmd_server_start() {
     [ -n "$_overlays" ] && info "Compose files: $_overlays"
 
     # ── Pre-flight Checks (Proxy & DNS) ──────────────────────────────
-    if [ -f "$PROJECT_ROOT/docker-compose.dns.yml" ]; then
+    if project_has_shared_domains; then
         if command -v ss >/dev/null 2>&1; then
             _port80_pid="$(ss -ltnp 2>/dev/null | awk '$4 ~ /:80$/ {print $6}' | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n 1)"
             if [ -n "$_port80_pid" ]; then
                 _port80_proc="$(ps -p "$_port80_pid" -o comm= 2>/dev/null || echo "unknown")"
                 if [ "$_port80_proc" != "docker-proxy" ] && [ "$_port80_proc" != "docker" ] && [ "$_port80_proc" != "dockerd" ]; then
                     warn "Port 80 is occupied by '$_port80_proc' (PID: $_port80_pid)."
-                    warn "The Nginx Proxy container will fail to start."
+                    warn "The shared Semitexa proxy will fail to start."
                     printf "%s? Do you want to stop it now? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
                     read -r _ans </dev/tty
                     if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
@@ -203,36 +667,11 @@ cmd_server_start() {
             fi
         fi
 
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet systemd-resolved; then
-            _needs_restart=0
-            if grep -qi "^DNSStubListener=no" /etc/systemd/resolved.conf 2>/dev/null; then
-                warn "systemd-resolved has DNSStubListener=no (breaks local .dev resolution)."
-                printf "%s? Do you want to fix this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
-                read -r _ans </dev/tty
-                if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
-                    sudo sed -i 's/^DNSStubListener=no/DNSStubListener=yes/i' /etc/systemd/resolved.conf
-                    success "Set DNSStubListener=yes"
-                    _needs_restart=1
-                fi
-            fi
-            if [ ! -f /etc/systemd/resolved.conf.d/semitexa.conf ]; then
-                info "Local .dev domains are not yet bound to the Semitexa DNS container."
-                printf "%s? Do you want to configure this automatically? (requires sudo) [Y/n]%s " "$C_YELLOW" "$C_RESET"
-                read -r _ans </dev/tty
-                if [ "$_ans" != "n" ] && [ "$_ans" != "N" ]; then
-                    sudo mkdir -p /etc/systemd/resolved.conf.d/
-                    printf "[Resolve]\nDNS=127.0.0.1:5553\nDomains=~dev ~local ~test\n" | sudo tee /etc/systemd/resolved.conf.d/semitexa.conf >/dev/null
-                    success "Created /etc/systemd/resolved.conf.d/semitexa.conf"
-                    _needs_restart=1
-                fi
-            fi
-            if [ "$_needs_restart" -eq 1 ]; then
-                info "Restarting systemd-resolved to apply changes..."
-                sudo systemctl restart systemd-resolved
-                sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-                success "systemd-resolved restarted and configured!"
-                echo ""
-            fi
+        info "Project uses shared local routing. Ensuring shared router is running..."
+        if ! router_start_for_mode; then
+            error "Failed to start the shared local router."
+            info "Inspect it with: bin/semitexa local-router:doctor"
+            exit 1
         fi
     fi
 
@@ -259,9 +698,9 @@ cmd_server_start() {
     _redis="$(env_val REDIS_HOST "")"
     [ -n "$_redis" ] && [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ] && wait_for_service "Redis" "redis" "6379" 3 2 1 || true
 
-    if [ -f "$PROJECT_ROOT/docker-compose.dns.yml" ] && [ -f "$PROJECT_ROOT/var/dns/domains.conf" ]; then
-        _count="$(grep -c '^address=' "$PROJECT_ROOT/var/dns/domains.conf" 2>/dev/null || echo 0)"
-        [ "$_count" -gt 0 ] && info "DNS: $_count local domain(s) configured (bin/semitexa dns:list)"
+    if project_has_shared_domains; then
+        _count="$(router_project_domain_count "$PROJECT_ROOT")"
+        [ "$_count" -gt 0 ] && info "Shared router: $_count local domain(s) configured (bin/semitexa local-domain:list)"
     fi
 
     printf "\n"
@@ -318,137 +757,6 @@ cmd_server_restart() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-#  DNS Management
-# ═══════════════════════════════════════════════════════════════════════
-DNS_DIR="$PROJECT_ROOT/var/dns"
-DNS_CONF="$DNS_DIR/dnsmasq.conf"
-DNS_DOMAINS="$DNS_DIR/domains.conf"
-DNS_COMPOSE="$PROJECT_ROOT/docker-compose.dns.yml"
-
-dns_ensure_dir() { mkdir -p "$DNS_DIR"; }
-
-dns_ensure_config() {
-    dns_ensure_dir
-    if [ ! -f "$DNS_CONF" ]; then
-        cat > "$DNS_CONF" << 'DNSMASQ_CONF'
-port=53
-no-resolv
-no-daemon
-log-queries
-conf-file=/etc/dnsmasq.d/domains.conf
-DNSMASQ_CONF
-    fi
-    [ ! -f "$DNS_DOMAINS" ] && printf "# Semitexa local domains\n" > "$DNS_DOMAINS"
-}
-
-dns_ensure_compose() {
-    if [ ! -f "$DNS_COMPOSE" ]; then
-        cat > "$DNS_COMPOSE" << 'DNS_YML'
-# Semitexa Local DNS & Nginx Proxy
-services:
-  dns:
-    image: alpine:3.21
-    restart: unless-stopped
-    command: ["sh", "-c", "apk add --no-cache dnsmasq && dnsmasq --keep-in-foreground --conf-file=/etc/dnsmasq.d/dnsmasq.conf"]
-    ports:
-      - "127.0.0.1:5553:53/udp"
-      - "127.0.0.1:5553:53/tcp"
-    volumes:
-      - ./var/dns/dnsmasq.conf:/etc/dnsmasq.d/dnsmasq.conf:ro
-      - ./var/dns/domains.conf:/etc/dnsmasq.d/domains.conf:ro
-    cap_add:
-      - NET_ADMIN
-    healthcheck:
-      test: ["CMD", "nslookup", "localhost", "127.0.0.1"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-
-  proxy:
-    image: nginx:alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    command: >
-      sh -c '
-      echo "server {
-        listen 80 default_server;
-        server_name _;
-        location / {
-          proxy_pass http://app:${SWOOLE_PORT:-9502};
-          proxy_set_header Host $$host;
-          proxy_set_header X-Real-IP $$remote_addr;
-          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto $$scheme;
-        }
-      }" > /etc/nginx/conf.d/default.conf && nginx -g "daemon off;"'
-    depends_on:
-      - app
-DNS_YML
-        info "Created docker-compose.dns.yml"
-    fi
-}
-
-cmd_dns_add() {
-    _domain="${1:-}" _ip="${2:-127.0.0.1}"
-    if [ -z "$_domain" ]; then
-        error "Usage: bin/semitexa dns:add <domain> [ip]"
-        exit 1
-    fi
-    dns_ensure_config
-    dns_ensure_compose
-
-    if grep -q "^address=/${_domain}/" "$DNS_DOMAINS" 2>/dev/null; then
-        _escaped="$(echo "$_domain" | sed 's/[.]/\\./g')"
-        sed -i.bak "s|^address=/${_escaped}/.*|address=/${_domain}/${_ip}|" "$DNS_DOMAINS"
-        rm -f "${DNS_DOMAINS}.bak"
-        success "Updated: $_domain → $_ip"
-    else
-        echo "address=/${_domain}/${_ip}" >> "$DNS_DOMAINS"
-        success "Added: $_domain → $_ip"
-    fi
-
-    _compose="$(compose_bin)"
-    _st="$($_compose -f docker-compose.yml -f docker-compose.dns.yml ps --format '{{.State}}' dns 2>/dev/null || true)"
-    case "$_st" in *running*) $_compose -f docker-compose.yml -f docker-compose.dns.yml restart dns proxy; success "DNS restarted." ;; esac
-}
-
-cmd_dns_remove() {
-    _domain="${1:-}"
-    [ -z "$_domain" ] && { error "Usage: bin/semitexa dns:remove <domain>"; exit 1; }
-    dns_ensure_config
-    if ! grep -q "^address=/${_domain}/" "$DNS_DOMAINS" 2>/dev/null; then
-        warn "Domain '$_domain' not found."; exit 0
-    fi
-    _escaped="$(echo "$_domain" | sed 's/[.]/\\./g')"
-    sed -i.bak "/^address=\/${_escaped}\//d" "$DNS_DOMAINS"; rm -f "${DNS_DOMAINS}.bak"
-    success "Removed: $_domain"
-    _compose="$(compose_bin)"
-    _st="$($_compose -f docker-compose.yml -f docker-compose.dns.yml ps --format '{{.State}}' dns 2>/dev/null || true)"
-    case "$_st" in *running*) $_compose -f docker-compose.yml -f docker-compose.dns.yml restart dns proxy ;; esac
-}
-
-cmd_dns_list() {
-    printf "\n%s%s Semitexa — Local DNS Domains %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
-    dns_ensure_config
-    _count=0
-    if [ -f "$DNS_DOMAINS" ]; then
-        while IFS= read -r _line; do
-            case "$_line" in address=/*) _domain="$(echo "$_line" | sed 's|address=/\([^/]*\)/.*|\1|')"; _ip="$(echo "$_line" | sed 's|address=/[^/]*/||')"; printf "  %s%-30s%s → %s\n" "$C_GREEN" "$_domain" "$C_RESET" "$_ip"; _count=$((_count + 1)) ;; esac
-        done < "$DNS_DOMAINS"
-    fi
-    printf "\n"
-    [ "$_count" -eq 0 ] && info "No domains configured. Add one: bin/semitexa dns:add shop.local"
-    [ "$_count" -gt 0 ] && info "$_count domain(s) configured."
-    printf "\n"
-}
-
-cmd_dns_start() { dns_ensure_config; dns_ensure_compose; _compose="$(compose_bin)"; $_compose -f docker-compose.yml -f docker-compose.dns.yml up -d dns proxy; success "DNS (5553) and Proxy (80) started."; }
-cmd_dns_stop()  { [ ! -f "$DNS_COMPOSE" ] && { info "No DNS configured."; exit 0; }; _compose="$(compose_bin)"; $_compose -f docker-compose.yml -f docker-compose.dns.yml stop dns proxy; success "DNS and Proxy stopped."; }
-cmd_dns_restart() { [ ! -f "$DNS_COMPOSE" ] && { info "No DNS configured."; exit 0; }; _compose="$(compose_bin)"; $_compose -f docker-compose.yml -f docker-compose.dns.yml restart dns proxy; success "DNS and Proxy restarted."; }
-
-# ═══════════════════════════════════════════════════════════════════════
 cmd_list() {
     printf "\n%s%s Semitexa Framework %s— CLI Commands\n\n" "$C_BOLD" "$C_GREEN" "$C_CYAN"
     printf "%s%s Shell Commands (no PHP required):%s\n" "$C_BOLD" "$C_YELLOW" "$C_RESET"
@@ -457,12 +765,15 @@ cmd_list() {
     printf "  %-32s %s\n" "server:start"   "Start Semitexa environment (Docker Compose)"
     printf "  %-32s %s\n" "server:stop"    "Stop Semitexa environment"
     printf "  %-32s %s\n" "server:restart" "Restart Semitexa environment"
-    printf "  %-32s %s\n" "dns:add <domain> [ip]" "Add local domain"
-    printf "  %-32s %s\n" "dns:remove <domain>"   "Remove local domain"
-    printf "  %-32s %s\n" "dns:list"              "List configured local domains"
-    printf "  %-32s %s\n" "dns:start"             "Start DNS container"
-    printf "  %-32s %s\n" "dns:stop"              "Stop DNS container"
-    printf "  %-32s %s\n" "dns:restart"           "Restart DNS container"
+    printf "  %-32s %s\n" "local-router:init"       "Prepare shared local router workspace"
+    printf "  %-32s %s\n" "local-router:start"      "Start shared local router"
+    printf "  %-32s %s\n" "local-router:stop"       "Stop shared local router"
+    printf "  %-32s %s\n" "local-router:restart"    "Restart shared local router"
+    printf "  %-32s %s\n" "local-router:doctor"     "Inspect shared local router state"
+    printf "  %-32s %s\n" "local-domain:mode [dns|hosts]" "Get or set shared local domain mode"
+    printf "  %-32s %s\n" "local-domain:add <domain.test>" "Register shared local domain"
+    printf "  %-32s %s\n" "local-domain:remove <domain.test>" "Remove shared local domain"
+    printf "  %-32s %s\n" "local-domain:list"       "List shared local domains"
     printf "  %-32s %s\n" "self-test"             "Verify setup"
     printf "  %-32s %s\n" "list"                  "Show this help"
 
@@ -619,12 +930,15 @@ case "$COMMAND" in
     server:start)    cmd_server_start "$@" ;;
     server:stop)     cmd_server_stop "$@" ;;
     server:restart)  _svc=""; while [ $# -gt 0 ]; do case "$1" in --service=*) _svc="${1#--service=}" ;; -s) shift; _svc="${1:-}" ;; *) _svc="$1" ;; esac; shift; done; cmd_server_restart "$_svc" ;;
-    dns:add)         cmd_dns_add "$@" ;;
-    dns:remove)      cmd_dns_remove "$@" ;;
-    dns:list)        cmd_dns_list "$@" ;;
-    dns:start)       cmd_dns_start "$@" ;;
-    dns:stop)        cmd_dns_stop "$@" ;;
-    dns:restart)     cmd_dns_restart "$@" ;;
+    local-router:init) cmd_local_router_init "$@" ;;
+    local-router:start) cmd_local_router_start "$@" ;;
+    local-router:stop) cmd_local_router_stop "$@" ;;
+    local-router:restart) cmd_local_router_restart "$@" ;;
+    local-router:doctor) cmd_local_router_doctor "$@" ;;
+    local-domain:mode) cmd_local_domain_mode "$@" ;;
+    local-domain:add) cmd_local_domain_add "$@" ;;
+    local-domain:remove) cmd_local_domain_remove "$@" ;;
+    local-domain:list) cmd_local_domain_list "$@" ;;
     install)         cmd_install "$@" ;;
     demo:install)    cmd_demo_install "$@" ;;
     list|help|--help|-h) cmd_list "$@" ;;
