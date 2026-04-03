@@ -1,4 +1,4 @@
-# semitexa/ultimate
+# Semitexa Ultimate
 
 Full-stack project skeleton for SSR applications with Docker-based setup.
 
