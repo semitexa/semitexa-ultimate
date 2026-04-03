@@ -787,6 +787,12 @@ _free_fixed_port() {
 
     [ -z "$_owner" ] && return 0   # port is free
 
+    # Shared Semitexa router containers are infrastructure, not conflicts.
+    # They are reused across all local projects — do not stop or warn.
+    case "$_owner" in
+        semitexa-router-*) return 0 ;;
+    esac
+
     warn "Port ${_ffp} is held by: ${_owner}"
 
     if ! tty_available || [ "$AUTO_START" -eq 1 ]; then
@@ -1117,6 +1123,9 @@ main() {
     step "[4/7] Environment setup..."
     setup_env
     make_bin_executable
+    # Resolve port conflicts early so .env always has a usable port,
+    # regardless of whether the user starts the server now or later.
+    check_port_conflicts
 
     step "[5/7] Local domain (optional)..."
     # ask_local_domain must run AFTER make_bin_executable so that
@@ -1138,9 +1147,6 @@ main() {
 
     if ask_start_server; then
         step "Starting server..."
-        # check_port_conflicts MUST be called directly (not via $()) so that
-        # its mutation of SKIP_START propagates to this scope.
-        check_port_conflicts
         if [ "$SKIP_START" -eq 1 ]; then
             warn "Server start skipped due to port conflict."
             warn "Resolve the conflict, then: cd ${PROJECT_NAME} && bin/semitexa server:start"
