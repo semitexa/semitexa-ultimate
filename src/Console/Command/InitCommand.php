@@ -26,7 +26,7 @@ final class InitCommand extends Command
         'README.md' => 'README.md',
         'docs/AI_CONTEXT.md' => 'docs/AI_CONTEXT.md',
         'server.php' => 'server.php',
-        '.env.example' => 'env.example',
+        '.env.default' => '.env.default',
         'Dockerfile' => 'Dockerfile',
         'docker-compose.yml' => 'docker-compose.yml',
         'docker-compose.rabbitmq.yml' => 'docker-compose.rabbitmq.yml',
@@ -126,7 +126,7 @@ final class InitCommand extends Command
             'docs/AI_CONTEXT.md',
             'README.md',
             'server.php',
-            '.env.example',
+            '.env.default',
             'Dockerfile',
             'docker-compose.yml',
             'docker-compose.rabbitmq.yml',
@@ -180,8 +180,8 @@ final class InitCommand extends Command
         $io->success('Project structure created.');
         $io->text([
             'Next steps:',
-            '  1. cp .env.example .env',
-            '  2. Edit .env (SWOOLE_PORT, etc.) if needed',
+            '  1. Review .env.default for the committed local baseline',
+            '  2. Create .env.local only if you need machine-specific overrides',
             '  3. composer dump-autoload (if autoload was added)',
             '  4. Review the example module under src/modules/Hello/',
             '  5. Run: bin/semitexa server:start (Docker)',
@@ -201,7 +201,7 @@ final class InitCommand extends Command
             'docs/AI_CONTEXT.md',
             'README.md',
             'server.php',
-            '.env.example',
+            '.env.default',
             'Dockerfile',
             'docker-compose.yml',
             'docker-compose.rabbitmq.yml',
@@ -226,8 +226,8 @@ final class InitCommand extends Command
             $io->note('Skipped (exists): ' . $path . ' (use --force to overwrite)');
         }
 
-        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.example, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
-        $io->text('.env is never touched. Copy new vars from .env.example to .env if needed.');
+        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->text('.env.local is never touched. Copy new vars from .env.default to .env.local only when you need machine-specific overrides.');
 
         return Command::SUCCESS;
     }

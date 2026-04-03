@@ -34,7 +34,7 @@
 #
 # PITFALLS:
 #   - Run from the PARENT directory of where you want the project created.
-#   - Edit .env BEFORE starting the server — changes after start need a restart.
+#   - Edit .env.local only if you need machine-specific overrides before start.
 #   - A directory named PROJECT_NAME must not already exist.
 #   - SWOOLE_PORT (default 9502) must be free. Check: lsof -i :9502
 #   - On Docker rootless setups, ensure your user can run 'docker info'.
@@ -472,23 +472,23 @@ run_create_project() {
 
 # ── Post-install setup ───────────────────────────────────────────────────────
 setup_env() {
-    _env_file="$PROJECT_NAME/.env"
-    _example="$PROJECT_NAME/.env.example"
-    [ -f "$_example" ] || _example="$PROJECT_NAME/env.example"
+    _default_file="$PROJECT_NAME/.env.default"
+    _legacy_env="$PROJECT_NAME/.env"
+    _legacy_example="$PROJECT_NAME/.env.example"
+    [ -f "$_legacy_example" ] || _legacy_example="$PROJECT_NAME/env.example"
 
-    if [ ! -f "$_env_file" ] && [ -f "$_example" ]; then
-        cp "$_example" "$_env_file"
-        success ".env created from $(basename "$_example")"
-        info "Edit $PROJECT_NAME/.env before starting if you need custom ports or DB settings."
-        # KEY VARIABLES TO REVIEW BEFORE FIRST START:
-        #   SWOOLE_PORT — HTTP port (default 9502). Change if already in use.
-        #   APP_ENV     — Set to "production" before exposing publicly.
-        #   DB_*        — Wrong values cause a silent boot failure.
-        #   APP_KEY     — Required for encryption. Generate: bin/semitexa key:generate
-        # The server reads .env at boot. Changes after start need a restart.
-    elif [ -f "$_env_file" ]; then
-        info ".env already exists — not overwritten."
-        # Existing .env is preserved to protect custom config on reinstall.
+    if [ -f "$_default_file" ]; then
+        success ".env.default created with the Semitexa local baseline"
+        info "Create $PROJECT_NAME/.env.local only if you need machine-specific overrides."
+    elif [ -f "$_legacy_env" ]; then
+        warn "Legacy .env detected. This project still uses compatibility mode."
+    elif [ -f "$_legacy_example" ]; then
+        warn "Legacy .env.example detected without .env.default."
+        warn "Create .env manually only if this project still depends on the old Semitexa env workflow."
+    else
+        error "No environment baseline was generated (.env.default, .env, or .env.example)."
+        error "The scaffold output is incomplete; aborting before later Docker/CLI steps fail."
+        exit 1
     fi
 }
 
@@ -503,7 +503,7 @@ make_bin_executable() {
 }
 
 # ── Shared port helper ───────────────────────────────────────────────────────
-# Reads SWOOLE_PORT from .env with full sanitisation:
+# Reads SWOOLE_PORT from .env.local, then .env.default, then legacy .env:
 #   - strips inline comments  (SWOOLE_PORT=9502 # default → 9502)
 #   - strips double and single quotes
 #   - strips whitespace
@@ -512,20 +512,20 @@ make_bin_executable() {
 # they operate on the same value.
 get_swoole_port() {
     _p="9502"
-    if [ -f "$PROJECT_NAME/.env" ]; then
-        _p="$(grep -E '^SWOOLE_PORT=' "$PROJECT_NAME/.env" 2>/dev/null \
+    for _env_file in "$PROJECT_NAME/.env.local" "$PROJECT_NAME/.env.default" "$PROJECT_NAME/.env"; do
+        [ -f "$_env_file" ] || continue
+        _candidate="$(grep -E '^SWOOLE_PORT=' "$_env_file" 2>/dev/null \
             | head -1 \
             | cut -d= -f2 \
             | cut -d'#' -f1 \
             | tr -d "\"'" \
             | tr -d ' \t' \
             || true)"
-        # Reject anything that is not a plain integer to avoid passing garbage
-        # to lsof / ss / netstat or printing a misleading URL.
-        case "$_p" in
-            ''|*[!0-9]*) _p="9502" ;;
+        case "$_candidate" in
+            ''|*[!0-9]*) continue ;;
+            *) _p="$_candidate"; break ;;
         esac
-    fi
+    done
     printf "%s" "$_p"
 }
 
@@ -558,13 +558,23 @@ find_free_port() {
     done
 }
 
-# Rewrite SWOOLE_PORT in .env in-place (POSIX-safe: tmp file + mv).
+# Rewrite SWOOLE_PORT in .env.local in-place (POSIX-safe: tmp file + mv).
 update_swoole_port() {
     _new="$1"
-    _env="${PROJECT_NAME}/.env"
+    _env="${PROJECT_NAME}/.env.local"
     _tmp="${_env}.tmp"
-    sed "s/^SWOOLE_PORT=.*/SWOOLE_PORT=${_new}/" "$_env" > "$_tmp" && mv "$_tmp" "$_env"
-    success "SWOOLE_PORT updated to ${_new} in .env"
+    if [ -f "$_env" ]; then
+        if grep -q '^SWOOLE_PORT=' "$_env" 2>/dev/null; then
+            sed "s/^SWOOLE_PORT=.*/SWOOLE_PORT=${_new}/" "$_env" > "$_tmp" && mv "$_tmp" "$_env"
+        else
+            cp "$_env" "$_tmp"
+            printf '\nSWOOLE_PORT=%s\n' "$_new" >> "$_tmp"
+            mv "$_tmp" "$_env"
+        fi
+    else
+        printf 'SWOOLE_PORT=%s\n' "$_new" > "$_env"
+    fi
+    success "SWOOLE_PORT updated to ${_new} in .env.local"
 }
 
 # ── Port conflict resolution ──────────────────────────────────────────────────
@@ -581,7 +591,7 @@ update_swoole_port() {
 #
 # Resolution options offered to the user:
 #   [1] Stop the conflicting Docker container → keep the original port
-#   [2] Auto-select the next free port       → update .env automatically
+#   [2] Auto-select the next free port       → update .env.local automatically
 #
 # Non-interactive (no TTY): option 2 is applied silently.
 #
@@ -641,7 +651,7 @@ check_port_conflicts() {
             "$C_BOLD" "$C_RESET" "$_docker_owner" "$_port"
     fi
     if [ -n "$_free" ]; then
-        printf "  %s[2]%s Switch to port %s — updates .env automatically\n" \
+        printf "  %s[2]%s Switch to port %s — updates .env.local automatically\n" \
             "$C_BOLD" "$C_RESET" "$_free"
     fi
     printf "  %s[s]%s Skip — I will start manually\n" "$C_BOLD" "$C_RESET"
@@ -1045,7 +1055,7 @@ install_demo() {
 
 # ── Print next steps ─────────────────────────────────────────────────────────
 print_next_steps() {
-    # Port is read from .env via get_swoole_port() — reflects any custom value.
+    # Port is read from .env.local/.env.default via get_swoole_port().
     _port="$(get_swoole_port)"
 
     printf "\n"
@@ -1057,7 +1067,7 @@ print_next_steps() {
     printf "\n"
     printf "  %sNext steps:%s\n"                          "$C_BOLD" "$C_RESET"
     printf "    cd %s\n"                                  "$PROJECT_NAME"
-    printf "    \$EDITOR .env                   %s# configure ports, DB, etc%s\n" "$C_YELLOW" "$C_RESET"
+    printf "    \$EDITOR .env.local             %s# optional machine-specific overrides%s\n" "$C_YELLOW" "$C_RESET"
     printf "    bin/semitexa server:start       %s# start Swoole + Docker%s\n"    "$C_YELLOW" "$C_RESET"
     printf "\n"
     printf "  %sOnce running:%s\n"                        "$C_BOLD" "$C_RESET"
@@ -1078,7 +1088,7 @@ print_next_steps() {
 #      check_docker             — abort before any writes if environment is wrong
 #   2. ask/validate name        — resolve name before touching the filesystem
 #   3. run_create_project       — Docker-based scaffold + fix file ownership
-#   4. setup_env                — .env must exist before server:start reads it
+#   4. setup_env                — baseline env files must exist before server:start reads them
 #   5. make_bin_executable      — chmod must run before server:start calls the bin
 #   6. ask_local_domain         — optional; requires bin to be executable
 #   7. ask_install_demo         — optional; offers working example code
@@ -1123,7 +1133,7 @@ main() {
     step "[4/7] Environment setup..."
     setup_env
     make_bin_executable
-    # Resolve port conflicts early so .env always has a usable port,
+    # Resolve port conflicts early so .env.local always has a usable port,
     # regardless of whether the user starts the server now or later.
     check_port_conflicts
 

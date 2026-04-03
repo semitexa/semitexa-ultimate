@@ -1,13 +1,19 @@
 # Minimal Semitexa app: PHP + Swoole in Docker.
 # Start: bin/semitexa server:start | Stop: bin/semitexa server:stop
-# Optional services are added automatically by bin/semitexa based on .env:
+# Optional services are added automatically by bin/semitexa based on .env.default/.env.local:
 #   DB_DRIVER=mysql → docker-compose.mysql.yml
 #   REDIS_HOST set  → docker-compose.redis.yml
 #   EVENTS_ASYNC=1  → docker-compose.rabbitmq.yml
 services:
   app:
     build: .
-    env_file: .env
+    env_file:
+      - path: .env.default
+        required: true
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     volumes:
       - .:/var/www/html
     ports:
@@ -21,7 +27,13 @@ services:
   setup:
     build: .
     user: root
-    env_file: .env
+    env_file:
+      - path: .env.default
+        required: true
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     volumes:
       - .:/var/www/html
     working_dir: /var/www/html
@@ -30,7 +42,13 @@ services:
 
   cli:
     build: .
-    env_file: .env
+    env_file:
+      - path: .env.default
+        required: true
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     volumes:
       - .:/var/www/html
     working_dir: /var/www/html

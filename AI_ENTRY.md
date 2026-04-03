@@ -112,7 +112,7 @@ Table: Contract (interface) | Implementations (module → class) | Active. Use w
 3. Run (Docker):
 
 ```bash
-cp .env.example .env
+$EDITOR .env.local
 ```
 
 `SSR_DEFERRED_PERSISTENT_SSE=false` is the default. Keep it that way for public pages unless you intentionally need long-lived live updates.
@@ -121,4 +121,4 @@ cp .env.example .env
 bin/semitexa server:start
 ```
 
-4. Default URL: http://localhost:{{ default_swoole_port }} (see .env SWOOLE_PORT). See vendor/semitexa/core/docs/RUNNING.md for details.
+4. Default URL: http://localhost:{{ default_swoole_port }} (override `SWOOLE_PORT` in `.env.local` only if needed). See vendor/semitexa/core/docs/RUNNING.md for details.
