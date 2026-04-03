@@ -485,6 +485,10 @@ setup_env() {
     elif [ -f "$_legacy_example" ]; then
         warn "Legacy .env.example detected without .env.default."
         warn "Create .env manually only if this project still depends on the old Semitexa env workflow."
+    else
+        error "No environment baseline was generated (.env.default, .env, or .env.example)."
+        error "The scaffold output is incomplete; aborting before later Docker/CLI steps fail."
+        exit 1
     fi
 }
 

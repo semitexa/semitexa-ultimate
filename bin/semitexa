@@ -1006,7 +1006,15 @@ cmd_demo_install() {
 cmd_init() {
     if ! has_compose; then error "Docker is required. Install Docker Desktop."; exit 1; fi
     if [ ! -f "$PROJECT_ROOT/Dockerfile" ]; then error "Dockerfile not found."; exit 1; fi
-    if [ ! -f "$PROJECT_ROOT/.env.default" ]; then error ".env.default not found."; exit 1; fi
+    if [ ! -f "$PROJECT_ROOT/.env.default" ]; then
+        if command -v php >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ]; then
+            warn ".env.default not found. Falling back to local PHP so init can scaffold it."
+            php "$PROJECT_ROOT/vendor/bin/semitexa" init "$@"
+            return
+        fi
+        error ".env.default not found. Run init once with local PHP so the scaffold can create it."
+        exit 1
+    fi
     info "Running init via Docker..."
     run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app php vendor/bin/semitexa init "$@"
 }
