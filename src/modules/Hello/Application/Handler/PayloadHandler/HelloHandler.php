@@ -6,7 +6,7 @@ namespace App\Modules\Hello\Application\Handler\PayloadHandler;
 
 use App\Modules\Hello\Application\Payload\Request\HelloPayload;
 use App\Modules\Hello\Application\Resource\Response\HelloResource;
-use Semitexa\Core\Attributes\AsPayloadHandler;
+use Semitexa\Core\Attribute\AsPayloadHandler;
 use Semitexa\Core\Contract\TypedHandlerInterface;
 use Semitexa\Locale\Context\LocaleContextStore;
 use Semitexa\Tenancy\Support\TenantUrlResolver;
