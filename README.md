@@ -10,6 +10,8 @@ The official starter project for building Semitexa applications. Provides a pre-
 
 Entry point for new projects. Pulls Core, Auth, Authorization, Tenancy, Locale, ORM, SSR, and Docs as direct dependencies. Developers create projects from this skeleton.
 
+Documentation files under `semitexa-ultimate` are scaffold assets for generated projects, not the canonical home for framework internals.
+
 ## Key Features
 
 - Docker-first setup (no host PHP required)

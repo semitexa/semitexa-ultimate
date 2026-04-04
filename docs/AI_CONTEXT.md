@@ -4,11 +4,12 @@
 
 ## Entry point
 
-Before changing package-specific code, read Semitexa's goals so your work stays aligned with the framework:
+Before changing package-specific code, read this repository first, then use installed package docs when they are actually present in `vendor/`:
 
-- `docs/README.md` for project-level navigation and what is canonical vs draft.
-- `vendor/semitexa/docs/README.md` for vision, motivation, and product direction.
-- `vendor/semitexa/docs/AI_REFERENCE.md` for the same guidance in agent-oriented form.
+- `README.md` for the project overview and main navigation.
+- `AI_ENTRY.md` for the project-specific working rules for AI agents.
+- `vendor/semitexa/docs/README.md` for vision, motivation, and product direction when that package is installed.
+- `vendor/semitexa/docs/AI_REFERENCE.md` for the same guidance in agent-oriented form when available.
 
 Project-specific guidance lives in `docs/`. Framework reference stays in package docs such as `vendor/semitexa/core/docs/`.
 
@@ -35,7 +36,7 @@ Project-specific guidance lives in `docs/`. Framework reference stays in package
 3. Add a handler in `Application/Handler/PayloadHandler/`.
 4. Return JSON or a Twig-based response DTO.
 
-Read `docs/MODULE_STRUCTURE.md` and `vendor/semitexa/core/docs/ADDING_ROUTES.md` before changing module layout or route definitions.
+Review an existing module in `src/modules/` before changing module layout or route definitions. If the installed core package includes docs, also read `vendor/semitexa/core/docs/MODULE_STRUCTURE.md` and `vendor/semitexa/core/docs/ADDING_ROUTES.md`.
 
 ### Adding a service
 
@@ -43,7 +44,7 @@ Read `docs/MODULE_STRUCTURE.md` and `vendor/semitexa/core/docs/ADDING_ROUTES.md`
 2. Implement it in `Infrastructure/Service/` with `#[AsServiceContract(...)]`.
 3. Inject it with property injection attributes such as `#[InjectAsReadonly]`, `#[InjectAsMutable]`, or `#[InjectAsFactory]`.
 
-Read `vendor/semitexa/core/docs/SERVICE_CONTRACTS.md` and `vendor/semitexa/core/src/Container/README.md` before changing service bindings.
+Run `bin/semitexa contracts:list --json` before changing service bindings. If the installed core package includes docs, also read `vendor/semitexa/core/docs/SERVICE_CONTRACTS.md`.
 
 ## Discovery
 

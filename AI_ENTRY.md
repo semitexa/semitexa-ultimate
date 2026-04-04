@@ -8,8 +8,8 @@ Use these versions so you don't assume outdated syntax or APIs:
 
 - **PHP:** ^8.4 (see `composer.json` / `composer.lock`)
 - **semitexa/core:** dev-main or v1.x (path packages: `packages/semitexa-core` or `vendor/semitexa/core`)
-- **semitexa/docs:** ^1.0 (AI_REFERENCE, guides)
-- **Key dependencies:** Symfony 7.x (console, process, etc.), Twig ^3.10, PSR Container (Semitexa custom DI: AsServiceContract, InjectAsReadonly/Mutable/Factory — see vendor/semitexa/core/src/Container/README.md)
+- **semitexa/docs:** optional package-level docs when installed in `vendor/semitexa/docs/`
+- **Key dependencies:** Symfony 7.x (console, process, etc.), Twig ^3.10, PSR Container (Semitexa custom DI: AsServiceContract, InjectAsReadonly/Mutable/Factory)
 
 Exact versions are in `composer.lock`. Do not assume Laravel, Illuminate, or Kernel-style middleware — Semitexa has its own module and route discovery.
 
@@ -18,18 +18,19 @@ Exact versions are in `composer.lock`. Do not assume Laravel, Illuminate, or Ker
 - **Do not** add root-level directories or change module discovery without explicit user approval.
 - **Do not** add Composer dependencies without explicit user approval.
 - **Do not** create documentation files (README, guides, extra `.md` in the project) unless the user explicitly asks for them.
-- Treat **`docs/`** as the canonical project documentation.
+- Treat **`docs/`** as the canonical monorepo and workspace documentation.
+- Treat **`packages/<package>/docs/`** as the canonical package-level technical reference.
 - Treat **`var/docs/`** as scratch space for drafts, research notes, and temporary AI working files.
 
 ## Read before you change (mandatory)
 
 | Before you… | Read first |
 |-------------|------------|
-| Understand **why** Semitexa (philosophy, goals, pain) | **vendor/semitexa/docs/README.md** (vision) and **AI_REFERENCE.md** (for agents). Monorepo: **packages/semitexa-docs/** |
-| Understand the **project docs map** | **docs/README.md** |
-| Create or change **module structure** (folders, Application/…) | **docs/MODULE_STRUCTURE.md** and **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
-| Change **service contracts** or DI bindings | **vendor/semitexa/core/docs/SERVICE_CONTRACTS.md**; run `bin/semitexa contracts:list --json` to see current bindings |
-| Add **new pages or routes** | **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
+| Understand **why** Semitexa (philosophy, goals, pain) | **README.md**, then **docs/AI_CONTEXT.md** for this project’s AI-facing constraints. |
+| Understand the **project docs map** | **AI_ENTRY.md**, **README.md**, and **docs/AI_CONTEXT.md** |
+| Create or change **module structure** (folders, Application/…) | Review an existing module under **src/modules/** first; if installed, also consult **vendor/semitexa/core/docs/MODULE_STRUCTURE.md** and **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
+| Change **service contracts** or DI bindings | Run `bin/semitexa contracts:list --json` to inspect current bindings; if installed, read **vendor/semitexa/core/docs/SERVICE_CONTRACTS.md** |
+| Add **new pages or routes** | Review an existing module under **src/modules/** and use `bin/semitexa ai:capabilities --json`; if installed, consult **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
 
 ## Before you generate code (checklist)
 
@@ -56,19 +57,20 @@ Exact versions are in `composer.lock`. Do not assume Laravel, Illuminate, or Ker
 
 ## Documentation map
 
-- **docs/README.md** – project docs index and navigation.
+- **README.md** – project overview and quick-start entry point.
+- **docs/DOCUMENTATION_OWNERSHIP.md** – where documentation belongs and which layer owns it.
 - **docs/AI_CONTEXT.md** – short project-specific AI context.
-- **vendor/semitexa/docs/README.md** and **AI_REFERENCE.md** – philosophy and goals.
-- **vendor/semitexa/core/docs/** – canonical framework reference.
+- **vendor/semitexa/docs/README.md** and **vendor/semitexa/docs/AI_REFERENCE.md** – framework/product philosophy when the docs package is installed.
+- **vendor/semitexa/core/docs/** – framework reference when the core package ships docs in this checkout.
 
 ## Framework docs (package reference)
 
-- **vendor/semitexa/docs/README.md** and **AI_REFERENCE.md** – philosophy and goals; read first so changes align with project intent.
+- **vendor/semitexa/docs/README.md** and **vendor/semitexa/docs/AI_REFERENCE.md** – philosophy and goals when `semitexa/docs` is installed.
 - **vendor/semitexa/core/docs/ADDING_ROUTES.md** – how to add new pages/routes (modules only)
 - **vendor/semitexa/core/docs/RUNNING.md** – how to run the app (Docker)
 - **vendor/semitexa/core/docs/attributes/** – Request, Handler, Response attributes
 - **vendor/semitexa/core/docs/SERVICE_CONTRACTS.md** – service contracts, active implementation, and **contracts:list** command
-- **vendor/semitexa/docs/README.md** – package map; **vendor/semitexa/docs/guides/CONVENTIONS.md** – conventions (when semitexa/docs is installed)
+- **vendor/semitexa/docs/README.md** – package map; **vendor/semitexa/docs/guides/CONVENTIONS.md** – conventions (when `semitexa/docs` is installed)
 
 ## Machine-readable commands (for AI agents and scripts)
 
@@ -108,7 +110,7 @@ Table: Contract (interface) | Implementations (module → class) | Active. Use w
 ## Quick start
 
 1. Read this file; follow **Read before you change** above when modifying modules, contracts, or routes.
-2. For new routes: read vendor/semitexa/core/docs/ADDING_ROUTES.md
+2. For new routes: inspect an existing module in `src/modules/` first, then read `vendor/semitexa/core/docs/ADDING_ROUTES.md` if that reference exists in the installed vendor tree.
 3. Run (Docker):
 
 ```bash
@@ -121,4 +123,4 @@ $EDITOR .env.local
 bin/semitexa server:start
 ```
 
-4. Default URL: http://localhost:{{ default_swoole_port }} (override `SWOOLE_PORT` in `.env.local` only if needed). See vendor/semitexa/core/docs/RUNNING.md for details.
+4. Default URL: use the `SWOOLE_PORT` from your local `.env.local` (or the framework default if unset). If available in your installed dependencies, see `vendor/semitexa/core/docs/RUNNING.md` for the framework-level runtime notes.
