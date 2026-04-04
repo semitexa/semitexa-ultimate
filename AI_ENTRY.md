@@ -26,7 +26,7 @@ Exact versions are in `composer.lock`. Do not assume Laravel, Illuminate, or Ker
 
 | Before you… | Read first |
 |-------------|------------|
-| Understand **why** Semitexa (philosophy, goals, pain) | **vendor/semitexa/docs/README.md** (vision) and **AI_REFERENCE.md** (for agents). Monorepo: **packages/semitexa-docs/** once the docs package is present. |
+| Understand **why** Semitexa (philosophy, goals, pain) | **vendor/semitexa/docs/README.md** (vision) and **AI_REFERENCE.md** (for agents). |
 | Understand the **project docs map** | **docs/README.md** |
 | Create or change **module structure** (folders, Application/…) | **vendor/semitexa/core/docs/MODULE_STRUCTURE.md** and **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
 | Change **service contracts** or DI bindings | **vendor/semitexa/core/docs/SERVICE_CONTRACTS.md**; run `bin/semitexa contracts:list --json` to see current bindings |

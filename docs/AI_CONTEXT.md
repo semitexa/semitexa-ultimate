@@ -6,7 +6,7 @@
 
 Before changing package-specific code, read Semitexa's goals so your work stays aligned with the framework:
 
-- `docs/README.md` for monorepo navigation and documentation ownership.
+- `docs/README.md` for project-level navigation and what is canonical vs draft.
 - `vendor/semitexa/docs/README.md` for vision, motivation, and product direction.
 - `vendor/semitexa/docs/AI_REFERENCE.md` for the same guidance in agent-oriented form.
 
