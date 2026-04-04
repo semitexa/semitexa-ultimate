@@ -18,16 +18,17 @@ Exact versions are in `composer.lock`. Do not assume Laravel, Illuminate, or Ker
 - **Do not** add root-level directories or change module discovery without explicit user approval.
 - **Do not** add Composer dependencies without explicit user approval.
 - **Do not** create documentation files (README, guides, extra `.md` in the project) unless the user explicitly asks for them.
-- Treat **`docs/`** as the canonical project documentation.
+- Treat **`docs/`** as the canonical monorepo and workspace documentation.
+- Treat **`packages/<package>/docs/`** as the canonical package-level technical reference.
 - Treat **`var/docs/`** as scratch space for drafts, research notes, and temporary AI working files.
 
 ## Read before you change (mandatory)
 
 | Before you… | Read first |
 |-------------|------------|
-| Understand **why** Semitexa (philosophy, goals, pain) | **vendor/semitexa/docs/README.md** (vision) and **AI_REFERENCE.md** (for agents). Monorepo: **packages/semitexa-docs/** |
+| Understand **why** Semitexa (philosophy, goals, pain) | **vendor/semitexa/docs/README.md** (vision) and **AI_REFERENCE.md** (for agents). Monorepo: **packages/semitexa-docs/** once the docs package is present. |
 | Understand the **project docs map** | **docs/README.md** |
-| Create or change **module structure** (folders, Application/…) | **docs/MODULE_STRUCTURE.md** and **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
+| Create or change **module structure** (folders, Application/…) | **vendor/semitexa/core/docs/MODULE_STRUCTURE.md** and **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
 | Change **service contracts** or DI bindings | **vendor/semitexa/core/docs/SERVICE_CONTRACTS.md**; run `bin/semitexa contracts:list --json` to see current bindings |
 | Add **new pages or routes** | **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
 
@@ -56,7 +57,8 @@ Exact versions are in `composer.lock`. Do not assume Laravel, Illuminate, or Ker
 
 ## Documentation map
 
-- **docs/README.md** – project docs index and navigation.
+- **docs/README.md** – monorepo docs index and navigation.
+- **docs/DOCUMENTATION_OWNERSHIP.md** – where documentation belongs and which layer owns it.
 - **docs/AI_CONTEXT.md** – short project-specific AI context.
 - **vendor/semitexa/docs/README.md** and **AI_REFERENCE.md** – philosophy and goals.
 - **vendor/semitexa/core/docs/** – canonical framework reference.

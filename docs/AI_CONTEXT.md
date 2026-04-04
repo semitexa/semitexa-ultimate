@@ -6,7 +6,7 @@
 
 Before changing package-specific code, read Semitexa's goals so your work stays aligned with the framework:
 
-- `docs/README.md` for project-level navigation and what is canonical vs draft.
+- `docs/README.md` for monorepo navigation and documentation ownership.
 - `vendor/semitexa/docs/README.md` for vision, motivation, and product direction.
 - `vendor/semitexa/docs/AI_REFERENCE.md` for the same guidance in agent-oriented form.
 
@@ -35,7 +35,7 @@ Project-specific guidance lives in `docs/`. Framework reference stays in package
 3. Add a handler in `Application/Handler/PayloadHandler/`.
 4. Return JSON or a Twig-based response DTO.
 
-Read `docs/MODULE_STRUCTURE.md` and `vendor/semitexa/core/docs/ADDING_ROUTES.md` before changing module layout or route definitions.
+Read `vendor/semitexa/core/docs/MODULE_STRUCTURE.md` and `vendor/semitexa/core/docs/ADDING_ROUTES.md` before changing module layout or route definitions.
 
 ### Adding a service
 
