@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Modules\Hello\Application\Resource\Response;
 
-use Semitexa\Core\Attributes\AsResource;
+use Semitexa\Core\Attribute\AsResource;
 use Semitexa\Core\Contract\ResourceInterface;
 use Semitexa\Ssr\Http\Response\HtmlResponse;
 
