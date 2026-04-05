@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Modules\Hello\Application\Resource\Slot;
 
-use Semitexa\Ssr\Attributes\AsSlotResource;
+use Semitexa\Ssr\Attribute\AsSlotResource;
 use Semitexa\Ssr\Http\Response\HtmlSlotResponse;
 
 #[AsSlotResource(
