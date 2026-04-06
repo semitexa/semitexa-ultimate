@@ -1,4 +1,4 @@
-# Optional: Redis for cache/sessions. Used when REDIS_HOST is set in .env.default/.env.local.
+# Optional: Redis for cache/sessions. Used when REDIS_HOST is set in .env.default/.env.
 # Start: docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d
 # Or: bin/semitexa server:start (uses this file automatically when REDIS_HOST is set).
 services:

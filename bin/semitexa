@@ -56,19 +56,18 @@ success() { printf "%s[OK]%s    %s\n"    "$C_GREEN"  "$C_RESET" "$*"; }
 warn()    { printf "%s[WARN]%s  %s\n"    "$C_YELLOW" "$C_RESET" "$*" >&2; }
 error()   { printf "%s[ERROR]%s %s\n"    "$C_RED"    "$C_RESET" "$*" >&2; }
 
-# ── Env readers (.env.default + .env.local, legacy .env compatibility) ─────
+# ── Env readers (.env.default + .env) ───────────────────────────────────────
 env_existing_files_low_to_high() {
     for _file in \
         "$PROJECT_ROOT/.env.default" \
-        "$PROJECT_ROOT/.env" \
-        "$PROJECT_ROOT/.env.local"
+        "$PROJECT_ROOT/.env"
     do
         [ -f "$_file" ] && printf '%s\n' "$_file"
     done
 }
 
 env_runtime_file_exists() {
-    for _file in "$PROJECT_ROOT/.env.default" "$PROJECT_ROOT/.env" "$PROJECT_ROOT/.env.local"; do
+    for _file in "$PROJECT_ROOT/.env.default" "$PROJECT_ROOT/.env"; do
         [ -f "$_file" ] && return 0
     done
     return 1
@@ -962,8 +961,7 @@ cmd_self_test() {
             error "File: $_f (missing)"; _fail=$((_fail+1))
         fi
     done
-    if [ -f "$PROJECT_ROOT/.env.local" ]; then success "File: .env.local"; _ok=$((_ok+1)); else info "File: .env.local (optional, not present)"; fi
-    if [ -f "$PROJECT_ROOT/.env" ]; then warn "File: .env (legacy compatibility file detected)"; _warn=$((_warn+1)); fi
+    if [ -f "$PROJECT_ROOT/.env" ]; then success "File: .env"; _ok=$((_ok+1)); else info "File: .env (optional override, not present)"; fi
     [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ] && { success "File: vendor/bin/semitexa"; _ok=$((_ok+1)); } || { error "File: vendor/bin/semitexa (missing)"; _fail=$((_fail+1)); }
     _arch="$(uname -m 2>/dev/null || echo unknown)"
     case "$_arch" in x86_64|amd64) success "Arch: AMD64" ;; aarch64|arm64) success "Arch: ARM64" ;; *) warn "Arch: $_arch (untested)" ;; esac

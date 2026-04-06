@@ -1,4 +1,4 @@
-# Optional: MySQL for ORM. Used automatically when DB_DRIVER is set in .env.default/.env.local.
+# Optional: MySQL for ORM. Used automatically when DB_DRIVER is set in .env.default/.env.
 # Start: docker compose -f docker-compose.yml -f docker-compose.mysql.yml up -d
 # Or: bin/semitexa server:start (uses this file automatically when DB_DRIVER is set).
 services:
