@@ -27,7 +27,6 @@ final class InitCommand extends Command
         'docs/AI_CONTEXT.md' => 'docs/AI_CONTEXT.md',
         'server.php' => 'server.php',
         '.env.default' => '.env.default',
-        '.env' => '.env.default',
         'Dockerfile' => 'Dockerfile',
         'docker-compose.yml' => 'docker-compose.yml',
         'docker-compose.rabbitmq.yml' => 'docker-compose.rabbitmq.yml',
@@ -128,7 +127,6 @@ final class InitCommand extends Command
             'README.md',
             'server.php',
             '.env.default',
-            '.env',
             'Dockerfile',
             'docker-compose.yml',
             'docker-compose.rabbitmq.yml',
@@ -148,6 +146,10 @@ final class InitCommand extends Command
 
         [$writtenFiles, $skippedFiles] = $this->writeFiles($root, $scaffoldRoot, $syncFiles, $force, false, $io);
         if ($writtenFiles === null || $skippedFiles === null) {
+            return Command::FAILURE;
+        }
+
+        if (!$this->ensureLocalEnvOverrideFile($root, $io)) {
             return Command::FAILURE;
         }
 
@@ -204,7 +206,6 @@ final class InitCommand extends Command
             'README.md',
             'server.php',
             '.env.default',
-            '.env',
             'Dockerfile',
             'docker-compose.yml',
             'docker-compose.rabbitmq.yml',
@@ -222,6 +223,10 @@ final class InitCommand extends Command
             return Command::FAILURE;
         }
 
+        if (!$this->ensureLocalEnvOverrideFile($root, $io)) {
+            return Command::FAILURE;
+        }
+
         foreach ($written as $path) {
             $io->text('Written: ' . $path);
         }
@@ -229,7 +234,7 @@ final class InitCommand extends Command
             $io->note('Skipped (exists): ' . $path . ' (use --force to overwrite)');
         }
 
-        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, .env, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
         $io->text('.env.default stays committed as the baseline. Edit .env for local overrides when you need them.');
 
         return Command::SUCCESS;
@@ -291,6 +296,29 @@ final class InitCommand extends Command
         }
 
         $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/"');
+
+        return true;
+    }
+
+    private function ensureLocalEnvOverrideFile(string $root, SymfonyStyle $io): bool
+    {
+        $path = $root . '/.env';
+        if (file_exists($path)) {
+            return true;
+        }
+
+        $content = <<<EOF
+# Local overrides for Semitexa.
+# Keep this file uncommitted.
+# Add machine-specific values here when you need them.
+EOF;
+
+        if (file_put_contents($path, $content . PHP_EOL) === false) {
+            $io->error('Failed to write .env override file.');
+            return false;
+        }
+
+        $io->text('Written: .env (local overrides)');
 
         return true;
     }

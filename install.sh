@@ -472,22 +472,22 @@ run_create_project() {
 
 # ── Post-install setup ───────────────────────────────────────────────────────
 setup_env() {
-    _default_file="$PROJECT_NAME/.env.default"
-
-    if [ -f "$_default_file" ]; then
-        success ".env.default created with the Semitexa local baseline"
-        if [ ! -f "$PROJECT_NAME/.env" ]; then
-            cp "$_default_file" "$PROJECT_NAME/.env"
-            success ".env created from .env.default for local overrides"
-        fi
-        info "Edit $PROJECT_NAME/.env to override defaults when needed."
-    elif [ -f "$PROJECT_NAME/.env" ]; then
-        warn "Legacy .env detected. This project still uses compatibility mode."
-    else
-        error "No environment baseline was generated (.env.default or .env)."
+    if [ ! -f "$PROJECT_NAME/.env.default" ]; then
+        error "No environment baseline was generated (.env.default)."
         error "The scaffold output is incomplete; aborting before later Docker/CLI steps fail."
         exit 1
     fi
+
+    success ".env.default created with the Semitexa local baseline"
+    if [ ! -f "$PROJECT_NAME/.env" ]; then
+        cat <<'EOF' > "$PROJECT_NAME/.env"
+# Local overrides for Semitexa.
+# Keep this file uncommitted.
+# Add machine-specific values here when you need them.
+EOF
+        success ".env created as a local override file"
+    fi
+    info "Edit $PROJECT_NAME/.env to override defaults when needed."
 }
 
 make_bin_executable() {
