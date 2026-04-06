@@ -1,6 +1,5 @@
 # Environment — contains secrets, never commit
 .env
-.env.local
 
 # Composer
 vendor/

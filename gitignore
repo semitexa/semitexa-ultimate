@@ -1,6 +1,5 @@
 /vendor/
 .env
-.env.local
 var/cache/*
 var/log/*
 var/docs/*

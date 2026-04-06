@@ -149,6 +149,10 @@ final class InitCommand extends Command
             return Command::FAILURE;
         }
 
+        if (!$this->ensureLocalEnvOverrideFile($root, $io)) {
+            return Command::FAILURE;
+        }
+
         foreach (self::FULL_INIT_DIRECTORY_SYNC as $directory) {
             if (!$this->syncDirectory($root, $scaffoldRoot . '/' . $directory, $root . '/' . $directory, $force, $io, $writtenFiles, $skippedFiles)) {
                 return Command::FAILURE;
@@ -181,7 +185,7 @@ final class InitCommand extends Command
         $io->text([
             'Next steps:',
             '  1. Review .env.default for the committed local baseline',
-            '  2. Create .env.local only if you need machine-specific overrides',
+            '  2. Edit .env for local overrides when you need them',
             '  3. composer dump-autoload (if autoload was added)',
             '  4. Review the example module under src/modules/Hello/',
             '  5. Run: bin/semitexa server:start (Docker)',
@@ -219,6 +223,10 @@ final class InitCommand extends Command
             return Command::FAILURE;
         }
 
+        if (!$this->ensureLocalEnvOverrideFile($root, $io)) {
+            return Command::FAILURE;
+        }
+
         foreach ($written as $path) {
             $io->text('Written: ' . $path);
         }
@@ -227,7 +235,7 @@ final class InitCommand extends Command
         }
 
         $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
-        $io->text('.env.local is never touched. Copy new vars from .env.default to .env.local only when you need machine-specific overrides.');
+        $io->text('.env.default stays committed as the baseline. Edit .env for local overrides when you need them.');
 
         return Command::SUCCESS;
     }
@@ -288,6 +296,29 @@ final class InitCommand extends Command
         }
 
         $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/"');
+
+        return true;
+    }
+
+    private function ensureLocalEnvOverrideFile(string $root, SymfonyStyle $io): bool
+    {
+        $path = $root . '/.env';
+        if (file_exists($path)) {
+            return true;
+        }
+
+        $content = <<<EOF
+# Local overrides for Semitexa.
+# Keep this file uncommitted.
+# Add machine-specific values here when you need them.
+EOF;
+
+        if (file_put_contents($path, $content . PHP_EOL) === false) {
+            $io->error('Failed to write .env override file.');
+            return false;
+        }
+
+        $io->text('Written: .env (local overrides)');
 
         return true;
     }
