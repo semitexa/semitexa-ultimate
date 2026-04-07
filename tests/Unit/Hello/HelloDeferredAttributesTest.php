@@ -6,11 +6,6 @@ namespace Semitexa\Ultimate\Tests\Unit\Hello;
 
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/../../../src/modules/Hello/Application/Handler/SlotHandler/GuideSlotTemplateDataHandler.php';
-require_once __DIR__ . '/../../../src/modules/Hello/Application/Resource/Slot/GuideOneSlot.php';
-require_once __DIR__ . '/../../../src/modules/Hello/Application/Resource/Slot/GuideTwoSlot.php';
-require_once __DIR__ . '/../../../src/modules/Hello/Application/Resource/Slot/GuideThreeSlot.php';
-
 final class HelloDeferredAttributesTest extends TestCase
 {
     public function testHelloDeferredSlotsUseDiscoverableAttributes(): void
