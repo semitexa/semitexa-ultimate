@@ -11,21 +11,21 @@
     },
     "require": {
         "php": "^8.4",
-        "semitexa/core": "2026.04.06.1418",
+        "semitexa/core": "2026.04.07.1133",
         "semitexa/docs": "2026.04.06.1418",
         "semitexa/auth": "2026.04.05.0855",
-        "semitexa/authorization": "2026.04.05.0855",
-        "semitexa/rbac": "2026.04.05.0855",
+        "semitexa/authorization": "2026.04.07.1133",
+        "semitexa/rbac": "2026.04.07.1133",
         "semitexa/api": "2026.04.05.0855",
         "semitexa/webhooks": "2026.04.05.0855",
         "semitexa/workflow": "2026.04.05.0855",
         "semitexa/cache": "2026.04.05.0855",
         "semitexa/storage": "2026.04.05.0855",
-        "semitexa/ssr": "2026.04.06.1418",
-        "semitexa/dev": "2026.04.06.1418",
+        "semitexa/ssr": "2026.04.07.1133",
+        "semitexa/dev": "2026.04.07.1133",
         "semitexa/tenancy": "2026.04.05.0855",
         "semitexa/locale": "2026.04.05.0855",
-        "semitexa/orm": "2026.04.05.0855",
+        "semitexa/orm": "2026.04.07.1133",
         "semitexa/search": "2026.04.05.0855",
         "semitexa/mail": "2026.04.05.0855",
         "semitexa/media": "2026.04.05.0855",
@@ -34,7 +34,7 @@
         "semitexa/blockchain": "2026.04.05.0855"
     },
     "require-dev": {
-        "semitexa/testing": "2026.04.05.0855"
+        "semitexa/testing": "2026.04.07.1133"
     },
     "keywords": [
         "semitexa",
