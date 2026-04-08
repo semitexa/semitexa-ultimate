@@ -38,4 +38,33 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         self::assertStringContainsString('.env', $bin);
         self::assertStringNotContainsString('.env.local', $bin);
     }
+
+    public function testInstallerScaffoldStaysInSyncWithUltimateRuntimeFiles(): void
+    {
+        $ultimateRoot = dirname(__DIR__, 3);
+        $installerRoot = dirname($ultimateRoot) . '/semitexa-installer/scaffold';
+
+        self::assertSame(
+            file_get_contents($ultimateRoot . '/docker-compose.yml'),
+            file_get_contents($installerRoot . '/docker-compose.yml'),
+        );
+        self::assertSame(
+            file_get_contents($ultimateRoot . '/docker-compose.ollama.yml'),
+            file_get_contents($installerRoot . '/docker-compose.ollama.yml'),
+        );
+        self::assertSame(
+            file_get_contents($ultimateRoot . '/bin/semitexa'),
+            file_get_contents($installerRoot . '/bin/semitexa'),
+        );
+    }
+
+    public function testInstallerScriptRefreshesInstallerImageBeforeScaffolding(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $installScript = file_get_contents($root . '/install.sh');
+
+        self::assertIsString($installScript);
+        self::assertStringContainsString('docker pull "$INSTALLER_IMAGE"', $installScript);
+        self::assertStringContainsString('docker image inspect "$INSTALLER_IMAGE"', $installScript);
+    }
 }
