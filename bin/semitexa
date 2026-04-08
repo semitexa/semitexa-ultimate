@@ -782,7 +782,9 @@ cmd_local_domain_list() {
         # shellcheck disable=SC1090
         . "$_entry"
         [ -n "$DOMAIN" ] || continue
-        printf "  %s%-30s%s → host.docker.internal:%s [%s]\n" "$C_GREEN" "$DOMAIN" "$C_RESET" "$UPSTREAM_PORT" "$MODE"
+        _project_label="$(basename "${PROJECT_ROOT:-}")"
+        [ -n "$_project_label" ] || _project_label="unknown"
+        printf "  %s%-30s%s → host.docker.internal:%s [%s] (%s)\n" "$C_GREEN" "$DOMAIN" "$C_RESET" "$UPSTREAM_PORT" "$MODE" "$_project_label"
         _count=$((_count + 1))
     done
     printf "\n"

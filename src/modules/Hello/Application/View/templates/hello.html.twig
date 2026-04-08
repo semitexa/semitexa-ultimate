@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ lang }}">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -70,10 +70,6 @@
                         </button>
                     </div>
 
-                    <nav class="lang-switcher" aria-label="{{ trans('hello.language_switcher') }}">
-                        <a class="lang-btn{{ lang == 'en' ? ' active' : '' }}" href="{{ locale_switch_url('en') }}">EN</a>
-                        <a class="lang-btn{{ lang == 'uk' ? ' active' : '' }}" href="{{ locale_switch_url('uk') }}">UK</a>
-                    </nav>
                 </div>
             </header>
 
@@ -95,7 +91,7 @@
 
                     <div class="cta-row">
                         <a class="cta cta--primary" href="https://semitexa.com/" target="_blank" rel="noopener noreferrer">{{ trans('hello.visit_site') }}</a>
-                        <a class="cta cta--ghost" href="https://semitexa.com/docs" target="_blank" rel="noopener noreferrer">{{ trans('hello.docs') }}</a>
+                        <a class="cta cta--ghost" href="https://framework.semitexa.com/" target="_blank" rel="noopener noreferrer">{{ trans('hello.docs') }}</a>
                         <a
                             class="cta cta--soft"
                             href="{{ demoUrl }}"
