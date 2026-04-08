@@ -10,6 +10,14 @@ services:
       redis:
         condition: service_healthy
 
+  scheduler:
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped

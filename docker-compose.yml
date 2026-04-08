@@ -22,6 +22,28 @@ services:
       setup:
         condition: service_completed_successfully
 
+  scheduler:
+    build: .
+    env_file:
+      - path: .env.default
+        required: true
+      - path: .env
+        required: false
+    volumes:
+      - .:/var/www/html
+    restart: unless-stopped
+    command:
+      - sh
+      - -lc
+      - |
+        while true; do
+          php vendor/bin/semitexa demo:deferred-heartbeat >/dev/null 2>&1 || true
+          sleep 60
+        done
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
   setup:
     build: .
     user: root
