@@ -28,12 +28,14 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         self::assertStringContainsString("\n  scheduler:\n", $rabbitMqOverlay);
     }
 
-    public function testShellEntryPointReadsEnvLocalOverrides(): void
+    public function testShellEntryPointKeepsEnvScopeOnCommittedRuntimeFiles(): void
     {
         $root = dirname(__DIR__, 3);
         $bin = file_get_contents($root . '/bin/semitexa');
 
         self::assertIsString($bin);
-        self::assertStringContainsString('.env.local', $bin);
+        self::assertStringContainsString('.env.default', $bin);
+        self::assertStringContainsString('.env', $bin);
+        self::assertStringNotContainsString('.env.local', $bin);
     }
 }
