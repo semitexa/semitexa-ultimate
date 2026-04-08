@@ -1,6 +1,6 @@
 # Minimal Semitexa app: PHP + Swoole in Docker.
 # Start: bin/semitexa server:start | Stop: bin/semitexa server:stop
-# Optional services are added automatically by bin/semitexa based on .env.default/.env:
+# Optional services are added automatically by bin/semitexa based on .env.default/.env.local:
 #   DB_DRIVER=mysql → docker-compose.mysql.yml
 #   REDIS_HOST set  → docker-compose.redis.yml
 #   EVENTS_ASYNC=1  → docker-compose.rabbitmq.yml
@@ -11,6 +11,8 @@ services:
       - path: .env.default
         required: true
       - path: .env
+        required: false
+      - path: .env.local
         required: false
     volumes:
       - .:/var/www/html
@@ -29,15 +31,29 @@ services:
         required: true
       - path: .env
         required: false
+      - path: .env.local
+        required: false
     volumes:
       - .:/var/www/html
     restart: unless-stopped
+    profiles: ["demo"]
     command:
       - sh
       - -lc
       - |
+        failure_count=0
+        max_failures=5
         while true; do
-          php vendor/bin/semitexa demo:deferred-heartbeat >/dev/null 2>&1 || true
+          if php vendor/bin/semitexa demo:deferred-heartbeat >/dev/null; then
+            failure_count=0
+          else
+            failure_count=$$((failure_count + 1))
+            echo "scheduler heartbeat command failed ($${failure_count}/$${max_failures})" >&2
+            if [ "$$failure_count" -ge "$$max_failures" ]; then
+              echo "scheduler heartbeat command failed $${max_failures} times consecutively; exiting" >&2
+              exit 1
+            fi
+          fi
           sleep 60
         done
     depends_on:
@@ -52,6 +68,8 @@ services:
         required: true
       - path: .env
         required: false
+      - path: .env.local
+        required: false
     volumes:
       - .:/var/www/html
     working_dir: /var/www/html
@@ -64,6 +82,8 @@ services:
       - path: .env.default
         required: true
       - path: .env
+        required: false
+      - path: .env.local
         required: false
     volumes:
       - .:/var/www/html
