@@ -11,7 +11,7 @@
     },
     "require": {
         "php": "^8.4",
-        "semitexa/core": "2026.04.07.2058",
+        "semitexa/core": "2026.04.08.2025",
         "semitexa/docs": "2026.04.07.1933",
         "semitexa/auth": "2026.04.05.0855",
         "semitexa/authorization": "2026.04.07.1133",
@@ -21,7 +21,7 @@
         "semitexa/workflow": "2026.04.05.0855",
         "semitexa/cache": "2026.04.05.0855",
         "semitexa/storage": "2026.04.05.0855",
-        "semitexa/ssr": "2026.04.07.2058",
+        "semitexa/ssr": "2026.04.08.2025",
         "semitexa/dev": "2026.04.07.1133",
         "semitexa/tenancy": "2026.04.05.0855",
         "semitexa/locale": "2026.04.05.0855",
@@ -29,8 +29,8 @@
         "semitexa/search": "2026.04.05.0855",
         "semitexa/mail": "2026.04.05.0855",
         "semitexa/media": "2026.04.05.0855",
-        "semitexa/llm": "2026.04.06.1418",
-        "semitexa/scheduler": "2026.04.05.0855",
+        "semitexa/llm": "2026.04.08.2025",
+        "semitexa/scheduler": "2026.04.08.2025",
         "semitexa/blockchain": "2026.04.05.0855"
     },
     "require-dev": {
