@@ -14,7 +14,6 @@
     "hello.dark_mode": "Dark mode",
     "hello.light_mode": "Light mode",
     "hello.toggle_theme": "Toggle color theme",
-    "hello.language_switcher": "Switch language",
     "hello.guide_eyebrow": "Starter surface",
     "hello.guide_title": "A pre-demo that already feels like the real demo.",
     "hello.guide_body": "This module is meant to ship with the framework and create an immediate Semitexa Demo-level first impression. Keep the structure, replace the story, and expand from here.",

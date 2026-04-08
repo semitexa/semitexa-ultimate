@@ -21,11 +21,6 @@ class HelloResource extends HtmlResponse implements ResourceInterface
         return $this->with('swooleVersion', $version);
     }
 
-    public function withLang(string $lang): self
-    {
-        return $this->with('lang', $lang);
-    }
-
     public function withDemoUrl(string $url): self
     {
         return $this->with('demoUrl', $url);
