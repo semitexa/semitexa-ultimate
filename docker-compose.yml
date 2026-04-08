@@ -32,12 +32,24 @@ services:
     volumes:
       - .:/var/www/html
     restart: unless-stopped
+    profiles: ["demo"]
     command:
       - sh
       - -lc
       - |
+        failure_count=0
+        max_failures=5
         while true; do
-          php vendor/bin/semitexa demo:deferred-heartbeat >/dev/null 2>&1 || true
+          if php vendor/bin/semitexa demo:deferred-heartbeat >/dev/null; then
+            failure_count=0
+          else
+            failure_count=$$((failure_count + 1))
+            echo "scheduler heartbeat command failed ($${failure_count}/$${max_failures})" >&2
+            if [ "$$failure_count" -ge "$$max_failures" ]; then
+              echo "scheduler heartbeat command failed $${max_failures} times consecutively; exiting" >&2
+              exit 1
+            fi
+          fi
           sleep 60
         done
     depends_on:
