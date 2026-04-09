@@ -434,7 +434,16 @@ validate_project_name() {
 
 run_create_project() {
     info "Running host-side scaffold via Docker image: ${INSTALLER_IMAGE}"
-    info "(First run may pull the installer image — this may take a minute)\n"
+    info "Refreshing installer image before scaffolding..."
+
+    if docker pull "$INSTALLER_IMAGE" >/dev/null 2>&1; then
+        success "Installer image refreshed."
+    elif docker image inspect "$INSTALLER_IMAGE" >/dev/null 2>&1; then
+        warn "Could not refresh ${INSTALLER_IMAGE}; using the locally cached image."
+    else
+        error "Could not pull ${INSTALLER_IMAGE}, and no local cached image is available."
+        exit 1
+    fi
 
     mkdir -p "$PROJECT_NAME"
 
