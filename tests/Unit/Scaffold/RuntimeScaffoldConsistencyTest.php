@@ -43,19 +43,34 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
     {
         $ultimateRoot = dirname(__DIR__, 3);
         $installerRoot = dirname($ultimateRoot) . '/semitexa-installer/scaffold';
+        $pathPairs = [
+            [
+                'ultimate' => $ultimateRoot . '/docker-compose.yml',
+                'installer' => $installerRoot . '/docker-compose.yml',
+            ],
+            [
+                'ultimate' => $ultimateRoot . '/docker-compose.ollama.yml',
+                'installer' => $installerRoot . '/docker-compose.ollama.yml',
+            ],
+            [
+                'ultimate' => $ultimateRoot . '/bin/semitexa',
+                'installer' => $installerRoot . '/bin/semitexa',
+            ],
+        ];
 
-        self::assertSame(
-            file_get_contents($ultimateRoot . '/docker-compose.yml'),
-            file_get_contents($installerRoot . '/docker-compose.yml'),
-        );
-        self::assertSame(
-            file_get_contents($ultimateRoot . '/docker-compose.ollama.yml'),
-            file_get_contents($installerRoot . '/docker-compose.ollama.yml'),
-        );
-        self::assertSame(
-            file_get_contents($ultimateRoot . '/bin/semitexa'),
-            file_get_contents($installerRoot . '/bin/semitexa'),
-        );
+        foreach ($pathPairs as $pair) {
+            self::assertFileExists($pair['ultimate']);
+            self::assertFileExists($pair['installer']);
+            self::assertIsReadable($pair['ultimate']);
+            self::assertIsReadable($pair['installer']);
+
+            $ultimateContents = file_get_contents($pair['ultimate']);
+            $installerContents = file_get_contents($pair['installer']);
+
+            self::assertIsString($ultimateContents);
+            self::assertIsString($installerContents);
+            self::assertSame($ultimateContents, $installerContents);
+        }
     }
 
     public function testInstallerScriptRefreshesInstallerImageBeforeScaffolding(): void
@@ -64,7 +79,14 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         $installScript = file_get_contents($root . '/install.sh');
 
         self::assertIsString($installScript);
-        self::assertStringContainsString('docker pull "$INSTALLER_IMAGE"', $installScript);
-        self::assertStringContainsString('docker image inspect "$INSTALLER_IMAGE"', $installScript);
+        $pullPos = strpos($installScript, 'docker pull "$INSTALLER_IMAGE"');
+        $inspectPos = strpos($installScript, 'docker image inspect "$INSTALLER_IMAGE"');
+        $runPos = strpos($installScript, "\"\$INSTALLER_IMAGE\" \\\n        install");
+
+        self::assertNotFalse($pullPos);
+        self::assertNotFalse($inspectPos);
+        self::assertNotFalse($runPos);
+        self::assertLessThan($inspectPos, $pullPos);
+        self::assertLessThan($runPos, $inspectPos);
     }
 }
