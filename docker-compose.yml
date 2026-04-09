@@ -44,9 +44,9 @@ services:
             failure_count=0
           else
             failure_count=$$((failure_count + 1))
-            echo "scheduler heartbeat command failed ($${failure_count}/$${max_failures})" >&2
+            echo "scheduler heartbeat command failed ($$failure_count/$$max_failures)" >&2
             if [ "$$failure_count" -ge "$$max_failures" ]; then
-              echo "scheduler heartbeat command failed $${max_failures} times consecutively; exiting" >&2
+              echo "scheduler heartbeat command failed $$max_failures times consecutively; exiting" >&2
               exit 1
             fi
           fi
