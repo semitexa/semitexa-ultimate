@@ -29,7 +29,7 @@ final class InitCommand extends Command
         '.env.default' => '.env.default',
         'Dockerfile' => 'Dockerfile',
         'docker-compose.yml' => 'docker-compose.yml',
-        'docker-compose.rabbitmq.yml' => 'docker-compose.rabbitmq.yml',
+        'docker-compose.nats.yml' => 'docker-compose.nats.yml',
         'docker-compose.mysql.yml' => 'docker-compose.mysql.yml',
         'docker-compose.redis.yml' => 'docker-compose.redis.yml',
         'docker-compose.ollama.yml' => 'docker-compose.ollama.yml',
@@ -129,7 +129,7 @@ final class InitCommand extends Command
             '.env.default',
             'Dockerfile',
             'docker-compose.yml',
-            'docker-compose.rabbitmq.yml',
+            'docker-compose.nats.yml',
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
             'docker-compose.ollama.yml',
@@ -208,7 +208,7 @@ final class InitCommand extends Command
             '.env.default',
             'Dockerfile',
             'docker-compose.yml',
-            'docker-compose.rabbitmq.yml',
+            'docker-compose.nats.yml',
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
             'docker-compose.ollama.yml',
@@ -234,7 +234,7 @@ final class InitCommand extends Command
             $io->note('Skipped (exists): ' . $path . ' (use --force to overwrite)');
         }
 
-        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, rabbitmq, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
         $io->text('.env.default stays committed as the baseline. Edit .env for local overrides when you need them.');
 
         return Command::SUCCESS;

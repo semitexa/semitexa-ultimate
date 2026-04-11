@@ -1,0 +1,28 @@
+# Optional: use with docker-compose.yml when EVENTS_ASYNC=1 in .env.default/.env.
+# Start: docker compose -f docker-compose.yml -f docker-compose.nats.yml up -d
+# Or: bin/semitexa server:start (it uses this file automatically when EVENTS_ASYNC=1).
+services:
+  app:
+    environment:
+      NATS_PRIMARY_URL: nats://nats:4222
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  scheduler:
+    environment:
+      NATS_PRIMARY_URL: nats://nats:4222
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  nats:
+    image: nats:latest
+    command: ["--jetstream"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nats-server", "--help"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

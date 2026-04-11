@@ -161,9 +161,9 @@ compose_args() {
     _args="-f docker-compose.yml"
     _has_overlay=0
 
-    if [ -f "$PROJECT_ROOT/docker-compose.rabbitmq.yml" ]; then
+    if [ -f "$PROJECT_ROOT/docker-compose.nats.yml" ]; then
         _async="$(env_val EVENTS_ASYNC 0)"
-        case "$_async" in 1|true|yes) _args="$_args -f docker-compose.rabbitmq.yml"; _has_overlay=1 ;; esac
+        case "$_async" in 1|true|yes) _args="$_args -f docker-compose.nats.yml"; _has_overlay=1 ;; esac
     fi
     if [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
         _db="$(env_val DB_DRIVER "")"
@@ -851,7 +851,7 @@ cmd_server_start() {
     _async="$(env_val EVENTS_ASYNC 0)"
     case "$_async" in
         1|true|yes)
-            [ -f "$PROJECT_ROOT/docker-compose.rabbitmq.yml" ] && wait_for_service "RabbitMQ" "rabbitmq" "5672" 3 2 1 || true
+            [ -f "$PROJECT_ROOT/docker-compose.nats.yml" ] && wait_for_service "NATS" "nats" "4222" 3 2 1 || true
             ;;
     esac
 
@@ -881,7 +881,7 @@ cmd_server_stop() {
     fi
 
     info "Stopping containers..."
-    run_compose down
+    run_compose down --remove-orphans
     success "Semitexa environment stopped."
 
     for _pidfile in "$PROJECT_ROOT/var/swoole.pid" "$PROJECT_ROOT/var/run/semitexa.pid"; do
@@ -912,7 +912,7 @@ cmd_server_restart() {
         run_compose up -d --build --force-recreate --no-deps "$_service"
     else
         info "Recreating all containers..."
-        run_compose down
+        run_compose down --remove-orphans
         run_compose up -d --build
     fi
 
