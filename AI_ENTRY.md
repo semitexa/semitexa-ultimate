@@ -78,6 +78,12 @@ These commands produce **stable, parseable output** — use them instead of scra
 
 | Command | Output | Use when |
 |---------|--------|----------|
+| `bin/semitexa ai:review-graph:generate --json` | JSON: graph build result with node/edge deltas | **Run first on session start.** Gives you the full structural map of the codebase. |
+| `bin/semitexa ai:review-graph:stats --json` | JSON: node/edge counts by type, module breakdown | Immediately after `generate` to confirm the graph is ready. |
+| `bin/semitexa ai:review-graph:context "<task>" --format=json` | JSON: matched components, flows, events, dependencies, hotspots | Before starting any task — gives you the full picture of what's relevant. |
+| `bin/semitexa ai:review-graph:event-trace <Event> --format=json` | JSON: full event lifecycle (emitters, listeners, NATS, replay, DLQ) | Understanding event-driven flows, debugging event propagation. |
+| `bin/semitexa ai:review-graph:flow-trace <Flow> --format=json` | JSON: execution flow with ordered steps, storage touches, external calls | Understanding how a request flows through the system. |
+| `bin/semitexa ai:review-graph:impact <Component> --format=json` | JSON: dependents, cross-module impact, blast radius, risk score | Before making changes to shared services, handlers, or events. |
 | `bin/semitexa ai:capabilities --json` | JSON: machine-readable command catalog with `use_when`, `avoid_when`, inputs, outputs, and follow-up support | Run early when the task may match a built-in generator or other AI-relevant command. Prefer this before writing boilerplate manually. |
 | `bin/semitexa contracts:list --json` | JSON: `contracts[]` with `contract`, `active`, `implementations` | Debugging DI, checking bindings before/after changing contracts or modules. See vendor/semitexa/core/docs/SERVICE_CONTRACTS.md. |
 | `bin/semitexa registry:sync` | Runs available registry maintenance tasks | Maintenance/debug command. Do not treat it as a required manual step after ordinary payload changes unless a specific package doc tells you to. |
@@ -86,8 +92,16 @@ These commands produce **stable, parseable output** — use them instead of scra
 
 ## Recommended AI workflow
 
-When a task sounds like "add a page", "create a payload", "add a response DTO", or other canonical Semitexa scaffolding:
+**Step 1 — Understand the codebase (always first):**
+1. Run `bin/semitexa ai:review-graph:generate --json` to build/update the project graph.
+2. Run `bin/semitexa ai:review-graph:stats --json` to confirm it's ready.
+3. Run `bin/semitexa ai:review-graph:context "<your task>" --format=json` to get relevant context.
+4. Use `event-trace` or `flow-trace` if your task involves events or request flows.
+5. Use `impact` before making changes to understand blast radius.
 
+**Step 2 — Generate code (if applicable):**
+
+When a task sounds like "add a page", "create a payload", "add a response DTO", or other canonical Semitexa scaffolding:
 1. Run `bin/semitexa ai:capabilities --json`.
 2. If a matching generator exists, use the generator first instead of writing structural boilerplate by hand.
 3. Prefer `--dry-run` if overwrite risk exists.

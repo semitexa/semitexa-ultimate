@@ -3,7 +3,7 @@
 # Optional services are added automatically by bin/semitexa based on .env.default/.env:
 #   DB_DRIVER=mysql → docker-compose.mysql.yml
 #   REDIS_HOST set  → docker-compose.redis.yml
-#   EVENTS_ASYNC=1  → docker-compose.rabbitmq.yml
+#   EVENTS_ASYNC=1  → docker-compose.nats.yml
 services:
   app:
     build: .

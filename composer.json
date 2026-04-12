@@ -31,7 +31,7 @@
         "semitexa/media": "2026.04.09.1145",
         "semitexa/llm": "2026.04.09.1145",
         "semitexa/scheduler": "2026.04.08.2025",
-        "semitexa/blockchain": "2026.04.05.0855"
+        "semitexa/ledger": "2026.04.09.1145"
     },
     "require-dev": {
         "semitexa/testing": "2026.04.07.1133"
