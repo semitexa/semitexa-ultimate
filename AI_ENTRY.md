@@ -6,12 +6,12 @@
 
 Use these versions so you don't assume outdated syntax or APIs:
 
-- **PHP:** ^8.4 (see `composer.json` / `composer.lock`)
+- **PHP:** ^8.4 (see `composer.json`)
 - **semitexa/core:** dev-main or v1.x (path packages: `packages/semitexa-core` or `vendor/semitexa/core`)
 - **semitexa/docs:** optional package-level docs when installed in `vendor/semitexa/docs/`
 - **Key dependencies:** Symfony 7.x (console, process, etc.), Twig ^3.10, PSR Container (Semitexa custom DI: AsServiceContract, InjectAsReadonly/Mutable/Factory)
 
-Exact versions are in `composer.lock`. Do not assume Laravel, Illuminate, or Kernel-style middleware — Semitexa has its own module and route discovery.
+Use the constraints declared in `composer.json`. Do not assume Laravel, Illuminate, or Kernel-style middleware — Semitexa has its own module and route discovery.
 
 ## Rules and guards
 
