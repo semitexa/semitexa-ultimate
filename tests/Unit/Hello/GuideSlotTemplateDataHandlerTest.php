@@ -6,8 +6,6 @@ namespace Semitexa\Ultimate\Tests\Unit\Hello;
 
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/../../../src/modules/Hello/Application/Handler/SlotHandler/GuideSlotTemplateDataHandler.php';
-
 final class GuideSlotTemplateDataHandlerTest extends TestCase
 {
     public function testSanitizeGuideBodyEscapesUnsafeMarkupButKeepsCodeBlocks(): void
