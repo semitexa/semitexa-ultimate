@@ -11,7 +11,7 @@
     },
     "require": {
         "php": "^8.4",
-        "semitexa/core": "2026.04.15.0921",
+        "semitexa/core": "2026.04.15.1128",
         "semitexa/docs": "2026.04.12.1209",
         "semitexa/auth": "2026.04.05.0855",
         "semitexa/authorization": "2026.04.09.1145",
