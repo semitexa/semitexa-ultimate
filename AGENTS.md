@@ -91,7 +91,7 @@ bin/semitexa contracts:list --json
 ## Stack
 
 - PHP: ^8.4
-- semitexa/core: dev-main or v1.x
+- semitexa/core: see `composer.json` for the exact pinned version
 - Symfony 7.x (console, process)
 - Twig ^3.10
 - PSR Container with Semitexa custom DI (AsServiceContract, InjectAsReadonly/Mutable/Factory)

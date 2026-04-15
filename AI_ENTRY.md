@@ -1,7 +1,6 @@
 # Semitexa Framework - AI Assistant Entry Point
 
 > **AI agents:** Read `AGENTS.md` first. It contains the mandatory session start protocol, code generation workflow, and debugging commands. This file is the deeper project reference.
-
 > **Guiding principle:** Make it work → Make it right → Make it fast.
 
 ## Foundational context (stack versions)

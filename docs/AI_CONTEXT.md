@@ -1,7 +1,6 @@
 # AI Context & Rules
 
 > **AI agents:** Read `AGENTS.md` in the project root FIRST, then this file.
-
 > Read this file to understand how to work with this specific Semitexa project.
 
 ## Entry point
