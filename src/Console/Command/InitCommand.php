@@ -22,6 +22,7 @@ final class InitCommand extends Command
      * @var array<string, string>
      */
     private const SCAFFOLD_FILE_MAP = [
+        'AGENTS.md' => 'AGENTS.md',
         'AI_ENTRY.md' => 'AI_ENTRY.md',
         'README.md' => 'README.md',
         'docs/AI_CONTEXT.md' => 'docs/AI_CONTEXT.md',
@@ -122,6 +123,7 @@ final class InitCommand extends Command
         }
 
         $syncFiles = [
+            'AGENTS.md',
             'AI_ENTRY.md',
             'docs/AI_CONTEXT.md',
             'README.md',
@@ -166,6 +168,17 @@ final class InitCommand extends Command
             $io->note('Skipped (exists): ' . $path . ' (use --force to overwrite)');
         }
 
+        $agentsPath = $root . '/AGENTS.md';
+        if (!file_exists($agentsPath)) {
+            [$agentsWritten] = $this->writeFiles($root, $scaffoldRoot, ['AGENTS.md'], true, true, $io);
+            if ($agentsWritten === null) {
+                return Command::FAILURE;
+            }
+            if ($agentsWritten !== []) {
+                $io->text('Written: AGENTS.md (AI session start protocol; never overwritten by framework)');
+            }
+        }
+
         $aiNotesPath = $root . '/AI_NOTES.md';
         if (!file_exists($aiNotesPath)) {
             [$notesWritten] = $this->writeFiles($root, $scaffoldRoot, ['AI_NOTES.md'], true, true, $io);
@@ -201,6 +214,7 @@ final class InitCommand extends Command
         $io->text('Scaffold source: ' . $scaffoldRoot);
 
         $syncFiles = [
+            'AGENTS.md',
             'AI_ENTRY.md',
             'docs/AI_CONTEXT.md',
             'README.md',
@@ -234,7 +248,7 @@ final class InitCommand extends Command
             $io->note('Skipped (exists): ' . $path . ' (use --force to overwrite)');
         }
 
-        $io->success('Docs and scaffold (AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AGENTS, AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
         $io->text('.env.default stays committed as the baseline. Edit .env for local overrides when you need them.');
 
         return Command::SUCCESS;
@@ -332,7 +346,7 @@ EOF;
         ];
 
         foreach ($candidates as $candidate) {
-            if (is_file($candidate . '/bin/semitexa') && is_file($candidate . '/AI_ENTRY.md')) {
+            if (is_file($candidate . '/bin/semitexa') && is_file($candidate . '/AGENTS.md') && is_file($candidate . '/AI_ENTRY.md')) {
                 return $candidate;
             }
         }
