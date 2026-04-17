@@ -973,6 +973,78 @@ cmd_self_test() {
     [ "$_fail" -gt 0 ] && exit 1; exit 0
 }
 
+local_semitexa_package_names() {
+    for _dir in "$PROJECT_ROOT"/packages/semitexa-*; do
+        [ -f "$_dir/composer.json" ] || continue
+        awk -F'"' '
+            $2 == "name" && $4 ~ /^semitexa\// {
+                print $4
+                exit
+            }
+        ' "$_dir/composer.json"
+    done | sort -u
+}
+
+locked_semitexa_package_names() {
+    [ -f "$PROJECT_ROOT/composer.lock" ] || return 0
+
+    grep -o '"name"[[:space:]]*:[[:space:]]*"semitexa/[^"]*"' "$PROJECT_ROOT/composer.lock" 2>/dev/null \
+        | sed 's/.*"name"[[:space:]]*:[[:space:]]*"//' \
+        | sed 's/"$//' \
+        | sort -u
+}
+
+local_semitexa_package_update_specs() {
+    _tmp_local="$(mktemp)"
+    _tmp_locked="$(mktemp)"
+    local_semitexa_package_names >"$_tmp_local"
+    locked_semitexa_package_names >"$_tmp_locked"
+
+    for _dir in "$PROJECT_ROOT"/packages/semitexa-*; do
+        [ -f "$_dir/composer.json" ] || continue
+
+        _package="$(awk -F'"' '
+            $2 == "name" && $4 ~ /^semitexa\// {
+                print $4
+                exit
+            }
+        ' "$_dir/composer.json")"
+        [ -n "$_package" ] || continue
+
+        if ! grep -Fx -- "$_package" "$_tmp_locked" >/dev/null 2>&1; then
+            continue
+        fi
+
+        _branch=''
+        if [ -d "$_dir/.git" ]; then
+            _branch="$(git -C "$_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        fi
+
+        case "$_branch" in
+            ''|HEAD)
+                printf '%s\n' "$_package"
+                ;;
+            *)
+                printf '%s:dev-%s\n' "$_package" "$_branch"
+                ;;
+        esac
+    done | sort -u
+
+    rm -f "$_tmp_local" "$_tmp_locked"
+}
+
+refresh_local_semitexa_packages() {
+    _packages="$(local_semitexa_package_update_specs)"
+    [ -n "$_packages" ] || return 0
+
+    info "Refreshing local Semitexa path packages in composer.lock..."
+    info "(This keeps workspace clones ahead of stale published tags)\n"
+
+    # shellcheck disable=SC2086
+    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app \
+        composer update --no-interaction --with-all-dependencies $_packages
+}
+
 cmd_install() {
     printf "\n%s%s Semitexa — Install Dependencies %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
     if ! has_compose; then error "Docker Compose is required. Install Docker Desktop or docker-compose."; exit 1; fi
@@ -983,6 +1055,13 @@ cmd_install() {
     info "(This may take a few minutes on the first run)\n"
     run_compose build app
     run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist
+    if [ $? -ne 0 ]; then
+        printf "\n"
+        error "Installation failed. Check the output above."
+        exit 1
+    fi
+
+    refresh_local_semitexa_packages
     if [ $? -eq 0 ]; then printf "\n"; success "Dependencies installed successfully!"; info "Next: bin/semitexa server:start"
     else printf "\n"; error "Installation failed. Check the output above."; exit 1; fi
     printf "\n"
