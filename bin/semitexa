@@ -1016,7 +1016,7 @@ local_semitexa_package_update_specs() {
         fi
 
         _branch=''
-        if [ -d "$_dir/.git" ]; then
+        if [ -e "$_dir/.git" ]; then
             _branch="$(git -C "$_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
         fi
 
