@@ -2,21 +2,21 @@
 
 ## Session Start Protocol
 
-**BEFORE writing any code or answering questions**, execute these commands in order:
+Start from the task, not from a mandatory warmup ritual.
+
+Default entry point:
 
 ```bash
-bin/semitexa ai:review-graph:generate --json
-bin/semitexa ai:review-graph:stats --json
-bin/semitexa ai:capabilities --json
+bin/semitexa ai:task "<task description>"
 ```
 
-The project graph is the **fastest and most reliable** way to understand the codebase structure. It provides:
+Use graph and capability commands only when the classifier, the verification flow, or the task itself requires them. If `ai:task` is not available in the current install, apply the same rule manually: start with a one-line task description and fetch only the narrowest relevant command instead of running `generate -> stats -> capabilities` by default.
+
+The project graph remains the fastest structural tool when you actually need it. Use it explicitly for:
 - Module boundaries and cross-module dependencies
 - Event flows and execution paths
 - Service contracts and DI bindings
 - Impact analysis for proposed changes
-
-**Do not skip graph generation.** Reading source files without graph context is slower and error-prone.
 
 ## Core Rules
 
@@ -30,16 +30,19 @@ The project graph is the **fastest and most reliable** way to understand the cod
 
 ## Project Understanding Workflow
 
-1. **Generate graph** → `bin/semitexa ai:review-graph:generate --json`
-2. **Confirm readiness** → `bin/semitexa ai:review-graph:stats --json`
-3. **Get task context** → `bin/semitexa ai:review-graph:context "<task>" --format=json`
-4. **Trace flows/events** → `bin/semitexa ai:review-graph:event-trace <Event> --format=json`
-5. **Check impact** → `bin/semitexa ai:review-graph:impact <Component> --format=json`
-6. **Read specific files** identified in steps 3-5
+1. **Classify the task first** → `bin/semitexa ai:task "<task>"` when available
+2. **Fetch narrow graph context only if needed** → `bin/semitexa ai:review-graph:context "<task>" --format=json` or the closest available graph command for the task
+3. **Refresh graph explicitly when graph-backed answers are stale or missing** → `bin/semitexa ai:review-graph:generate --json`
+4. **Confirm graph readiness only after refresh or before relying on graph output for risky work** → `bin/semitexa ai:review-graph:stats --json`
+5. **Trace flows/events for evented or execution-heavy changes** → `bin/semitexa ai:review-graph:event-trace <Event> --format=json`
+6. **Check impact before risky shared changes** → `bin/semitexa ai:review-graph:impact <Component> --format=json`
+7. **Read specific files** identified by the task-scoped context
 
 ## Code Generation
 
-Always run `bin/semitexa ai:capabilities --json` before writing:
+Use `bin/semitexa ai:capabilities --json` when the task may match a built-in generator or scaffolder. Do not treat it as mandatory for every edit.
+
+Generator mapping:
 - Payloads → use `make:payload`
 - Handlers → use `make:handler`
 - Resources → use `make:resource`
