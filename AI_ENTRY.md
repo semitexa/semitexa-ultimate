@@ -1,6 +1,6 @@
 # Semitexa Framework - AI Assistant Entry Point
 
-> **AI agents:** Read `AGENTS.md` first. It contains the mandatory session start protocol, code generation workflow, and debugging commands. This file is the deeper project reference.
+> **AI agents:** Read `AGENTS.md` first. It contains the task-first startup rule, code generation workflow, and debugging commands. This file is the deeper project reference.
 > **Guiding principle:** Make it work → Make it right → Make it fast.
 
 ## Foundational context (stack versions)
@@ -75,21 +75,23 @@ See `AGENTS.md` for the core debugging commands table. Below are additional comm
 
 | Command | Output | Use when |
 |---------|--------|----------|
-| `bin/semitexa ai:review-graph:generate --json` | JSON: graph build result with node/edge deltas | **Run first on session start.** Gives you the full structural map of the codebase. |
-| `bin/semitexa ai:review-graph:stats --json` | JSON: node/edge counts by type, module breakdown | Immediately after `generate` to confirm the graph is ready. |
-| `bin/semitexa ai:review-graph:context "<task>" --format=json` | JSON: matched components, flows, events, dependencies, hotspots | Before starting any task — gives you the full picture of what's relevant. |
+| `bin/semitexa ai:task "<description>"` | Task classification entry point for the pull-based AI workflow | Use first when available. Lets the task decide which context to fetch next. |
+| `bin/semitexa ai:review-graph:generate --json` | JSON: graph build result with node/edge deltas | Run only when graph-backed answers are required and the graph may be stale or missing. |
+| `bin/semitexa ai:review-graph:stats --json` | JSON: node/edge counts by type, module breakdown | Use after an explicit graph refresh or before relying on graph output for risky work. |
+| `bin/semitexa ai:review-graph:context "<task>" --format=json` | JSON: matched components, flows, events, dependencies, hotspots | Use when you need task-scoped graph context, not as mandatory startup ritual. |
 | `bin/semitexa ai:review-graph:event-trace <Event> --format=json` | JSON: full event lifecycle (emitters, listeners, NATS, replay, DLQ) | Understanding event-driven flows, debugging event propagation. |
 | `bin/semitexa ai:review-graph:flow-trace <Flow> --format=json` | JSON: execution flow with ordered steps, storage touches, external calls | Understanding how a request flows through the system. |
 | `bin/semitexa ai:review-graph:impact <Component> --format=json` | JSON: dependents, cross-module impact, blast radius, risk score | Before making changes to shared services, handlers, or events. |
-| `bin/semitexa ai:capabilities --json` | JSON: machine-readable command catalog with `use_when`, `avoid_when`, inputs, outputs, and follow-up support | Run early when the task may match a built-in generator or other AI-relevant command. Prefer this before writing boilerplate manually. |
+| `bin/semitexa ai:capabilities --json` | JSON: machine-readable command catalog with `use_when`, `avoid_when`, inputs, outputs, and follow-up support | Run when the task may match a built-in generator or other AI-relevant command. Prefer this before writing boilerplate manually, but not as universal startup cost. |
 | `bin/semitexa registry:sync` | Runs available registry maintenance tasks | Maintenance/debug command. Do not treat it as a required manual step after ordinary payload changes unless a specific package doc tells you to. |
 
 ## Recommended AI workflow
 
-**Step 1 — Understand the codebase (always first):**
+**Step 1 — Start from the task:**
 See `AGENTS.md` for the Project Understanding Workflow. Additionally:
 - Use `event-trace` or `flow-trace` if your task involves events or request flows.
 - Use `impact` before making changes to understand blast radius.
+- Refresh the graph only when those graph-backed commands are actually needed.
 
 **Step 2 — Generate code (if applicable):**
 See `AGENTS.md` for the Code Generation section. Additionally:
@@ -100,7 +102,7 @@ Do not default to manual scaffolding when the framework can generate the determi
 
 ## Quick start
 
-1. Read `AGENTS.md` for the session start protocol.
+1. Read `AGENTS.md` for the task-first startup protocol.
 2. For new routes: inspect an existing module in `src/modules/` first, then read `vendor/semitexa/core/docs/ADDING_ROUTES.md` if that reference exists in the installed vendor tree.
 3. Run (Docker):
 
