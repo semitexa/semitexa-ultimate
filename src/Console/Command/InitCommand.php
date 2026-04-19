@@ -124,6 +124,7 @@ final class InitCommand extends Command
         }
 
         $syncFiles = [
+            'CLAUDE.md',
             'AI_ENTRY.md',
             'docs/AI_CONTEXT.md',
             'README.md',
@@ -214,6 +215,7 @@ final class InitCommand extends Command
         $io->text('Scaffold source: ' . $scaffoldRoot);
 
         $syncFiles = [
+            'CLAUDE.md',
             'AI_ENTRY.md',
             'docs/AI_CONTEXT.md',
             'README.md',
