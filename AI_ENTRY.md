@@ -31,7 +31,7 @@ Use the constraints declared in `composer.json`. Do not assume Laravel, Illumina
 | Understand the **project docs map** | **AI_ENTRY.md**, **README.md**, and **docs/AI_CONTEXT.md** |
 | Create or change **module structure** (folders, Application/…) | Review an existing module under **src/modules/** first; if installed, also consult **vendor/semitexa/core/docs/MODULE_STRUCTURE.md** and **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
 | Change **service contracts** or DI bindings | Run `bin/semitexa contracts:list --json` to inspect current bindings; if installed, read **vendor/semitexa/core/docs/SERVICE_CONTRACTS.md** |
-| Add **new pages or routes** | Review an existing module under **src/modules/** and use `bin/semitexa ai:capabilities --json`; if installed, consult **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
+| Add **new pages or routes** | Review an existing module under **src/modules/** and use `bin/semitexa ai:ask capabilities --json`; if installed, consult **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
 
 ## Before you generate code (checklist)
 
@@ -82,7 +82,7 @@ See `AGENTS.md` for the core debugging commands table. Below are additional comm
 | `bin/semitexa ai:review-graph:event-trace <Event> --format=json` | JSON: full event lifecycle (emitters, listeners, NATS, replay, DLQ) | Understanding event-driven flows, debugging event propagation. |
 | `bin/semitexa ai:review-graph:flow-trace <Flow> --format=json` | JSON: execution flow with ordered steps, storage touches, external calls | Understanding how a request flows through the system. |
 | `bin/semitexa ai:review-graph:impact <Component> --format=json` | JSON: dependents, cross-module impact, blast radius, risk score | Before making changes to shared services, handlers, or events. |
-| `bin/semitexa ai:capabilities --json` | JSON: machine-readable command catalog with `use_when`, `avoid_when`, inputs, outputs, and follow-up support | Run when the task may match a built-in generator or other AI-relevant command. Prefer this before writing boilerplate manually, but not as universal startup cost. |
+| `bin/semitexa ai:ask capabilities --json` | JSON: machine-readable command catalog with `use_when`, `avoid_when`, inputs, outputs, and follow-up support | Run when the task may match a built-in generator or other AI-relevant command. Prefer this before writing boilerplate manually, but not as universal startup cost. |
 | `bin/semitexa registry:sync` | Runs available registry maintenance tasks | Maintenance/debug command. Do not treat it as a required manual step after ordinary payload changes unless a specific package doc tells you to. |
 
 ## Recommended AI workflow

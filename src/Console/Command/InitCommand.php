@@ -23,6 +23,7 @@ final class InitCommand extends Command
      */
     private const SCAFFOLD_FILE_MAP = [
         'AGENTS.md' => 'AGENTS.md',
+        'CLAUDE.md' => 'CLAUDE.md',
         'AI_ENTRY.md' => 'AI_ENTRY.md',
         'README.md' => 'README.md',
         'docs/AI_CONTEXT.md' => 'docs/AI_CONTEXT.md',
