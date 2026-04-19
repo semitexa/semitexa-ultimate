@@ -51,9 +51,6 @@ INSTALLER_IMAGE="${SEMITEXA_INSTALLER_IMAGE:-semitexa/installer}"
 # image. The generated project then performs dependency bootstrap in its own
 # `setup` container on first `docker compose up -d`.
 
-# Optional demo package image. Adds working example code to the project so
-# developers can explore the framework without writing anything from scratch.
-
 # ── Colour helpers ───────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
     C_RESET="$(tput sgr0 2>/dev/null   || true)"
@@ -994,72 +991,6 @@ ask_local_domain() {
     register_local_domain "$LOCAL_DOMAIN"
 }
 
-# ── Demo package ─────────────────────────────────────────────────────────────
-# Semitexa Demo is a standalone Composer package (semitexa/demo) that ships
-# working example code for developers to explore, run, and copy from.
-# It installs into vendor/ like any other package and is removable at any time:
-#   cd <project> && composer remove semitexa/demo
-
-ask_install_demo() {
-    # Non-interactive without --start: silently skip (can't prompt).
-    if ! tty_available && [ "$AUTO_START" -ne 1 ]; then
-        return
-    fi
-    # Fully automated (--start): skip without prompting.
-    if [ "$AUTO_START" -eq 1 ]; then
-        info "Auto mode: skipping demo. Add it later: cd ${PROJECT_NAME} && bin/semitexa demo:install"
-        return
-    fi
-
-    printf "\n"
-    printf "%s  ╭──────────────────────────────────────────────────────────────╮%s\n" "$C_CYAN$C_BOLD" "$C_RESET"
-    printf "%s  │   First time with Semitexa? Explore it with the Demo.        │%s\n" "$C_CYAN$C_BOLD" "$C_RESET"
-    printf "%s  ╰──────────────────────────────────────────────────────────────╯%s\n" "$C_CYAN$C_BOLD" "$C_RESET"
-    printf "\n"
-    printf "  %sSemitexa Demo%s is a Composer package with working example code\n" "$C_BOLD" "$C_RESET"
-    printf "  you can read, run, and copy from right away:\n"
-    printf "\n"
-    printf "    %s•%s REST API endpoints with typed payloads and handlers\n"    "$C_GREEN" "$C_RESET"
-    printf "    %s•%s Authentication flow  (login, token refresh, logout)\n"    "$C_GREEN" "$C_RESET"
-    printf "    %s•%s Event dispatching and async background jobs\n"            "$C_GREEN" "$C_RESET"
-    printf "    %s•%s Module structure and DI wiring you can copy-paste\n"      "$C_GREEN" "$C_RESET"
-    printf "\n"
-    printf "  Installs as a regular package in %svendor/%s — remove it anytime:\n" "$C_BOLD" "$C_RESET"
-    printf "  %scomposer remove semitexa/demo%s\n" "$C_CYAN" "$C_RESET"
-    printf "\n"
-
-    printf "  %sInstall Semitexa Demo?%s [y/N]: " "$C_BOLD" "$C_RESET"
-    read -r _demo_ans </dev/tty
-
-    case "$_demo_ans" in
-        y|Y|yes|Yes|YES)
-            install_demo
-            ;;
-        *)
-            info "Skipped. You can add it later from inside your project:"
-            info "  cd ${PROJECT_NAME} && bin/semitexa demo:install"
-            printf "\n"
-            ;;
-    esac
-}
-
-install_demo() {
-    info "Installing Semitexa Demo..."
-    info "(Running Composer inside the project Docker image — this may take a moment)\n"
-
-    if (cd "$PROJECT_NAME" && sh bin/semitexa demo:install); then
-        printf "\n"
-        success "Semitexa Demo installed (semitexa/demo)."
-        info "Start the server and explore the demo routes to see it in action."
-        info "Remove when done: cd ${PROJECT_NAME} && composer remove semitexa/demo"
-        printf "\n"
-    else
-        warn "Demo installation failed."
-        warn "Try again later: cd ${PROJECT_NAME} && bin/semitexa demo:install"
-        printf "\n"
-    fi
-}
-
 # ── Print next steps ─────────────────────────────────────────────────────────
 print_next_steps() {
     # Port is read from .env/.env.default via get_swoole_port().
@@ -1097,10 +1028,9 @@ print_next_steps() {
 #   3. run_create_project       — Docker-based scaffold + fix file ownership
 #   4. setup_env                — baseline env files must exist before server:start reads them
 #   5. make_bin_executable      — chmod must run before server:start calls the bin
+#      check_port_conflicts     — guard before binding a network port
 #   6. ask_local_domain         — optional; requires bin to be executable
-#   7. ask_install_demo         — optional; offers working example code
-#   8. check_port_conflicts     — guard before binding a network port
-#   9. start_server             — only when env + permissions + port are confirmed
+#   7. start_server             — only when env + permissions + port are confirmed
 #
 # RECOVERING FROM A PARTIAL FAILURE:
 #   The cleanup trap removes the partial directory on abort. Just re-run the
@@ -1110,19 +1040,19 @@ print_next_steps() {
 main() {
     banner
 
-    step "[1/7] Checking prerequisites..."
+    step "[1/6] Checking prerequisites..."
     # check_docker_permissions must run before check_docker: it distinguishes
     # "permission denied" (fixable by adding to docker group) from "daemon not
     # running" and offers an interactive resolution with sudo + optional re-exec.
     check_docker_permissions "$@"
     check_docker
 
-    step "[2/7] Project name..."
+    step "[2/6] Project name..."
     ask_project_name
     validate_project_name
     info "Creating project: ${C_BOLD}${PROJECT_NAME}${C_RESET}"
 
-    step "[3/7] Installing Semitexa Ultimate..."
+    step "[3/6] Installing Semitexa Ultimate..."
     # Arm the cleanup trap. From this point onward, any unexpected exit will
     # remove the partial project directory so the user can re-run cleanly.
     _CLEANUP_PROJECT="$PROJECT_NAME"
@@ -1137,26 +1067,21 @@ main() {
         exit 1
     fi
 
-    step "[4/7] Environment setup..."
+    step "[4/6] Environment setup..."
     setup_env
     make_bin_executable
     # Resolve port conflicts early so .env always has a usable port,
     # regardless of whether the user starts the server now or later.
     check_port_conflicts
 
-    step "[5/7] Local domain (optional)..."
+    step "[5/6] Local domain (optional)..."
     # ask_local_domain must run AFTER make_bin_executable so that
     # register_local_domain can call bin/semitexa local-domain:add.
     # It must also run BEFORE print_next_steps so LOCAL_DOMAIN is available
     # for display. Called directly (not in a subshell) — see LOCAL_DOMAIN note.
     ask_local_domain
 
-    step "[6/7] Semitexa Demo (optional)..."
-    # Offer working example code the developer can explore immediately.
-    # Must run AFTER make_bin_executable (demo:remove uses bin/semitexa).
-    ask_install_demo
-
-    step "[7/7] Done!"
+    step "[6/6] Done!"
     # Disarm the cleanup trap — the install is complete and the directory is
     # intentional. From here, no automatic removal should happen on exit.
     _CLEANUP_PROJECT=""

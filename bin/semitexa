@@ -180,8 +180,19 @@ compose_args() {
     if [ "$_has_overlay" -eq 0 ]; then
         echo ""
     else
+        [ -f "$PROJECT_ROOT/docker-compose.override.yml" ] && _args="$_args -f docker-compose.override.yml"
         echo "$_args"
     fi
+}
+
+# Returns ALL compose files regardless of .env settings (for stop/cleanup).
+compose_all_args() {
+    _args="-f docker-compose.yml"
+    [ -f "$PROJECT_ROOT/docker-compose.override.yml" ] && _args="$_args -f docker-compose.override.yml"
+    for _overlay in docker-compose.nats.yml docker-compose.mysql.yml docker-compose.redis.yml docker-compose.ollama.yml; do
+        [ -f "$PROJECT_ROOT/$_overlay" ] && _args="$_args -f $_overlay"
+    done
+    echo "$_args"
 }
 
 run_compose() {
@@ -350,7 +361,7 @@ router_sync_project_domains() {
     [ -n "$_domains" ] || return 0
 
     _saved_project_root="$PROJECT_ROOT"
-    _port="$(env_val SWOOLE_PORT 8080)"
+    _port="$(env_val SWOOLE_PORT 9502)"
     _mode="$(router_mode_get)"
 
     router_ensure_dirs
@@ -754,7 +765,7 @@ cmd_local_domain_add() {
         exit 1
     fi
 
-    _port="$(env_val SWOOLE_PORT 8080)"
+    _port="$(env_val SWOOLE_PORT 9502)"
     cmd_local_router_init >/dev/null
     router_registry_write_entry "$_domain" "$_port" "$(router_mode_get)"
     router_render
@@ -867,7 +878,7 @@ cmd_server_start() {
     info "Starting containers..."
     run_compose up -d --build
 
-    _port="$(env_val SWOOLE_PORT 8080)"
+    _port="$(env_val SWOOLE_PORT 9502)"
     printf "\n"
     success "Semitexa environment started!"
     info "App:  ${C_GREEN}http://localhost:${_port}${C_RESET}"
@@ -907,7 +918,17 @@ cmd_server_stop() {
     fi
 
     info "Stopping containers..."
-    run_compose down --remove-orphans
+    _compose="$(compose_bin)"
+    _overlays="$(compose_all_args)"
+    (
+        env_export_compose_context
+        if [ -n "$_overlays" ]; then
+            # shellcheck disable=SC2086
+            $_compose $_overlays down --remove-orphans
+        else
+            $_compose down --remove-orphans
+        fi
+    )
     success "Semitexa environment stopped."
 
     for _pidfile in "$PROJECT_ROOT/var/swoole.pid" "$PROJECT_ROOT/var/run/semitexa.pid"; do
@@ -933,12 +954,23 @@ cmd_server_restart() {
         exit 1
     fi
 
+    _compose="$(compose_bin)"
+
     if [ -n "$_service" ]; then
         info "Recreating service: $_service"
         run_compose up -d --build --force-recreate --no-deps "$_service"
     else
         info "Recreating all containers..."
-        run_compose down --remove-orphans
+        _overlays="$(compose_all_args)"
+        (
+            env_export_compose_context
+            if [ -n "$_overlays" ]; then
+                # shellcheck disable=SC2086
+                $_compose $_overlays down --remove-orphans
+            else
+                $_compose down --remove-orphans
+            fi
+        )
         run_compose up -d --build
     fi
 
@@ -999,78 +1031,6 @@ cmd_self_test() {
     [ "$_fail" -gt 0 ] && exit 1; exit 0
 }
 
-local_semitexa_package_names() {
-    for _dir in "$PROJECT_ROOT"/packages/semitexa-*; do
-        [ -f "$_dir/composer.json" ] || continue
-        awk -F'"' '
-            $2 == "name" && $4 ~ /^semitexa\// {
-                print $4
-                exit
-            }
-        ' "$_dir/composer.json"
-    done | sort -u
-}
-
-locked_semitexa_package_names() {
-    [ -f "$PROJECT_ROOT/composer.lock" ] || return 0
-
-    grep -o '"name"[[:space:]]*:[[:space:]]*"semitexa/[^"]*"' "$PROJECT_ROOT/composer.lock" 2>/dev/null \
-        | sed 's/.*"name"[[:space:]]*:[[:space:]]*"//' \
-        | sed 's/"$//' \
-        | sort -u
-}
-
-local_semitexa_package_update_specs() {
-    _tmp_local="$(mktemp)"
-    _tmp_locked="$(mktemp)"
-    local_semitexa_package_names >"$_tmp_local"
-    locked_semitexa_package_names >"$_tmp_locked"
-
-    for _dir in "$PROJECT_ROOT"/packages/semitexa-*; do
-        [ -f "$_dir/composer.json" ] || continue
-
-        _package="$(awk -F'"' '
-            $2 == "name" && $4 ~ /^semitexa\// {
-                print $4
-                exit
-            }
-        ' "$_dir/composer.json")"
-        [ -n "$_package" ] || continue
-
-        if ! grep -Fx -- "$_package" "$_tmp_locked" >/dev/null 2>&1; then
-            continue
-        fi
-
-        _branch=''
-        if [ -e "$_dir/.git" ]; then
-            _branch="$(git -C "$_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-        fi
-
-        case "$_branch" in
-            ''|HEAD)
-                printf '%s\n' "$_package"
-                ;;
-            *)
-                printf '%s:dev-%s\n' "$_package" "$_branch"
-                ;;
-        esac
-    done | sort -u
-
-    rm -f "$_tmp_local" "$_tmp_locked"
-}
-
-refresh_local_semitexa_packages() {
-    _packages="$(local_semitexa_package_update_specs)"
-    [ -n "$_packages" ] || return 0
-
-    info "Refreshing local Semitexa path packages in composer.lock..."
-    info "(This keeps workspace clones ahead of stale published tags)\n"
-
-    # shellcheck disable=SC2086
-    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app \
-        composer update --no-interaction --with-all-dependencies $_packages
-}
-
 cmd_install() {
     printf "\n%s%s Semitexa — Install Dependencies %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
     if ! has_compose; then error "Docker Compose is required. Install Docker Desktop or docker-compose."; exit 1; fi
@@ -1081,13 +1041,6 @@ cmd_install() {
     info "(This may take a few minutes on the first run)\n"
     run_compose build app
     run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist
-    if [ $? -ne 0 ]; then
-        printf "\n"
-        error "Installation failed. Check the output above."
-        exit 1
-    fi
-
-    refresh_local_semitexa_packages
     if [ $? -eq 0 ]; then printf "\n"; success "Dependencies installed successfully!"; info "Next: bin/semitexa server:start"
     else printf "\n"; error "Installation failed. Check the output above."; exit 1; fi
     printf "\n"

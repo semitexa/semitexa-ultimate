@@ -23,6 +23,7 @@ final class InitCommand extends Command
      */
     private const SCAFFOLD_FILE_MAP = [
         'AGENTS.md' => 'AGENTS.md',
+        'CLAUDE.md' => 'CLAUDE.md',
         'AI_ENTRY.md' => 'AI_ENTRY.md',
         'README.md' => 'README.md',
         'docs/AI_CONTEXT.md' => 'docs/AI_CONTEXT.md',
@@ -123,6 +124,7 @@ final class InitCommand extends Command
         }
 
         $syncFiles = [
+            'CLAUDE.md',
             'AI_ENTRY.md',
             'docs/AI_CONTEXT.md',
             'README.md',
@@ -213,6 +215,7 @@ final class InitCommand extends Command
         $io->text('Scaffold source: ' . $scaffoldRoot);
 
         $syncFiles = [
+            'CLAUDE.md',
             'AI_ENTRY.md',
             'docs/AI_CONTEXT.md',
             'README.md',
