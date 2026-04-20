@@ -9,9 +9,9 @@ use PHPUnit\Framework\TestCase;
 /**
  * Guardrail: the installer must never scaffold or sync a root-level `docs/`
  * directory into generated projects. Official framework documentation lives
- * in `packages/semitexa-docs` (shipped as `semitexa/docs`). Root `./docs/` is
- * not part of the framework contract — see
- * packages/semitexa-docs/docs/workspace/DOCUMENTATION_OWNERSHIP.md.
+ * in `vendor/semitexa/docs/` when installed (or `packages/semitexa-docs/` in
+ * the Semitexa workspace). Root `./docs/` is not part of the framework
+ * contract — see `vendor/semitexa/docs/workspace/DOCUMENTATION_OWNERSHIP.md`.
  *
  * These assertions run against the InitCommand source file text so the guard
  * stays independent of whether the ultimate package is autoloaded into the
@@ -40,8 +40,8 @@ final class InitCommandNoRootDocsTest extends TestCase
                 sprintf(
                     'InitCommand source must not contain %s. '
                     . 'The framework does not seed, sync, or depend on a root-level docs/ directory. '
-                    . 'Official framework docs live in packages/semitexa-docs; AI scaffold files live at project root. '
-                    . 'See packages/semitexa-docs/docs/workspace/DOCUMENTATION_OWNERSHIP.md.',
+                    . 'Official framework docs live in vendor/semitexa/docs; AI scaffold files live at project root. '
+                    . 'See vendor/semitexa/docs/workspace/DOCUMENTATION_OWNERSHIP.md.',
                     $needle,
                 ),
             );

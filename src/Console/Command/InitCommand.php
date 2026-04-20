@@ -232,6 +232,8 @@ final class InitCommand extends Command
             'bin/semitexa',
             '.gitignore',
             'public/.htaccess',
+            'var/docs/.gitkeep',
+            'var/docs/README.md',
         ];
 
         [$written, $skipped] = $this->writeFiles($root, $scaffoldRoot, $syncFiles, $force, false, $io);
@@ -261,7 +263,7 @@ final class InitCommand extends Command
             }
         }
 
-        $io->success('Docs and scaffold (AGENTS.md, AI_ENTRY, AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AGENTS.md, AI_ENTRY, AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess, var/docs/.gitkeep, var/docs/README.md) synced from semitexa/ultimate.');
         $io->text('.env.default stays committed as the baseline. Edit .env for local overrides when you need them.');
 
         return Command::SUCCESS;

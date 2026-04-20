@@ -23,4 +23,4 @@ Material here is ephemeral. When a draft matures into something you want to keep
 
 ## Git handling
 
-Contents are gitignored except for this `README.md` and the tracked `.gitkeep`. If you need to commit a specific artifact from here, add an explicit exception in `.gitignore` (e.g. `!var/docs/my-audit.md`). Do not un-gitignore the whole tree.
+In generated/scaffolded projects, `var/docs/` is typically gitignored except for this `README.md` and the tracked `.gitkeep`. In this repository, that behavior may be defined by the scaffold template rather than the repo's own `.gitignore`. If you need to commit a specific artifact from here, add an explicit exception in `.gitignore` (e.g. `!var/docs/my-audit.md`). Do not un-gitignore the whole tree.
