@@ -4,3 +4,4 @@ var/cache/*
 var/log/*
 var/docs/*
 !.gitkeep
+!var/docs/README.md

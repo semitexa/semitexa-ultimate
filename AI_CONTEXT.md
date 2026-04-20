@@ -12,7 +12,7 @@ Before changing package-specific code, read this repository first, then use inst
 - `vendor/semitexa/docs/README.md` for vision, motivation, and product direction when that package is installed.
 - `vendor/semitexa/docs/AI_REFERENCE.md` for the same guidance in agent-oriented form when available.
 
-Project-specific guidance lives in `docs/`. Framework reference stays in package docs such as `vendor/semitexa/core/docs/`.
+Project-specific guidance lives at project root (`AI_ENTRY.md`, `AI_CONTEXT.md`, `AI_NOTES.md`, `AGENTS.md`). Framework reference stays in package docs such as `vendor/semitexa/core/docs/` and `vendor/semitexa/docs/`. The framework does not create or use a root-level `./docs/` directory in your project.
 
 ## Core philosophy
 
@@ -54,5 +54,6 @@ Run `bin/semitexa contracts:list --json` before changing service bindings. If th
 
 ## Testing
 
-- Run unit tests with `vendor/bin/phpunit`.
+- Run tests with `bin/semitexa test:run`. This is the only supported command — it executes PHPUnit inside the project's Docker test container with `APP_ENV=dev`. Do not run `vendor/bin/phpunit` directly.
+- Pass PHPUnit arguments positionally, e.g. `bin/semitexa test:run --filter MyTest`.
 - Put tests in `tests/` or `src/modules/*/Tests/`.

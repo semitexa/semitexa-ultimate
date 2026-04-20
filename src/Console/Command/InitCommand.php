@@ -25,8 +25,8 @@ final class InitCommand extends Command
         'AGENTS.md' => 'AGENTS.md',
         'CLAUDE.md' => 'CLAUDE.md',
         'AI_ENTRY.md' => 'AI_ENTRY.md',
+        'AI_CONTEXT.md' => 'AI_CONTEXT.md',
         'README.md' => 'README.md',
-        'docs/AI_CONTEXT.md' => 'docs/AI_CONTEXT.md',
         'server.php' => 'server.php',
         '.env.default' => '.env.default',
         'Dockerfile' => 'Dockerfile',
@@ -42,6 +42,7 @@ final class InitCommand extends Command
         'AI_NOTES.md' => 'AI_NOTES.md',
         'tests/.gitkeep' => 'tests/.gitkeep',
         'var/docs/.gitkeep' => 'var/docs/.gitkeep',
+        'var/docs/README.md' => 'var/docs/README.md',
         'var/run/.gitkeep' => 'var/run/.gitkeep',
         'src/infrastructure/database/.gitkeep' => 'src/infrastructure/database/.gitkeep',
         'src/infrastructure/migrations/.gitkeep' => 'src/infrastructure/migrations/.gitkeep',
@@ -92,7 +93,6 @@ final class InitCommand extends Command
 
         $dirs = [
             'bin',
-            'docs',
             'public',
             'src/infrastructure/database',
             'src/infrastructure/migrations',
@@ -126,7 +126,7 @@ final class InitCommand extends Command
         $syncFiles = [
             'CLAUDE.md',
             'AI_ENTRY.md',
-            'docs/AI_CONTEXT.md',
+            'AI_CONTEXT.md',
             'README.md',
             'server.php',
             '.env.default',
@@ -142,6 +142,7 @@ final class InitCommand extends Command
             'public/.htaccess',
             'tests/.gitkeep',
             'var/docs/.gitkeep',
+            'var/docs/README.md',
             'var/run/.gitkeep',
             'src/infrastructure/database/.gitkeep',
             'src/infrastructure/migrations/.gitkeep',
@@ -217,7 +218,7 @@ final class InitCommand extends Command
         $syncFiles = [
             'CLAUDE.md',
             'AI_ENTRY.md',
-            'docs/AI_CONTEXT.md',
+            'AI_CONTEXT.md',
             'README.md',
             'server.php',
             '.env.default',
@@ -260,7 +261,7 @@ final class InitCommand extends Command
             }
         }
 
-        $io->success('Docs and scaffold (AGENTS.md, AI_ENTRY, docs/AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AGENTS.md, AI_ENTRY, AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess) synced from semitexa/ultimate.');
         $io->text('.env.default stays committed as the baseline. Edit .env for local overrides when you need them.');
 
         return Command::SUCCESS;

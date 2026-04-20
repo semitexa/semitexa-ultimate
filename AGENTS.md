@@ -272,7 +272,7 @@ This is a **hard system rule**, not a convention.
 - **Ideas, initiatives, backlog state, and task decomposition** live in:
     - `ai:epic` (stored under `var/ai-work/epics/`) — one epic per idea / initiative.
     - `ai:work` (stored under `var/ai-work/tasks/`) — leaves of each epic.
-- **Nothing else is canonical.** Not `var/docs/`, not `var/docs/FOR_IMPLEMENTATION/`, not `docs/`, not chat history, not `AI_NOTES.md`, not design documents, not commit messages.
+- **Nothing else is canonical.** Not `var/docs/`, not `var/docs/FOR_IMPLEMENTATION/`, not `packages/semitexa-docs/`, not chat history, not `AI_NOTES.md`, not design documents, not commit messages.
 - Repository documents describe **how** something is intended to be built. They are not the backlog and not a status tracker.
 
 Corollary: if an idea is not in `ai:epic`, it does not exist from a backlog standpoint. The fix is to CAPTURE it (§4.5), not to mine it.
@@ -735,13 +735,13 @@ Otherwise: pick the best option, say which and why, and proceed.
 - **Do not** create documentation files (`*.md`) unless explicitly requested.
 - **Do not** add per-module PSR-4 entries to root `composer.json` — modules autoload from `src/modules/`.
 - **Do not** add routes outside a module — `App\` is not discovered for routes.
-- **Do not** treat any document as the backlog. `var/docs/FOR_IMPLEMENTATION/**`, `var/docs/**`, `docs/**`, `packages/*/docs/**`, `AI_NOTES.md`, `README.md` — none of these are canonical ideas, tasks, or status. The canonical backlog is `ai:epic` + `ai:work`. See §4.9–§4.12.
+- **Do not** treat any document as the backlog. `var/docs/FOR_IMPLEMENTATION/**`, `var/docs/**`, `packages/semitexa-docs/**`, `packages/*/docs/**`, `AI_NOTES.md`, `README.md` — none of these are canonical ideas, tasks, or status. The canonical backlog is `ai:epic` + `ai:work`. See §4.9–§4.12.
 - **Do not** scan repository documents to answer backlog queries (§4.10). Document mining only runs when the operator explicitly triggers it (§4.11).
 - **Do not** impersonate Semitexa. The agent keeps its own identity (§1.4).
 - **Do not** create placeholder epics or tasks (`ep-a`, `tk-1`, title = `test` / `tmp` / `foo`) to unblock a command. Push back for a real id / title / goal first (§4.14).
 - **Do not** hard-delete epics or tasks. Retirement is `status=discarded` via `ai:backlog clean --apply` or `ai:epic update --status=discarded`. The `var/ai-work/` tree stays append-only.
 - **Do not** render the backlog without a stated scope. Every list is `source: ai:epic list --scope=<…>` (§4.13).
-- `docs/` canonical monorepo docs; `packages/<pkg>/docs/` canonical package docs; `var/docs/` scratch — **none of these are backlog**.
+- `packages/semitexa-docs/` is the single official documentation source (framework + workspace); `packages/<pkg>/docs/` canonical package-local docs; `var/docs/` scratch — **none of these are backlog**. Root-level `./docs/` is **not** an official framework location; do not create, write, or reference it as part of the framework contract. (Contributors may keep a personal `./docs/` for private notes, but the framework makes no guarantees and no tooling depends on it.)
 
 ---
 
