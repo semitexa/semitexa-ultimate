@@ -19,16 +19,17 @@ Use the constraints declared in `composer.json`. Do not assume Laravel, Illumina
 - **Do not** add root-level directories or change module discovery without explicit user approval.
 - **Do not** add Composer dependencies without explicit user approval.
 - **Do not** create documentation files (README, guides, extra `.md` in the project) unless the user explicitly asks for them.
-- Treat **`docs/`** as the canonical monorepo and workspace documentation.
-- Treat **`packages/<package>/docs/`** as the canonical package-level technical reference.
-- Treat **`var/docs/`** as scratch space for drafts, research notes, and temporary AI working files.
+- Treat installed **`vendor/semitexa/docs/`** (the `semitexa/docs` package) as the single official framework documentation source when present.
+- Treat **`packages/<package>/docs/`** (or `vendor/<package>/docs/`) as the canonical package-level technical reference.
+- Treat **`var/docs/`** as scratch space for drafts, research notes, remediation reports, and temporary AI working files.
+- The framework does **not** use a root-level `./docs/` directory in this project. Project-specific AI guidance lives at root (`AGENTS.md`, `AI_ENTRY.md`, `AI_CONTEXT.md`, `AI_NOTES.md`). If you create a personal `./docs/` folder for your own notes, nothing in the framework will read, write, or assume it.
 
 ## Read before you change (mandatory)
 
 | Before you… | Read first |
 |-------------|------------|
-| Understand **why** Semitexa (philosophy, goals, pain) | **README.md**, then **docs/AI_CONTEXT.md** for this project's AI-facing constraints. |
-| Understand the **project docs map** | **AI_ENTRY.md**, **README.md**, and **docs/AI_CONTEXT.md** |
+| Understand **why** Semitexa (philosophy, goals, pain) | **README.md**, then **AI_CONTEXT.md** for this project's AI-facing constraints. |
+| Understand the **project docs map** | **AI_ENTRY.md**, **README.md**, and **AI_CONTEXT.md** |
 | Create or change **module structure** (folders, Application/…) | Review an existing module under **src/modules/** first; if installed, also consult **vendor/semitexa/core/docs/MODULE_STRUCTURE.md** and **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
 | Change **service contracts** or DI bindings | Run `bin/semitexa contracts:list --json` to inspect current bindings; if installed, read **vendor/semitexa/core/docs/SERVICE_CONTRACTS.md** |
 | Add **new pages or routes** | Review an existing module under **src/modules/** and use `bin/semitexa ai:ask capabilities --json`; if installed, consult **vendor/semitexa/core/docs/ADDING_ROUTES.md** |
@@ -46,17 +47,17 @@ Use the constraints declared in `composer.json`. Do not assume Laravel, Illumina
 - **public/** – web root
 - **src/** – application code; **new routes** go in **modules** (src/modules/), not in src/Request or src/Handler (App\ is not discovered for routes).
 - **src/modules/** – application modules (where to add new pages and endpoints). **Do not add per-module PSR-4 entries to composer.json** – the framework autoloads all modules from src/modules/ via IntelligentAutoloader at runtime.
-- **docs/** – canonical project docs for humans and AI: onboarding, architecture, conventions, decisions.
 - **var/log**, **var/cache** – runtime
-- **var/docs/** – working directory for notes, plans, drafts, and research. Do not treat it as canonical documentation.
+- **var/docs/** – working directory for notes, plans, drafts, research, and remediation reports. Not canonical.
+- **AI_ENTRY.md**, **AI_CONTEXT.md**, **AGENTS.md** – AI entrypoints and rules at project root.
 - **AI_NOTES.md** – your own notes for AI (created once, never overwritten by the framework).
-- **vendor/semitexa/** – framework packages
+- **vendor/semitexa/** – framework packages (framework docs in `vendor/semitexa/docs/` when installed).
 
 ## Documentation map
 
 - **README.md** – project overview and quick-start entry point.
-- **docs/DOCUMENTATION_OWNERSHIP.md** – where documentation belongs and which layer owns it.
-- **docs/AI_CONTEXT.md** – short project-specific AI context.
+- **AI_CONTEXT.md** (project root) – short project-specific AI context.
+- **vendor/semitexa/docs/workspace/DOCUMENTATION_OWNERSHIP.md** – where framework documentation belongs and which layer owns it (when `semitexa/docs` is installed).
 - **vendor/semitexa/docs/README.md** and **vendor/semitexa/docs/AI_REFERENCE.md** – framework/product philosophy when the docs package is installed.
 - **vendor/semitexa/core/docs/** – framework reference when the core package ships docs in this checkout.
 
