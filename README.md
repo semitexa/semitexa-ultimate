@@ -20,7 +20,7 @@ Simple by design. Powerful by nature.
 From an empty folder (get the framework and install dependencies):
 
 ```bash
-composer require semitexa/core
+composer require semitexa/ultimate
 ```
 
 From a clone or existing project (dependencies already in `composer.json`):
