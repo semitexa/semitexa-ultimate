@@ -1,12 +1,11 @@
 # CLAUDE.md
 
-Before doing anything, you must find and read `AGENTS.md`.
+> Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: overwritten by `bin/semitexa init --only-docs`.
 
-`AGENTS.md` is mandatory.
+Before anything, find and read **`AGENTS.md`**. It is mandatory.
 
-You must explicitly state one of:
+State explicitly one of:
 - "Checked and applying AGENTS.md instructions."
 - "AGENTS.md not found."
 
-Do not proceed without this.
-If there is a conflict, follow `AGENTS.md`.
+If there is a conflict between this file and `AGENTS.md`, follow `AGENTS.md`.

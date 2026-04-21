@@ -1,49 +1,93 @@
-# Semitexa Ultimate
+# About Semitexa
 
-Full-stack project skeleton for SSR applications with Docker-based setup.
+> **Source: `semitexa/ultimate` scaffold.** This file is bundled with the Semitexa Ultimate package and is copied into new projects by `bin/semitexa init`. In the `semitexa.dev` monorepo edit the root copy and run `bin/semitexa scaffold:sync-docs` to propagate; in a consumer project, `bin/semitexa init --only-docs` refreshes the file and local edits will be overwritten.
 
-## Purpose
+"Make it work, make it right, make it fast." — Kent Beck
 
-The official starter project for building Semitexa applications. Provides a pre-configured Docker environment, example module, and all essential packages for a production-ready SSR application.
+Semitexa isn't just a framework; it's a philosophy of efficiency.
+Engineered for the high-performance Swoole ecosystem and built with an AI-first mindset,
+it allows you to stop fighting the infrastructure and start building the future.
 
-## Role in Semitexa
+Simple by design. Powerful by nature.
 
-Entry point for new projects. Pulls Core, Auth, Authorization, Tenancy, Locale, ORM, SSR, and Docs as direct dependencies. Developers create projects from this skeleton.
+## Requirements
 
-Documentation files under `semitexa-ultimate` are scaffold assets for generated projects, not the canonical home for framework internals.
+- Docker and Docker Compose
+- Composer (on host for install)
 
-## Key Features
+## Install
 
-- Docker-first setup (no host PHP required)
-- Swoole HTTP server entry point (`server.php`)
-- Example Hello module with payload/handler/response
-- Pre-configured Docker Compose (app, db, redis)
-- `bin/semitexa` CLI wrapper for container commands
-- Includes core auth/tenancy/i18n/ORM/SSR stack
+From an empty folder (get the framework and install dependencies):
 
-## Deferred SSE Defaults
+```bash
+composer require semitexa/core
+```
 
-Starter projects generated from `semitexa/ultimate` ship with safe SSR deferred defaults:
+From a clone or existing project (dependencies already in `composer.json`):
 
-- `SSR_DEFERRED_PERSISTENT_SSE=false`
-- `SSR_DEFERRED_PERSISTENT_SSE_REQUIRE_AUTH=true`
+```bash
+composer install
+```
 
-This means deferred SSR streams late HTML blocks once and closes the SSE connection. Persistent reconnect-capable SSE must be enabled explicitly and still requires an authenticated session by default.
+Then:
 
-## robots.txt Fallback
+```bash
+cp .env.default .env
+```
 
-Starter projects also inherit the SSR `robots.txt` fallback. If you do not add a real `robots.txt` file, Semitexa serves a minimal one automatically with crawler hints for machine-readable page documents.
+## Run (Docker — supported way)
 
-Optional env hints:
+```bash
+bin/semitexa server:start
+```
 
-- `ROBOTS_SITEMAP_URL=https://example.com/sitemap.xml`
-- `ROBOTS_HOST=example.com`
-- `AI_SITEMAP_URL=https://example.com/sitemap.json`
+To stop:
 
-## Package Registry
+```bash
+bin/semitexa server:stop
+```
 
-`semitexa/ultimate` pins exact Semitexa package versions, but it intentionally does not hardcode a private Composer repository URL into `composer.json`. Generated projects are expected to resolve these internal packages through the Composer repository and credentials configured in the installation environment.
+Default URL: **http://0.0.0.0:9502** (configurable via `.env` `SWOOLE_PORT`).
 
-## Notes
+## Documentation
 
-Run `docker run --rm -v "$(pwd)":/app semitexa/installer install` to scaffold a new project, then `bin/semitexa server:start` to start.
+Official framework documentation lives in `packages/semitexa-docs/`. Package-level deep reference lives in `vendor/` (or `packages/` in the monorepo).
+
+| Topic | File or folder |
+|-------|----------------|
+| **AI context for this project** | [AI_CONTEXT.md](AI_CONTEXT.md) |
+| **Framework docs hub** | [packages/semitexa-docs/docs/README.md](packages/semitexa-docs/docs/README.md) |
+| **Workspace / monorepo docs** — architecture, DI, PHPStan, testing, policy | [packages/semitexa-docs/docs/workspace/README.md](packages/semitexa-docs/docs/workspace/README.md) |
+| **Running the app** — Docker, ports, logs | [vendor/semitexa/core/docs/RUNNING.md](vendor/semitexa/core/docs/RUNNING.md) |
+| **Adding pages and routes** — modules, Request/Handler | [vendor/semitexa/core/docs/ADDING_ROUTES.md](vendor/semitexa/core/docs/ADDING_ROUTES.md) |
+| **Attributes** — AsPayload, AsPayloadHandler, AsResource, etc. | [vendor/semitexa/core/docs/attributes/README.md](vendor/semitexa/core/docs/attributes/README.md) |
+| **Service contracts** — contracts:list, active implementation | [vendor/semitexa/core/docs/SERVICE_CONTRACTS.md](vendor/semitexa/core/docs/SERVICE_CONTRACTS.md) |
+
+The repository does not treat a root-level `./docs/` directory as canonical. Project-level AI guidance lives at root (`AGENTS.md`, `AI_ENTRY.md`, `AI_CONTEXT.md`, `AI_NOTES.md`); framework guidance lives in `packages/semitexa-docs/`; per-package reference lives in `packages/<package>/docs/`.
+
+## Structure
+
+- `src/modules/` – your application modules (add new pages and endpoints here). New routes only in modules.
+- `packages/semitexa-docs/` – official Semitexa framework and workspace documentation.
+- `packages/<package>/docs/` – per-package canonical reference.
+- `var/docs/` – working directory for notes, drafts, research, and remediation reports; not canonical.
+- `AI_ENTRY.md`, `AI_CONTEXT.md`, `AGENTS.md` – AI entrypoints and rules at project root; `AI_NOTES.md` is your notes (never overwritten).
+
+## Tests
+
+Semitexa is Docker-based. **Tests must run inside the project's test container.** The only supported command is:
+
+```bash
+bin/semitexa test:run
+```
+
+This wraps PHPUnit with the correct container, environment, and test-path discovery. Pass PHPUnit arguments positionally:
+
+```bash
+bin/semitexa test:run --filter MyTest
+bin/semitexa test:run tests/Unit/Foo/BarTest.php
+```
+
+Running `vendor/bin/phpunit` directly on the host is **not supported** — the environment, service dependencies, and path resolution only match when tests run through `bin/semitexa test:run`.
+
+Configuration lives in `phpunit.xml.dist`; add tests in `tests/` or in `packages/*/tests/` for monorepo packages (both are auto-discovered).
