@@ -88,6 +88,19 @@ final class InitCommand extends Command
             return $this->executeOnlyDocs($root, $scaffoldRoot, $io, $force);
         }
 
+        $wrongCaseRegistry = $this->detectWrongCaseRegistryPath($root);
+        if ($wrongCaseRegistry !== null) {
+            $io->error(sprintf(
+                'Non-canonical registry path detected: src/%s. The canonical path is src/registry (lowercase). Rename the directory (git mv %s %s && git mv %s %s) and rerun.',
+                $wrongCaseRegistry,
+                escapeshellarg('src/' . $wrongCaseRegistry),
+                escapeshellarg('src/_registry_tmp'),
+                escapeshellarg('src/_registry_tmp'),
+                escapeshellarg('src/registry'),
+            ));
+            return Command::FAILURE;
+        }
+
         $io->title('Semitexa project init');
         $io->text('Project root: ' . $root);
         $io->text('Scaffold source: ' . $scaffoldRoot);
@@ -295,12 +308,11 @@ final class InitCommand extends Command
         $psr4 = $autoload['psr-4'] ?? [];
         if (isset($psr4['App\\']) && !$force) {
             $updatedMappings = [];
-            $hasLegacyRegistryPath = $this->hasDirectChildDirectory($root . '/src', 'Registry');
             if (!isset($psr4['App\\Modules\\'])) {
                 $psr4['App\\Modules\\'] = 'src/modules/';
                 $updatedMappings[] = '"App\\Modules\\": "src/modules/"';
             }
-            if (!isset($psr4['App\\Registry\\']) && !$hasLegacyRegistryPath) {
+            if (!isset($psr4['App\\Registry\\'])) {
                 $psr4['App\\Registry\\'] = 'src/registry/';
                 $updatedMappings[] = '"App\\Registry\\": "src/registry/"';
             }
@@ -319,9 +331,6 @@ final class InitCommand extends Command
                 $io->text('Updated composer.json: autoload.psr-4 ' . implode(', ', $updatedMappings));
             }
 
-            if ($hasLegacyRegistryPath && !isset($psr4['App\\Registry\\'])) {
-                $io->note('Skipped autoload.psr-4 "App\\Registry\\": "src/registry/" because this project already has a legacy src/Registry path. Migrate those classes first or rerun with --force once the project is ready for the canonical src/registry layout.');
-            }
             return true;
         }
 
@@ -347,18 +356,31 @@ final class InitCommand extends Command
         return true;
     }
 
-    private function hasDirectChildDirectory(string $parentDir, string $expectedName): bool
+    private function detectWrongCaseRegistryPath(string $root): ?string
     {
-        if (!is_dir($parentDir)) {
-            return false;
+        $srcDir = $root . '/src';
+        if (!is_dir($srcDir)) {
+            return null;
         }
 
-        $entries = scandir($parentDir);
+        $entries = scandir($srcDir);
         if ($entries === false) {
-            return false;
+            return null;
         }
 
-        return in_array($expectedName, $entries, true) && is_dir($parentDir . '/' . $expectedName);
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            if ($entry === 'registry') {
+                continue;
+            }
+            if (strtolower($entry) === 'registry' && is_dir($srcDir . '/' . $entry)) {
+                return $entry;
+            }
+        }
+
+        return null;
     }
 
     private function ensureLocalEnvOverrideFile(string $root, SymfonyStyle $io): bool
