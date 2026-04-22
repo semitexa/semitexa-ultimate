@@ -84,18 +84,21 @@ final class InitCommand extends Command
             return Command::FAILURE;
         }
 
+        if ($onlyDocs) {
+            return $this->executeOnlyDocs($root, $scaffoldRoot, $io, $force);
+        }
+
         $wrongCaseRegistry = $this->detectWrongCaseRegistryPath($root);
         if ($wrongCaseRegistry !== null) {
             $io->error(sprintf(
-                'Non-canonical registry path detected: src/%s. The canonical path is src/registry (lowercase). Rename the directory (git mv src/%s src/_registry_tmp && git mv src/_registry_tmp src/registry) and rerun.',
+                'Non-canonical registry path detected: src/%s. The canonical path is src/registry (lowercase). Rename the directory (git mv %s %s && git mv %s %s) and rerun.',
                 $wrongCaseRegistry,
-                $wrongCaseRegistry,
+                escapeshellarg('src/' . $wrongCaseRegistry),
+                escapeshellarg('src/_registry_tmp'),
+                escapeshellarg('src/_registry_tmp'),
+                escapeshellarg('src/registry'),
             ));
             return Command::FAILURE;
-        }
-
-        if ($onlyDocs) {
-            return $this->executeOnlyDocs($root, $scaffoldRoot, $io, $force);
         }
 
         $io->title('Semitexa project init');

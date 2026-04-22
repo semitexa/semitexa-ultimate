@@ -48,13 +48,18 @@ final class InstallerSyncAllowListTest extends TestCase
 
         foreach ($map as $_projectPath => $sourcePath) {
             $fullPath = $scaffoldRoot . '/' . $sourcePath;
-            if (!is_file($fullPath)) {
-                continue;
-            }
+
+            self::assertTrue(
+                is_file($fullPath),
+                sprintf('Scaffold asset "%s" referenced by SCAFFOLD_FILE_MAP must exist as a readable file.', $sourcePath),
+            );
+
             $contents = file_get_contents($fullPath);
-            if ($contents === false) {
-                continue;
-            }
+            self::assertNotFalse(
+                $contents,
+                sprintf('Scaffold asset "%s" referenced by SCAFFOLD_FILE_MAP must be readable.', $sourcePath),
+            );
+
             self::assertStringNotContainsString(
                 'namespace Semitexa\\Ultimate',
                 $contents,
