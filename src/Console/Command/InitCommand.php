@@ -295,7 +295,7 @@ final class InitCommand extends Command
         $psr4 = $autoload['psr-4'] ?? [];
         if (isset($psr4['App\\']) && !$force) {
             $updatedMappings = [];
-            $hasLegacyRegistryPath = is_dir($root . '/src/Registry');
+            $hasLegacyRegistryPath = $this->hasDirectChildDirectory($root . '/src', 'Registry');
             if (!isset($psr4['App\\Modules\\'])) {
                 $psr4['App\\Modules\\'] = 'src/modules/';
                 $updatedMappings[] = '"App\\Modules\\": "src/modules/"';
@@ -345,6 +345,20 @@ final class InitCommand extends Command
         $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/", "App\\Registry\\": "src/registry/"');
 
         return true;
+    }
+
+    private function hasDirectChildDirectory(string $parentDir, string $expectedName): bool
+    {
+        if (!is_dir($parentDir)) {
+            return false;
+        }
+
+        $entries = scandir($parentDir);
+        if ($entries === false) {
+            return false;
+        }
+
+        return in_array($expectedName, $entries, true) && is_dir($parentDir . '/' . $expectedName);
     }
 
     private function ensureLocalEnvOverrideFile(string $root, SymfonyStyle $io): bool

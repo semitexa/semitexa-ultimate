@@ -79,6 +79,32 @@ final class InitCommandRegistryAutoloadTest extends TestCase
         }
     }
 
+    public function testPatchComposerAutoloadKeepsCanonicalRegistryDirectoryEligibleForMapping(): void
+    {
+        $tempDir = $this->createTempDirectory();
+
+        try {
+            mkdir($tempDir . '/src/registry', 0777, true);
+            $this->writeComposerJson(
+                $tempDir,
+                [
+                    'name' => 'semitexa/ultimate-test',
+                    'autoload' => [
+                        'psr-4' => [
+                            'App\\' => 'src/',
+                        ],
+                    ],
+                ]
+            );
+
+            $decoded = $this->invokePatchComposerAutoload($tempDir);
+
+            self::assertSame('src/registry/', $decoded['autoload']['psr-4']['App\\Registry\\'] ?? null);
+        } finally {
+            $this->removeDirectory($tempDir);
+        }
+    }
+
     public function testPatchComposerAutoloadIncludesRegistryMappingInFreshAutoloadSetup(): void
     {
         $tempDir = $this->createTempDirectory();
