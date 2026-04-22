@@ -40,7 +40,7 @@ final class HelloHandler implements TypedHandlerInterface
         }
 
         return [
-            'url' => TenantUrlResolver::resolveUrl('demo', '/demo', true) ?? 'https://framework.semitexa.com/demo',
+            'url' => TenantUrlResolver::resolveUrl('demo', '/demo', true) ?? 'https://framework.semitexa.com/',
             'external' => true,
         ];
     }
