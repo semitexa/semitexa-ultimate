@@ -44,6 +44,7 @@ final class InitCommand extends Command
         'var/docs/.gitkeep' => 'var/docs/.gitkeep',
         'var/docs/README.md' => 'var/docs/README.md',
         'var/run/.gitkeep' => 'var/run/.gitkeep',
+        'src/registry/.gitkeep' => 'src/registry/.gitkeep',
         'src/infrastructure/database/.gitkeep' => 'src/infrastructure/database/.gitkeep',
         'src/infrastructure/migrations/.gitkeep' => 'src/infrastructure/migrations/.gitkeep',
     ];
@@ -96,6 +97,7 @@ final class InitCommand extends Command
             'public',
             'src/infrastructure/database',
             'src/infrastructure/migrations',
+            'src/registry',
             'src/modules',
             'tests',
             'var/cache',
@@ -144,6 +146,7 @@ final class InitCommand extends Command
             'var/docs/.gitkeep',
             'var/docs/README.md',
             'var/run/.gitkeep',
+            'src/registry/.gitkeep',
             'src/infrastructure/database/.gitkeep',
             'src/infrastructure/migrations/.gitkeep',
         ];
