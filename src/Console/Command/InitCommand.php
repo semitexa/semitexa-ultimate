@@ -291,8 +291,17 @@ final class InitCommand extends Command
         $autoload = $json['autoload'] ?? [];
         $psr4 = $autoload['psr-4'] ?? [];
         if (isset($psr4['App\\']) && !$force) {
+            $updatedMappings = [];
             if (!isset($psr4['App\\Modules\\'])) {
                 $psr4['App\\Modules\\'] = 'src/modules/';
+                $updatedMappings[] = '"App\\Modules\\": "src/modules/"';
+            }
+            if (!isset($psr4['App\\Registry\\'])) {
+                $psr4['App\\Registry\\'] = 'src/registry/';
+                $updatedMappings[] = '"App\\Registry\\": "src/registry/"';
+            }
+
+            if ($updatedMappings !== []) {
                 $json['autoload'] = array_merge($autoload, ['psr-4' => $psr4]);
                 $encoded = json_encode($json, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
                 if ($encoded === false) {
@@ -303,7 +312,7 @@ final class InitCommand extends Command
                     $io->error('Failed to update composer.json.');
                     return false;
                 }
-                $io->text('Updated composer.json: autoload.psr-4 "App\\Modules\\": "src/modules/"');
+                $io->text('Updated composer.json: autoload.psr-4 ' . implode(', ', $updatedMappings));
             }
             return true;
         }
@@ -311,6 +320,7 @@ final class InitCommand extends Command
         $psr4['App\\'] = 'src/';
         $psr4['App\\Tests\\'] = 'tests/';
         $psr4['App\\Modules\\'] = 'src/modules/';
+        $psr4['App\\Registry\\'] = 'src/registry/';
         $json['autoload'] = array_merge($autoload, ['psr-4' => $psr4]);
 
         $encoded = json_encode($json, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
@@ -324,7 +334,7 @@ final class InitCommand extends Command
             return false;
         }
 
-        $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/"');
+        $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/", "App\\Registry\\": "src/registry/"');
 
         return true;
     }
