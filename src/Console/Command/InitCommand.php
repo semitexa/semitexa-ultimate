@@ -44,6 +44,7 @@ final class InitCommand extends Command
         'var/docs/.gitkeep' => 'var/docs/.gitkeep',
         'var/docs/README.md' => 'var/docs/README.md',
         'var/run/.gitkeep' => 'var/run/.gitkeep',
+        'src/registry/.gitkeep' => 'src/registry/.gitkeep',
         'src/infrastructure/database/.gitkeep' => 'src/infrastructure/database/.gitkeep',
         'src/infrastructure/migrations/.gitkeep' => 'src/infrastructure/migrations/.gitkeep',
     ];
@@ -96,6 +97,7 @@ final class InitCommand extends Command
             'public',
             'src/infrastructure/database',
             'src/infrastructure/migrations',
+            'src/registry',
             'src/modules',
             'tests',
             'var/cache',
@@ -144,6 +146,7 @@ final class InitCommand extends Command
             'var/docs/.gitkeep',
             'var/docs/README.md',
             'var/run/.gitkeep',
+            'src/registry/.gitkeep',
             'src/infrastructure/database/.gitkeep',
             'src/infrastructure/migrations/.gitkeep',
         ];
@@ -291,8 +294,18 @@ final class InitCommand extends Command
         $autoload = $json['autoload'] ?? [];
         $psr4 = $autoload['psr-4'] ?? [];
         if (isset($psr4['App\\']) && !$force) {
+            $updatedMappings = [];
+            $hasLegacyRegistryPath = $this->hasDirectChildDirectory($root . '/src', 'Registry');
             if (!isset($psr4['App\\Modules\\'])) {
                 $psr4['App\\Modules\\'] = 'src/modules/';
+                $updatedMappings[] = '"App\\Modules\\": "src/modules/"';
+            }
+            if (!isset($psr4['App\\Registry\\']) && !$hasLegacyRegistryPath) {
+                $psr4['App\\Registry\\'] = 'src/registry/';
+                $updatedMappings[] = '"App\\Registry\\": "src/registry/"';
+            }
+
+            if ($updatedMappings !== []) {
                 $json['autoload'] = array_merge($autoload, ['psr-4' => $psr4]);
                 $encoded = json_encode($json, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
                 if ($encoded === false) {
@@ -303,7 +316,11 @@ final class InitCommand extends Command
                     $io->error('Failed to update composer.json.');
                     return false;
                 }
-                $io->text('Updated composer.json: autoload.psr-4 "App\\Modules\\": "src/modules/"');
+                $io->text('Updated composer.json: autoload.psr-4 ' . implode(', ', $updatedMappings));
+            }
+
+            if ($hasLegacyRegistryPath && !isset($psr4['App\\Registry\\'])) {
+                $io->note('Skipped autoload.psr-4 "App\\Registry\\": "src/registry/" because this project already has a legacy src/Registry path. Migrate those classes first or rerun with --force once the project is ready for the canonical src/registry layout.');
             }
             return true;
         }
@@ -311,6 +328,7 @@ final class InitCommand extends Command
         $psr4['App\\'] = 'src/';
         $psr4['App\\Tests\\'] = 'tests/';
         $psr4['App\\Modules\\'] = 'src/modules/';
+        $psr4['App\\Registry\\'] = 'src/registry/';
         $json['autoload'] = array_merge($autoload, ['psr-4' => $psr4]);
 
         $encoded = json_encode($json, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
@@ -324,9 +342,23 @@ final class InitCommand extends Command
             return false;
         }
 
-        $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/"');
+        $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/", "App\\Registry\\": "src/registry/"');
 
         return true;
+    }
+
+    private function hasDirectChildDirectory(string $parentDir, string $expectedName): bool
+    {
+        if (!is_dir($parentDir)) {
+            return false;
+        }
+
+        $entries = scandir($parentDir);
+        if ($entries === false) {
+            return false;
+        }
+
+        return in_array($expectedName, $entries, true) && is_dir($parentDir . '/' . $expectedName);
     }
 
     private function ensureLocalEnvOverrideFile(string $root, SymfonyStyle $io): bool

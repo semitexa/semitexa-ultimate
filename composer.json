@@ -6,6 +6,7 @@
     "autoload": {
         "psr-4": {
             "App\\": "src/",
+            "App\\Registry\\": "src/registry/",
             "Semitexa\\Ultimate\\": "src/"
         }
     },
