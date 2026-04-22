@@ -292,11 +292,12 @@ final class InitCommand extends Command
         $psr4 = $autoload['psr-4'] ?? [];
         if (isset($psr4['App\\']) && !$force) {
             $updatedMappings = [];
+            $hasLegacyRegistryPath = is_dir($root . '/src/Registry');
             if (!isset($psr4['App\\Modules\\'])) {
                 $psr4['App\\Modules\\'] = 'src/modules/';
                 $updatedMappings[] = '"App\\Modules\\": "src/modules/"';
             }
-            if (!isset($psr4['App\\Registry\\'])) {
+            if (!isset($psr4['App\\Registry\\']) && !$hasLegacyRegistryPath) {
                 $psr4['App\\Registry\\'] = 'src/registry/';
                 $updatedMappings[] = '"App\\Registry\\": "src/registry/"';
             }
@@ -313,6 +314,10 @@ final class InitCommand extends Command
                     return false;
                 }
                 $io->text('Updated composer.json: autoload.psr-4 ' . implode(', ', $updatedMappings));
+            }
+
+            if ($hasLegacyRegistryPath && !isset($psr4['App\\Registry\\'])) {
+                $io->note('Skipped autoload.psr-4 "App\\Registry\\": "src/registry/" because this project already has a legacy src/Registry path. Migrate those classes first or rerun with --force once the project is ready for the canonical src/registry layout.');
             }
             return true;
         }

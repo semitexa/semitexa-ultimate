@@ -20,8 +20,16 @@ final class InitCommandRegistryAutoloadTest extends TestCase
     {
         $source = $this->readInitCommandSource();
 
-        self::assertStringContainsString("if (!isset(\$psr4['App\\\\Registry\\\\'])) {", $source);
+        self::assertStringContainsString("\$hasLegacyRegistryPath = is_dir(\$root . '/src/Registry');", $source);
+        self::assertStringContainsString("if (!isset(\$psr4['App\\\\Registry\\\\']) && !\$hasLegacyRegistryPath) {", $source);
         self::assertStringContainsString("\$psr4['App\\\\Registry\\\\'] = 'src/registry/';", $source);
+    }
+
+    public function testInitCommandSkipsRegistryMappingWhenLegacyRegistryDirectoryExists(): void
+    {
+        $source = $this->readInitCommandSource();
+
+        self::assertStringContainsString('Skipped autoload.psr-4 "App\\\\Registry\\\\": "src/registry/" because this project already has a legacy src/Registry path.', $source);
     }
 
     public function testInitCommandIncludesRegistryMappingInFreshAutoloadSetup(): void
