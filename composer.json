@@ -34,7 +34,9 @@
         "semitexa/llm": "2026.04.09.1145",
         "semitexa/scheduler": "2026.04.14.1121",
         "semitexa/ledger": "2026.04.15.1848",
-        "semitexa/project-graph": "2026.04.21.1359"
+        "semitexa/project-graph": "2026.04.21.1359",
+        "semitexa/theme": "2026.04.24.1121",
+        "semitexa/skins-base": "2026.04.24.1121"
     },
     "require-dev": {
         "semitexa/testing": "2026.04.07.1133"
