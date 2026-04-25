@@ -45,8 +45,6 @@ final class InitCommand extends Command
         'var/docs/README.md' => 'var/docs/README.md',
         'var/run/.gitkeep' => 'var/run/.gitkeep',
         'src/registry/.gitkeep' => 'src/registry/.gitkeep',
-        'src/infrastructure/database/.gitkeep' => 'src/infrastructure/database/.gitkeep',
-        'src/infrastructure/migrations/.gitkeep' => 'src/infrastructure/migrations/.gitkeep',
     ];
 
     /**
@@ -108,8 +106,6 @@ final class InitCommand extends Command
         $dirs = [
             'bin',
             'public',
-            'src/infrastructure/database',
-            'src/infrastructure/migrations',
             'src/registry',
             'src/modules',
             'tests',
@@ -160,8 +156,6 @@ final class InitCommand extends Command
             'var/docs/README.md',
             'var/run/.gitkeep',
             'src/registry/.gitkeep',
-            'src/infrastructure/database/.gitkeep',
-            'src/infrastructure/migrations/.gitkeep',
         ];
 
         [$writtenFiles, $skippedFiles] = $this->writeFiles($root, $scaffoldRoot, $syncFiles, $force, false, $io);
