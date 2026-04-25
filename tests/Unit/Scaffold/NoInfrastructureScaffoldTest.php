@@ -18,14 +18,12 @@ use Semitexa\Ultimate\Console\Command\InitCommand;
  * fires. ORM owns schema migrations through `[Resource]`-attributed entities — there
  * is no canonical migrations directory in a Semitexa project.
  *
- * Companion docs: var/docs/UPDATE_DEV_ORM_OWNERSHIP_AUDIT.md, epic ep-update-dev-orm-ownership.
+ * Historical context: epic ep-update-dev-orm-ownership.
  */
 final class NoInfrastructureScaffoldTest extends TestCase
 {
     public function testScaffoldFileMapHasNoInfrastructureKeys(): void
     {
-        require_once dirname(__DIR__, 3) . '/src/Console/Command/InitCommand.php';
-
         $reflection = new ReflectionClass(InitCommand::class);
         $constants = $reflection->getReflectionConstants();
 
@@ -58,9 +56,10 @@ final class NoInfrastructureScaffoldTest extends TestCase
 
     public function testInitCommandSourceContainsNoInfrastructurePath(): void
     {
-        $source = (string) file_get_contents(
-            __DIR__ . '/../../../src/Console/Command/InitCommand.php',
-        );
+        $sourcePath = __DIR__ . '/../../../src/Console/Command/InitCommand.php';
+        $source = file_get_contents($sourcePath);
+
+        self::assertNotFalse($source, sprintf('Failed to read %s.', $sourcePath));
 
         self::assertStringNotContainsString(
             'src/infrastructure/',
