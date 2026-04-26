@@ -1,5 +1,28 @@
 var SKIN_MODE_STORAGE_KEY = 'semitexa_skin_mode';
 
+function getInitialSkinMode() {
+    var attributeMode = document.documentElement.getAttribute('data-skin-mode');
+
+    try {
+        var storedMode = window.localStorage.getItem(SKIN_MODE_STORAGE_KEY);
+        if (storedMode === 'dark' || storedMode === 'light') {
+            return storedMode;
+        }
+    } catch (error) {
+        // Ignore storage read failures and fall back to attribute or media query.
+    }
+
+    if (attributeMode === 'dark' || attributeMode === 'light') {
+        return attributeMode;
+    }
+
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+    }
+
+    return 'light';
+}
+
 function applySkinMode(mode) {
     var resolved = mode === 'dark' ? 'dark' : 'light';
     var body = document.body;
@@ -34,7 +57,7 @@ document.querySelectorAll('[data-skin-toggle]').forEach(function (toggle) {
     });
 });
 
-applySkinMode(document.documentElement.getAttribute('data-skin-mode'));
+applySkinMode(getInitialSkinMode());
 
 var lockup = document.querySelector('[data-logo-lockup]');
 
