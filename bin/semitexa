@@ -177,10 +177,16 @@ compose_args() {
         _llm_provider="$(env_val LLM_PROVIDER "")"
         if [ "$_llm_provider" = "ollama" ]; then _args="$_args -f docker-compose.ollama.yml"; _has_overlay=1; fi
     fi
+    # Per-operator override — standard Docker Compose convention.
+    # Explicit -f overrides compose's auto-discovery, so we must re-include it.
+    # Keep it last so local overrides win over generated feature overlays.
+    if [ -f "$PROJECT_ROOT/docker-compose.override.yml" ]; then
+        _args="$_args -f docker-compose.override.yml"
+        _has_overlay=1
+    fi
     if [ "$_has_overlay" -eq 0 ]; then
         echo ""
     else
-        [ -f "$PROJECT_ROOT/docker-compose.override.yml" ] && _args="$_args -f docker-compose.override.yml"
         echo "$_args"
     fi
 }
@@ -188,8 +194,7 @@ compose_args() {
 # Returns ALL compose files regardless of .env settings (for stop/cleanup).
 compose_all_args() {
     _args="-f docker-compose.yml"
-    [ -f "$PROJECT_ROOT/docker-compose.override.yml" ] && _args="$_args -f docker-compose.override.yml"
-    for _overlay in docker-compose.nats.yml docker-compose.mysql.yml docker-compose.redis.yml docker-compose.ollama.yml; do
+    for _overlay in docker-compose.override.yml docker-compose.nats.yml docker-compose.mysql.yml docker-compose.redis.yml docker-compose.ollama.yml; do
         [ -f "$PROJECT_ROOT/$_overlay" ] && _args="$_args -f $_overlay"
     done
     echo "$_args"
@@ -209,6 +214,16 @@ run_compose() {
     )
 }
 
+run_compose_all() {
+    _compose="$(compose_bin)"
+    _overlays="$(compose_all_args)"
+    (
+        env_export_compose_context
+        # shellcheck disable=SC2086
+        $_compose $_overlays "$@"
+    )
+}
+
 is_app_running() {
     _compose="$(compose_bin)"
     _overlays="$(compose_args)"
@@ -225,6 +240,14 @@ is_app_running() {
         *running*) return 0 ;;
         *)         return 1 ;;
     esac
+}
+
+project_is_app_running() {
+    _project_root_arg="${1:-$PROJECT_ROOT}"
+    (
+        PROJECT_ROOT="$_project_root_arg"
+        is_app_running
+    )
 }
 
 wait_for_service() {
@@ -361,7 +384,7 @@ router_sync_project_domains() {
     [ -n "$_domains" ] || return 0
 
     _saved_project_root="$PROJECT_ROOT"
-    _port="$(env_val SWOOLE_PORT 9502)"
+    _port="$(env_val SWOOLE_PORT 8080)"
     _mode="$(router_mode_get)"
 
     router_ensure_dirs
@@ -401,20 +424,475 @@ router_project_domain_count() {
     printf '%s' "$_count"
 }
 
+# Print domains registered in the shared router for the given project root,
+# one per line, alphabetically sorted. Used by server:start to show the real
+# URLs the project is reachable at instead of generic http://localhost:<port>.
+router_list_project_domains() {
+    _project_root="${1:-$PROJECT_ROOT}"
+    _saved_project_root="$PROJECT_ROOT"
+    for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ "$PROJECT_ROOT" = "$_project_root" ] || continue
+        [ -n "$DOMAIN" ] || continue
+        printf '%s\n' "$DOMAIN"
+    done | sort
+    PROJECT_ROOT="$_saved_project_root"
+}
+
 project_has_shared_domains() {
     [ "$(router_project_domain_count "$PROJECT_ROOT")" -gt 0 ] && return 0
     [ -n "$(router_collect_project_domains || true)" ]
+}
+
+# ── Local app registry + Swoole port broker ─────────────────────────────────
+# Each installed Semitexa project registers itself in
+#   ~/.semitexa/router/registry/apps/<app-id>.env
+# and gets a unique, persisted Swoole port from a configurable range
+# (default 9501-9599). Prevents host-port collisions when multiple Semitexa
+# projects run on the same workstation.
+ROUTER_APP_REGISTRY_DIR="$ROUTER_ROOT/registry/apps"
+ROUTER_CONFIG_FILE="$ROUTER_ROOT/config.env"
+ROUTER_LOCK_DIR="$ROUTER_ROOT/locks"
+
+router_ensure_app_dirs() {
+    mkdir -p "$ROUTER_APP_REGISTRY_DIR" "$ROUTER_LOCK_DIR"
+}
+
+# Best-effort lock via mkdir; gives up after ~5s. Workstation-only collisions
+# are extremely rare; the lock just guards back-to-back installs.
+router_lock_acquire() {
+    router_ensure_app_dirs
+    _lock="$ROUTER_LOCK_DIR/registry.lock"
+    _waited=0
+    while [ "$_waited" -lt 50 ]; do
+        if mkdir "$_lock" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.1 2>/dev/null || sleep 1
+        _waited=$((_waited + 1))
+    done
+    warn "Could not acquire router registry lock after ~5s."
+    return 1
+}
+
+router_lock_release() {
+    rm -rf "$ROUTER_LOCK_DIR/registry.lock" 2>/dev/null || true
+}
+
+port_range_start() {
+    if [ -f "$ROUTER_CONFIG_FILE" ]; then
+        _v="$(grep -E '^[[:space:]]*SEMITEXA_LOCAL_PORT_RANGE_START[[:space:]]*=' "$ROUTER_CONFIG_FILE" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | tr -d '[:space:]"')"
+        case "$_v" in ''|*[!0-9]*) ;; *) printf '%s' "$_v"; return ;; esac
+    fi
+    printf '9501'
+}
+
+port_range_end() {
+    if [ -f "$ROUTER_CONFIG_FILE" ]; then
+        _v="$(grep -E '^[[:space:]]*SEMITEXA_LOCAL_PORT_RANGE_END[[:space:]]*=' "$ROUTER_CONFIG_FILE" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | tr -d '[:space:]"')"
+        case "$_v" in ''|*[!0-9]*) ;; *) printf '%s' "$_v"; return ;; esac
+    fi
+    printf '9599'
+}
+
+port_in_range() {
+    _p="$1"
+    case "$_p" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$_p" -ge "$(port_range_start)" ] && [ "$_p" -le "$(port_range_end)" ]
+}
+
+# Returns 0 if <port> is bound on the host by ANY listening process.
+# Tries ss → netstat → nc → bash /dev/tcp for portability.
+port_in_use_on_host() {
+    _p="$1"
+    case "$_p" in ''|*[!0-9]*) return 1 ;; esac
+
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | awk 'NR>1 {print $4}' | grep -E "[:.]${_p}\$" >/dev/null 2>&1
+        return $?
+    fi
+    if command -v netstat >/dev/null 2>&1; then
+        netstat -an 2>/dev/null | awk '/LISTEN/ {print $4}' | grep -E "[:.]${_p}\$" >/dev/null 2>&1
+        return $?
+    fi
+    if command -v nc >/dev/null 2>&1; then
+        nc -z 127.0.0.1 "$_p" >/dev/null 2>&1
+        return $?
+    fi
+    if command -v bash >/dev/null 2>&1; then
+        bash -c "exec 9<>/dev/tcp/127.0.0.1/$_p" >/dev/null 2>&1
+        _rc=$?
+        bash -c "exec 9>&-" >/dev/null 2>&1 || true
+        return $_rc
+    fi
+    return 1
+}
+
+router_app_entry_path() {
+    _id="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.-' '_')"
+    printf '%s/%s.env' "$ROUTER_APP_REGISTRY_DIR" "$_id"
+}
+
+router_app_entry_exists() {
+    [ -f "$(router_app_entry_path "$1")" ]
+}
+
+# Iterate over every app entry and emit "APP_ID<TAB>SWOOLE_PORT<TAB>PROJECT_ROOT<TAB>PROJECT_NAME".
+router_app_iter() {
+    [ -d "$ROUTER_APP_REGISTRY_DIR" ] || return 0
+    for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ -n "$APP_ID" ] || continue
+        [ -n "$SWOOLE_PORT" ] || continue
+        printf '%s\t%s\t%s\t%s\n' "$APP_ID" "$SWOOLE_PORT" "${PROJECT_ROOT:-}" "${PROJECT_NAME:-}"
+    done
+}
+
+# Find the app id matching a project root, if registered. Empty stdout if not.
+router_app_find_by_project() {
+    _root="$1"
+    [ -n "$_root" ] || return 1
+    [ -d "$ROUTER_APP_REGISTRY_DIR" ] || return 1
+    for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        if [ "$PROJECT_ROOT" = "$_root" ] && [ -n "$APP_ID" ]; then
+            printf '%s' "$APP_ID"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Returns 0 if <port> is registered to a DIFFERENT app than <self_app_id>.
+port_owned_by_other_app() {
+    _port="$1"
+    _self="$2"
+    [ -d "$ROUTER_APP_REGISTRY_DIR" ] || return 1
+    for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ -n "$APP_ID" ] || continue
+        [ -n "$SWOOLE_PORT" ] || continue
+        [ "$SWOOLE_PORT" = "$_port" ] || continue
+        [ "$APP_ID" != "$_self" ] || continue
+        return 0
+    done
+    return 1
+}
+
+# Scan [start..end] for a port that is neither owned by another app id
+# nor bound on the host. Echoes the chosen port; non-zero exit if exhausted.
+allocate_free_port() {
+    _self="$1"
+    _start="$(port_range_start)"
+    _end="$(port_range_end)"
+    _p="$_start"
+    while [ "$_p" -le "$_end" ]; do
+        if ! port_owned_by_other_app "$_p" "$_self" && ! port_in_use_on_host "$_p"; then
+            printf '%s' "$_p"
+            return 0
+        fi
+        _p=$((_p + 1))
+    done
+    return 1
+}
+
+# Generate a UUIDv4. Prefers `uuidgen`; falls back to /dev/urandom and
+# manually sets the version + variant nibbles per RFC 4122 §4.4.
+app_generate_uuid() {
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]'
+        return 0
+    fi
+    if [ -r /proc/sys/kernel/random/uuid ]; then
+        cat /proc/sys/kernel/random/uuid 2>/dev/null
+        return 0
+    fi
+    if [ -r /dev/urandom ]; then
+        _hex="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+        if [ -n "$_hex" ]; then
+            _g1="$(printf '%s' "$_hex" | cut -c1-8)"
+            _g2="$(printf '%s' "$_hex" | cut -c9-12)"
+            _g3="$(printf '4%s' "$(printf '%s' "$_hex" | cut -c14-16)")"
+            _v9="$(printf '%s' "$_hex" | cut -c17)"
+            case "$_v9" in
+                0|1|2|3|4|5|6|7) _v9=8 ;;
+                c|d|e|f)         _v9=a ;;
+            esac
+            _g4="$(printf '%s%s' "$_v9" "$(printf '%s' "$_hex" | cut -c18-20)")"
+            _g5="$(printf '%s' "$_hex" | cut -c21-32)"
+            printf '%s-%s-%s-%s-%s\n' "$_g1" "$_g2" "$_g3" "$_g4" "$_g5"
+            return 0
+        fi
+    fi
+    error "Cannot generate UUID: no uuidgen, /proc UUID, or /dev/urandom available."
+    exit 1
+}
+
+# Loose validator: accepts canonical UUIDv4 or a [a-z0-9-]{6,64} slug.
+app_validate_app_id() {
+    _id="$1"
+    case "$_id" in
+        ''|*[!a-z0-9-]*) return 1 ;;
+    esac
+    _len=${#_id}
+    [ "$_len" -ge 6 ] && [ "$_len" -le 64 ]
+}
+
+# Persist an app entry. REGISTERED_AT is preserved across re-writes.
+router_app_write_entry() {
+    _id="$1"
+    _port="$2"
+    _project_root_arg="${3:-$PROJECT_ROOT}"
+    _project_name="$(basename "$_project_root_arg" 2>/dev/null || echo unknown)"
+    _path="$(router_app_entry_path "$_id")"
+    _registered_at=""
+    if [ -f "$_path" ]; then
+        APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$_path"
+        _registered_at="$REGISTERED_AT"
+    fi
+    [ -n "$_registered_at" ] || _registered_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    router_ensure_app_dirs
+    cat > "$_path" <<EOF
+APP_ID=$_id
+PROJECT_ROOT=$_project_root_arg
+PROJECT_NAME=$_project_name
+SWOOLE_PORT=$_port
+REGISTERED_AT=$_registered_at
+UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+EOF
+}
+
+router_app_delete_entry() {
+    _id="$1"
+    rm -f "$(router_app_entry_path "$_id")"
+}
+
+# Rewrite UPSTREAM_PORT for every domain entry under a project root, regenerate
+# nginx + dnsmasq config, and reload the proxy if it's running.
+router_apply_app_port_to_domains() {
+    _project_root_arg="$1"
+    _new_port="$2"
+    [ -n "$_project_root_arg" ] || return 0
+    [ -n "$_new_port" ] || return 0
+    [ -d "$ROUTER_REGISTRY_DIR" ] || return 0
+
+    _saved_project_root="$PROJECT_ROOT"
+    _changed=0
+    for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_entry" ] || continue
+        DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$_entry"
+        [ "$PROJECT_ROOT" = "$_project_root_arg" ] || continue
+        [ "$UPSTREAM_PORT" != "$_new_port" ] || continue
+        PROJECT_ROOT="$_project_root_arg"
+        router_registry_write_entry "$DOMAIN" "$_new_port" "$MODE"
+        _changed=1
+    done
+    PROJECT_ROOT="$_saved_project_root"
+
+    if [ "$_changed" -eq 1 ]; then
+        router_generate_nginx_config
+        router_generate_dns_config
+        if [ -f "$ROUTER_COMPOSE" ]; then
+            router_compose restart proxy >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+# Atomic-ish .env upsert: replace KEY=... line in-place, otherwise append.
+env_upsert_kv() {
+    _file="$1"
+    _key="$2"
+    _val="$3"
+    [ -n "$_file" ] || return 1
+    [ -n "$_key" ] || return 1
+    if [ ! -f "$_file" ]; then
+        printf '%s=%s\n' "$_key" "$_val" > "$_file"
+        return 0
+    fi
+    _tmp="$(mktemp "${_file}.XXXXXX")"
+    awk -v k="$_key" -v v="$_val" '
+        BEGIN { written = 0 }
+        {
+            line = $0
+            stripped = line
+            sub(/^[[:space:]]+/, "", stripped)
+            if (stripped ~ "^"k"[[:space:]]*=") {
+                if (!written) { print k "=" v; written = 1 }
+                next
+            }
+            print line
+        }
+        END { if (!written) print k "=" v }
+    ' "$_file" > "$_tmp" && mv "$_tmp" "$_file"
+}
+
+# Treat "in use by us" as not-in-use, so reconciling while our own container
+# is publishing this port doesn't relocate the app.
+port_in_use_on_host_excluding_self() {
+    _port="$1"
+    _project_root_arg="${2:-$PROJECT_ROOT}"
+    if ! port_in_use_on_host "$_port"; then
+        return 1
+    fi
+    _project_running=0
+    if project_is_app_running "$_project_root_arg"; then
+        _project_running=1
+    fi
+    if [ -d "$ROUTER_REGISTRY_DIR" ]; then
+        for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+            [ -f "$_entry" ] || continue
+            DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
+            # shellcheck disable=SC1090
+            . "$_entry"
+            if [ "$_project_running" -eq 1 ] && [ "$PROJECT_ROOT" = "$_project_root_arg" ] && [ "$UPSTREAM_PORT" = "$_port" ]; then
+                return 1
+            fi
+        done
+    fi
+    _existing="$(router_app_find_by_project "$_project_root_arg" 2>/dev/null || true)"
+    if [ -n "$_existing" ] && [ -f "$(router_app_entry_path "$_existing")" ]; then
+        APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$(router_app_entry_path "$_existing")"
+        if [ "$_project_running" -eq 1 ] && [ "$SWOOLE_PORT" = "$_port" ]; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Core registration algorithm. Inputs: <app-id> [<requested-port>] [<project-root>]
+# Echoes the assigned port; non-zero exit if no port could be allocated.
+local_app_register_logic() {
+    _id="$1"
+    _requested="${2:-}"
+    _project_root_arg="${3:-$PROJECT_ROOT}"
+
+    if ! app_validate_app_id "$_id"; then
+        error "Invalid SEMITEXA_APP_ID: '$_id' (expected 6-64 chars, [a-z0-9-])."
+        return 1
+    fi
+
+    router_ensure_app_dirs
+    if ! router_lock_acquire; then
+        return 1
+    fi
+
+    _existing_port=""
+    if router_app_entry_exists "$_id"; then
+        APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+        # shellcheck disable=SC1090
+        . "$(router_app_entry_path "$_id")"
+        _existing_port="$SWOOLE_PORT"
+    fi
+
+    case "$_requested" in
+        ''|auto) _requested="" ;;
+        *[!0-9]*)
+            warn "Requested port '$_requested' is not numeric; ignoring."
+            _requested=""
+            ;;
+    esac
+
+    _assigned=""
+    if [ -z "$_requested" ]; then
+        if [ -n "$_existing_port" ] \
+            && port_in_range "$_existing_port" \
+            && ! port_owned_by_other_app "$_existing_port" "$_id" \
+            && ! port_in_use_on_host_excluding_self "$_existing_port" "$_project_root_arg"; then
+            _assigned="$_existing_port"
+        else
+            _assigned="$(allocate_free_port "$_id" || true)"
+        fi
+    else
+        if ! port_in_range "$_requested"; then
+            warn "Port $_requested is outside the allowed range ($(port_range_start)-$(port_range_end))."
+        elif port_owned_by_other_app "$_requested" "$_id"; then
+            warn "Port $_requested is already assigned to another local Semitexa app."
+        elif port_in_use_on_host_excluding_self "$_requested" "$_project_root_arg"; then
+            warn "Port $_requested is currently bound by another process on the host."
+        else
+            _assigned="$_requested"
+        fi
+        if [ -z "$_assigned" ]; then
+            _assigned="$(allocate_free_port "$_id" || true)"
+            [ -n "$_assigned" ] && warn "Falling back to free port $_assigned."
+        fi
+    fi
+
+    if [ -z "$_assigned" ]; then
+        router_lock_release
+        error "No free port in $(port_range_start)-$(port_range_end). Adjust SEMITEXA_LOCAL_PORT_RANGE_START/END in $ROUTER_CONFIG_FILE."
+        return 1
+    fi
+
+    router_app_write_entry "$_id" "$_assigned" "$_project_root_arg"
+    router_apply_app_port_to_domains "$_project_root_arg" "$_assigned"
+    router_lock_release
+    printf '%s' "$_assigned"
+}
+
+# High-level reconcile for $PROJECT_ROOT: ensure SEMITEXA_APP_ID + SWOOLE_PORT
+# in .env are valid against the broker; rewrite .env if the assigned port
+# differs from what the project asked for. No-op when no .env.* file exists.
+local_app_reconcile() {
+    _env_file="$PROJECT_ROOT/.env"
+    if [ ! -f "$_env_file" ] && [ ! -f "$PROJECT_ROOT/.env.default" ]; then
+        return 0
+    fi
+
+    _app_id="$(env_val SEMITEXA_APP_ID '')"
+    if [ -z "$_app_id" ]; then
+        _app_id="$(router_app_find_by_project "$PROJECT_ROOT" 2>/dev/null || true)"
+        if [ -z "$_app_id" ]; then
+            _app_id="$(app_generate_uuid)"
+            info "Generated SEMITEXA_APP_ID=$_app_id for $(basename "$PROJECT_ROOT")."
+        else
+            info "Reusing existing app id $_app_id for $(basename "$PROJECT_ROOT")."
+        fi
+        [ -f "$_env_file" ] || : > "$_env_file"
+        env_upsert_kv "$_env_file" SEMITEXA_APP_ID "$_app_id"
+    fi
+
+    _current_port="$(env_val SWOOLE_PORT '')"
+    _assigned="$(local_app_register_logic "$_app_id" "$_current_port" "$PROJECT_ROOT" || true)"
+    if [ -z "$_assigned" ]; then
+        warn "Local app registry could not assign a Swoole port; keeping existing value."
+        return 1
+    fi
+
+    if [ "$_assigned" != "$_current_port" ]; then
+        if [ -n "$_current_port" ]; then
+            warn "Swoole port for app $_app_id changed from $_current_port to $_assigned (conflict or out-of-range)."
+        else
+            info "Swoole port for app $_app_id assigned to $_assigned."
+        fi
+        [ -f "$_env_file" ] || : > "$_env_file"
+        env_upsert_kv "$_env_file" SWOOLE_PORT "$_assigned"
+    fi
+    return 0
 }
 
 router_generate_nginx_config() {
     router_ensure_dirs
     _saved_project_root="$PROJECT_ROOT"
     cat > "$ROUTER_NGINX_DEFAULT" <<'EOF'
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    '' close;
-}
-
 server {
     listen 80 default_server;
     server_name _;
@@ -440,33 +918,26 @@ server {
     listen 80;
     server_name $DOMAIN;
 
-    location ~ ^/(?:__semitexa_sse|sse|__semitexa_kiss)$ {
+    location ~ ^/(__semitexa_sse|sse|__semitexa_kiss)(/|$) {
         proxy_pass http://$UPSTREAM_HOST:$UPSTREAM_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
-        proxy_read_timeout 1h;
-        proxy_send_timeout 1h;
+        proxy_set_header Connection '';
         proxy_buffering off;
-        proxy_request_buffering off;
         proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 
     location / {
         proxy_pass http://$UPSTREAM_HOST:$UPSTREAM_PORT;
-        proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
     }
 }
 
@@ -725,6 +1196,7 @@ cmd_local_router_doctor() {
     info "Root: $ROUTER_ROOT"
     info "Mode: $(router_mode_get)"
     info "Registered domains: $(router_registry_count)"
+    info "Port range: $(port_range_start)-$(port_range_end)"
 
     if [ -f "$ROUTER_COMPOSE" ]; then
         printf "\n"
@@ -733,6 +1205,7 @@ cmd_local_router_doctor() {
 
     printf "\n"
     cmd_local_domain_list
+    cmd_local_app_list
 }
 
 cmd_local_domain_mode() {
@@ -765,7 +1238,7 @@ cmd_local_domain_add() {
         exit 1
     fi
 
-    _port="$(env_val SWOOLE_PORT 9502)"
+    _port="$(env_val SWOOLE_PORT 8080)"
     cmd_local_router_init >/dev/null
     router_registry_write_entry "$_domain" "$_port" "$(router_mode_get)"
     router_render
@@ -832,6 +1305,226 @@ cmd_local_domain_list() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
+#  local-app:* — local application registry & port broker
+# ═══════════════════════════════════════════════════════════════════════
+cmd_local_app_register() {
+    _id=""
+    _port=""
+    _root=""
+    _write_env=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --app-id=*)         _id="${1#--app-id=}" ;;
+            --requested-port=*) _port="${1#--requested-port=}" ;;
+            --project-root=*)   _root="${1#--project-root=}" ;;
+            --write-env)        _write_env=1 ;;
+            -h|--help)
+                printf 'Usage: bin/semitexa local-app:register [--app-id=<id>] [--requested-port=<p>] [--project-root=<path>] [--write-env]\n'
+                exit 0
+                ;;
+            *)
+                error "Unknown argument: $1"
+                exit 1
+                ;;
+        esac
+        shift
+    done
+
+    [ -n "$_root" ] || _root="$PROJECT_ROOT"
+    if [ -z "$_id" ]; then
+        _id="$(router_app_find_by_project "$_root" 2>/dev/null || true)"
+        [ -n "$_id" ] || _id="$(app_generate_uuid)"
+    fi
+
+    _saved_project_root="$PROJECT_ROOT"
+    PROJECT_ROOT="$_root"
+    _assigned="$(local_app_register_logic "$_id" "$_port" "$_root")"
+    PROJECT_ROOT="$_saved_project_root"
+    [ -n "$_assigned" ] || exit 1
+
+    if [ "$_write_env" -eq 1 ]; then
+        _env_file="$_root/.env"
+        [ -f "$_env_file" ] || : > "$_env_file"
+        env_upsert_kv "$_env_file" SEMITEXA_APP_ID "$_id"
+        env_upsert_kv "$_env_file" SWOOLE_PORT "$_assigned"
+        success "Wrote SEMITEXA_APP_ID=$_id and SWOOLE_PORT=$_assigned to $_env_file"
+    fi
+
+    printf '%s\n' "$_assigned"
+}
+
+cmd_local_app_reconcile() {
+    printf "\n%s%s Semitexa — Local App Reconcile %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    if local_app_reconcile; then
+        _id="$(env_val SEMITEXA_APP_ID '')"
+        _port="$(env_val SWOOLE_PORT '')"
+        success "Reconciled $(basename "$PROJECT_ROOT")."
+        info "  SEMITEXA_APP_ID=$_id"
+        info "  SWOOLE_PORT=$_port"
+        printf "\n"
+    else
+        exit 1
+    fi
+}
+
+cmd_local_app_list() {
+    printf "\n%s%s Semitexa — Local App Registry %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    router_ensure_app_dirs
+    _has_any=0
+    if [ -d "$ROUTER_APP_REGISTRY_DIR" ]; then
+        _count_files="$(find "$ROUTER_APP_REGISTRY_DIR" -maxdepth 1 -type f -name '*.env' 2>/dev/null | wc -l | tr -d ' ')"
+        if [ "$_count_files" -gt 0 ]; then
+            _has_any=1
+        fi
+    fi
+    if [ "$_has_any" -eq 1 ]; then
+        router_app_iter | while IFS="$(printf '\t')" read -r _app_id _port _root _name; do
+            printf "  %s%-36s%s  port=%-5s  %s%s%s  %s\n" \
+                "$C_GREEN" "$_app_id" "$C_RESET" "$_port" \
+                "$C_CYAN" "${_name:-unknown}" "$C_RESET" "${_root:-?}"
+        done
+    else
+        info "No local apps registered."
+    fi
+    printf "\n"
+    info "Range: $(port_range_start)-$(port_range_end)  (override: $ROUTER_CONFIG_FILE)"
+    printf "\n"
+}
+
+cmd_local_app_remove() {
+    _id="${1:-}"
+    if [ -z "$_id" ]; then
+        error "Usage: bin/semitexa local-app:remove <app-id>"
+        exit 1
+    fi
+    if ! router_app_entry_exists "$_id"; then
+        warn "App '$_id' is not registered."
+        exit 0
+    fi
+    APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+    # shellcheck disable=SC1090
+    . "$(router_app_entry_path "$_id")"
+    router_app_delete_entry "$_id"
+    success "Removed local app: $_id (port ${SWOOLE_PORT:-?}, project ${PROJECT_ROOT:-?})."
+}
+
+cmd_local_app_doctor() {
+    printf "\n%s%s Semitexa — Local App Doctor %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    info "Range: $(port_range_start)-$(port_range_end)"
+    info "Registry: $ROUTER_APP_REGISTRY_DIR"
+    info "Config:   $ROUTER_CONFIG_FILE"
+    cmd_local_app_list
+}
+
+# Run the frontend skin-mode regression guard (scripts/lint-skin-legacy-markers.sh).
+# Fails when forbidden legacy theme markers reappear in the migrated marketing
+# packages or when the three site.js files drift apart. Demo + Hello scaffold
+# are intentionally NOT scanned (deferred to tk-demo-hello-skin-migration-followup).
+cmd_lint_skin_legacy() {
+    _script="$PROJECT_ROOT/scripts/lint-skin-legacy-markers.sh"
+    if [ ! -f "$_script" ]; then
+        info "Skin-mode legacy guard script not present in this project."
+        info "  (Expected at: scripts/lint-skin-legacy-markers.sh)"
+        info "  This is normal for fresh installs / single-app starters that don't"
+        info "  ship the marketing-site packages. Nothing to enforce — skipping."
+        exit 0
+    fi
+    PROJECT_ROOT="$PROJECT_ROOT" sh "$_script" "$@"
+}
+
+# Returns 0 if the captured compose log contains a clear port-conflict signal
+# AND mentions <port>. Conservative: only fires when both halves match, so
+# unrelated compose failures fall through to the default error path.
+server_start_log_signals_port_conflict() {
+    _file="$1"
+    _port="$2"
+    [ -f "$_file" ] || return 1
+    [ -n "$_port" ] || return 1
+    grep -qE "(port is already allocated|address already in use|Bind for [^ ]+ failed)" "$_file" || return 1
+    grep -qE "(:|\.)$_port([^0-9]|\$)" "$_file"
+}
+
+# Wraps `run_compose up -d --build`, capturing exit + log so we can offer to
+# auto-recover from a Swoole port conflict that slipped past pre-start
+# reconcile (e.g., another process bound the broker-assigned port in the gap).
+# Behavior:
+#   - On success: nothing extra; return 0.
+#   - On failure that is confidently a port conflict for our SWOOLE_PORT:
+#       * interactive shell → prompt (default Y), reconcile, retry once.
+#       * non-interactive   → auto-reconcile, retry once (no prompt, no hang).
+#       * if reconcile didn't change the port (conflict is from a non-Semitexa
+#         process) → surface a clear error with a suggested next command.
+#   - On any other failure: pass through the original exit code.
+server_start_run_with_port_conflict_fallback() {
+    _log_file="$(mktemp)"
+    _rc_file="$(mktemp)"
+    # Subshell + `set +e` so a non-zero compose exit doesn't abort the outer
+    # script. tee preserves the developer's real-time view of the build.
+    ( set +e; run_compose up -d --build; echo "$?" > "$_rc_file" ) 2>&1 | tee "$_log_file"
+    _rc="$(cat "$_rc_file" 2>/dev/null || echo 1)"
+    rm -f "$_rc_file"
+
+    if [ "$_rc" -eq 0 ]; then
+        rm -f "$_log_file"
+        return 0
+    fi
+
+    _port="$(env_val SWOOLE_PORT '')"
+    if [ -z "$_port" ] || ! server_start_log_signals_port_conflict "$_log_file" "$_port"; then
+        rm -f "$_log_file"
+        return "$_rc"
+    fi
+
+    printf "\n"
+    warn "Swoole port conflict detected for SWOOLE_PORT=${_port}."
+
+    _accept=0
+    if [ -e /dev/tty ] && [ -t 1 ]; then
+        printf "%s? Do you want Semitexa to reconcile this app with the local port broker and assign a free port? [Y/n]%s " "$C_YELLOW" "$C_RESET"
+        _ans=""
+        read -r _ans </dev/tty 2>/dev/null || _ans=""
+        case "$_ans" in
+            ''|y|Y|yes|Yes|YES) _accept=1 ;;
+            *)                  _accept=0 ;;
+        esac
+    else
+        info "Non-interactive shell; auto-reconciling without prompt."
+        _accept=1
+    fi
+
+    if [ "$_accept" -ne 1 ]; then
+        info "Run: bin/semitexa local-app:reconcile && bin/semitexa server:start"
+        rm -f "$_log_file"
+        return "$_rc"
+    fi
+
+    rm -f "$_log_file"
+    local_app_reconcile || warn "Reconcile reported a problem."
+
+    _new_port="$(env_val SWOOLE_PORT '')"
+    if [ "$_new_port" = "$_port" ]; then
+        error "Reconcile kept SWOOLE_PORT=${_port}; the conflict appears to be from a non-Semitexa process holding the port."
+        info "Inspect with: bin/semitexa local-app:doctor"
+        info "Or release the port and re-run: bin/semitexa server:start"
+        return "$_rc"
+    fi
+
+    info "Reconciled to SWOOLE_PORT=${_new_port}. Retrying server:start once..."
+    _log_file="$(mktemp)"
+    _rc_file="$(mktemp)"
+    ( set +e; run_compose up -d --build; echo "$?" > "$_rc_file" ) 2>&1 | tee "$_log_file"
+    _rc="$(cat "$_rc_file" 2>/dev/null || echo 1)"
+    rm -f "$_rc_file" "$_log_file"
+
+    if [ "$_rc" -eq 0 ]; then
+        success "Recovered: server bound to SWOOLE_PORT=${_new_port}."
+    else
+        error "Retry failed (exit $_rc). Re-run 'bin/semitexa server:start' or inspect docker compose logs."
+    fi
+    return "$_rc"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
 #  server:start
 # ═══════════════════════════════════════════════════════════════════════
 cmd_server_start() {
@@ -842,6 +1535,11 @@ cmd_server_start() {
         info  "Run: bin/semitexa init"
         exit 1
     fi
+
+    # Reconcile local app registry: ensure SEMITEXA_APP_ID exists in .env and
+    # SWOOLE_PORT is unique on this workstation. May rewrite .env when a port
+    # collision is detected. compose_args reads .env, so this must run first.
+    local_app_reconcile || warn "Local app reconcile reported a problem; continuing with current .env."
 
     _overlays="$(compose_args)"
     [ -n "$_overlays" ] && info "Compose files: $_overlays"
@@ -876,12 +1574,24 @@ cmd_server_start() {
     fi
 
     info "Starting containers..."
-    run_compose up -d --build
+    server_start_run_with_port_conflict_fallback || exit $?
 
-    _port="$(env_val SWOOLE_PORT 9502)"
+    _port="$(env_val SWOOLE_PORT 8080)"
     printf "\n"
     success "Semitexa environment started!"
-    info "App:  ${C_GREEN}http://localhost:${_port}${C_RESET}"
+
+    # Show project-specific URLs. Shared-router (.test) domains take priority;
+    # fall back to http://localhost:<port> when no domains are registered.
+    if project_has_shared_domains; then
+        info "App URLs:"
+        router_list_project_domains | while IFS= read -r _dom; do
+            [ -n "$_dom" ] || continue
+            printf "          ${C_GREEN}http://%s${C_RESET}\n" "$_dom"
+        done
+        printf "          ${C_CYAN}http://localhost:%s${C_RESET} (direct)\n" "$_port"
+    else
+        info "App:  ${C_GREEN}http://localhost:${_port}${C_RESET}"
+    fi
     info "Logs: docker compose logs -f"
     info "Stop: bin/semitexa server:stop"
 
@@ -898,11 +1608,6 @@ cmd_server_start() {
     _redis="$(env_val REDIS_HOST "")"
     [ -n "$_redis" ] && [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ] && wait_for_service "Redis" "redis" "6379" 3 2 1 || true
 
-    if project_has_shared_domains; then
-        _count="$(router_project_domain_count "$PROJECT_ROOT")"
-        [ "$_count" -gt 0 ] && info "Shared router: $_count local domain(s) configured (bin/semitexa local-domain:list)"
-    fi
-
     printf "\n"
 }
 
@@ -918,17 +1623,7 @@ cmd_server_stop() {
     fi
 
     info "Stopping containers..."
-    _compose="$(compose_bin)"
-    _overlays="$(compose_all_args)"
-    (
-        env_export_compose_context
-        if [ -n "$_overlays" ]; then
-            # shellcheck disable=SC2086
-            $_compose $_overlays down --remove-orphans
-        else
-            $_compose down --remove-orphans
-        fi
-    )
+    run_compose_all down --remove-orphans
     success "Semitexa environment stopped."
 
     for _pidfile in "$PROJECT_ROOT/var/swoole.pid" "$PROJECT_ROOT/var/run/semitexa.pid"; do
@@ -961,16 +1656,7 @@ cmd_server_restart() {
         run_compose up -d --build --force-recreate --no-deps "$_service"
     else
         info "Recreating all containers..."
-        _overlays="$(compose_all_args)"
-        (
-            env_export_compose_context
-            if [ -n "$_overlays" ]; then
-                # shellcheck disable=SC2086
-                $_compose $_overlays down --remove-orphans
-            else
-                $_compose down --remove-orphans
-            fi
-        )
+        run_compose_all down --remove-orphans
         run_compose up -d --build
     fi
 
@@ -996,6 +1682,13 @@ cmd_list() {
     printf "  %-32s %s\n" "local-domain:add <domain.test>" "Register shared local domain"
     printf "  %-32s %s\n" "local-domain:remove <domain.test>" "Remove shared local domain"
     printf "  %-32s %s\n" "local-domain:list"       "List shared local domains"
+    printf "  %-32s %s\n" "local-app:register"      "Register this project; allocate Swoole port"
+    printf "  %-32s %s\n" "local-app:reconcile"     "Validate / reassign Swoole port for this project"
+    printf "  %-32s %s\n" "local-app:list"          "List local app registrations and ports"
+    printf "  %-32s %s\n" "local-app:remove <id>"   "Remove an app from the local registry"
+    printf "  %-32s %s\n" "local-app:doctor"        "Inspect local app registry health"
+    printf "  %-32s %s\n" "lint:skin-legacy"        "Regression guard for the unified frontend skin-mode contract"
+    printf "  %-32s %s\n" "test:run [-- phpunit-args]" "Run PHPUnit inside Docker (APP_ENV=dev)"
     printf "  %-32s %s\n" "self-test"             "Verify setup"
     printf "  %-32s %s\n" "list"                  "Show this help"
 
@@ -1027,8 +1720,87 @@ cmd_self_test() {
     _arch="$(uname -m 2>/dev/null || echo unknown)"
     case "$_arch" in x86_64|amd64) success "Arch: AMD64" ;; aarch64|arm64) success "Arch: ARM64" ;; *) warn "Arch: $_arch (untested)" ;; esac
     if is_app_running; then success "App container: running"; _ok=$((_ok+1)); else info "App container: not running"; fi
+    if [ -f "$PROJECT_ROOT/scripts/lint-skin-legacy-markers.sh" ]; then
+        if ( PROJECT_ROOT="$PROJECT_ROOT" sh "$PROJECT_ROOT/scripts/lint-skin-legacy-markers.sh" >/dev/null 2>&1 ); then
+            success "Skin-mode legacy guard: clean"; _ok=$((_ok+1))
+        else
+            error "Skin-mode legacy guard: FAILED — run 'bin/semitexa lint:skin-legacy' for details"; _fail=$((_fail+1))
+        fi
+    fi
     printf "\n  Results: %s%d OK%s, %s%d Warn%s, %s%d Error%s\n\n" "$C_GREEN" "$_ok" "$C_RESET" "$C_YELLOW" "$_warn" "$C_RESET" "$C_RED" "$_fail" "$C_RESET"
     [ "$_fail" -gt 0 ] && exit 1; exit 0
+}
+
+local_semitexa_package_names() {
+    for _dir in "$PROJECT_ROOT"/packages/semitexa-*; do
+        [ -f "$_dir/composer.json" ] || continue
+        awk -F'"' '
+            $2 == "name" && $4 ~ /^semitexa\// {
+                print $4
+                exit
+            }
+        ' "$_dir/composer.json"
+    done | sort -u
+}
+
+locked_semitexa_package_names() {
+    [ -f "$PROJECT_ROOT/composer.lock" ] || return 0
+
+    grep -o '"name"[[:space:]]*:[[:space:]]*"semitexa/[^"]*"' "$PROJECT_ROOT/composer.lock" 2>/dev/null \
+        | sed 's/.*"name"[[:space:]]*:[[:space:]]*"//' \
+        | sed 's/"$//' \
+        | sort -u
+}
+
+local_semitexa_package_update_specs() {
+    _tmp_local="$(mktemp)"
+    _tmp_locked="$(mktemp)"
+    local_semitexa_package_names >"$_tmp_local"
+    locked_semitexa_package_names >"$_tmp_locked"
+
+    for _dir in "$PROJECT_ROOT"/packages/semitexa-*; do
+        [ -f "$_dir/composer.json" ] || continue
+
+        _package="$(awk -F'"' '
+            $2 == "name" && $4 ~ /^semitexa\// {
+                print $4
+                exit
+            }
+        ' "$_dir/composer.json")"
+        [ -n "$_package" ] || continue
+
+        if ! grep -Fx -- "$_package" "$_tmp_locked" >/dev/null 2>&1; then
+            continue
+        fi
+
+        _branch=''
+        if [ -d "$_dir/.git" ]; then
+            _branch="$(git -C "$_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        fi
+
+        case "$_branch" in
+            ''|HEAD)
+                printf '%s\n' "$_package"
+                ;;
+            *)
+                printf '%s:dev-%s\n' "$_package" "$_branch"
+                ;;
+        esac
+    done | sort -u
+
+    rm -f "$_tmp_local" "$_tmp_locked"
+}
+
+refresh_local_semitexa_packages() {
+    _packages="$(local_semitexa_package_update_specs)"
+    [ -n "$_packages" ] || return 0
+
+    info "Refreshing local Semitexa path packages in composer.lock..."
+    info "(This keeps workspace clones ahead of stale published tags)\n"
+
+    # shellcheck disable=SC2086
+    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app \
+        composer update --no-interaction --with-all-dependencies $_packages
 }
 
 cmd_install() {
@@ -1040,9 +1812,20 @@ cmd_install() {
     info "Building Docker image and running composer install inside container..."
     info "(This may take a few minutes on the first run)\n"
     run_compose build app
-    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist
-    if [ $? -eq 0 ]; then printf "\n"; success "Dependencies installed successfully!"; info "Next: bin/semitexa server:start"
-    else printf "\n"; error "Installation failed. Check the output above."; exit 1; fi
+    if ! run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist; then
+        printf "\n"
+        error "Installation failed. Check the output above."
+        exit 1
+    fi
+
+    if ! refresh_local_semitexa_packages; then
+        printf "\n"
+        error "Installation failed. Check the output above."
+        exit 1
+    fi
+    printf "\n"
+    success "Dependencies installed successfully!"
+    info "Next: bin/semitexa server:start"
     printf "\n"
 }
 
@@ -1076,6 +1859,97 @@ cmd_init() {
     fi
     info "Running init via Docker..."
     run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app php vendor/bin/semitexa init "$@"
+}
+
+cmd_test_run() {
+    if ! has_compose; then
+        error "Docker Compose is required. Install Docker Desktop or docker-compose."
+        exit 1
+    fi
+    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        error "docker-compose.yml not found."
+        exit 1
+    fi
+    if [ ! -f "$PROJECT_ROOT/docker-compose.test.yml" ]; then
+        error "docker-compose.test.yml not found."
+        exit 1
+    fi
+
+    _env="$(env_val APP_ENV "")"
+    if [ "$_env" != "dev" ]; then
+        error "test:run is only available when APP_ENV=dev."
+        info "Set APP_ENV=dev in your .env to enable test containers."
+        exit 1
+    fi
+
+    _overlays="$(compose_args)"
+    if [ -z "$_overlays" ]; then
+        _overlays="-f docker-compose.yml"
+    fi
+    _overlays="$_overlays -f docker-compose.test.yml"
+
+    _compose="$(compose_bin)"
+    printf "\n%s%s Running PHPUnit in Docker %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
+    _files_display="$(printf '%s' "$_overlays" | sed 's/-f //g' | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
+    info "Compose files: $_files_display"
+
+    # Build test-path list on the host, appended only when the user did not pass
+    # any positional targets. Fresh installs only have tests/; monorepo layouts
+    # also have packages/*/tests — this is where monorepo awareness lives
+    # (phpunit.xml.dist stays minimal and environment-agnostic).
+    _has_positional=0
+    _expects_option_value=0
+    _after_options=0
+    for _arg in "$@"; do
+        if [ "$_after_options" -eq 1 ]; then
+            _has_positional=1
+            break
+        fi
+        if [ "$_expects_option_value" -eq 1 ]; then
+            _expects_option_value=0
+            continue
+        fi
+        case "$_arg" in
+            --)
+                _after_options=1
+                ;;
+            -c|--configuration|--bootstrap|--filter|--testsuite|--group|--exclude-group|--test-suffix|--log-junit|--coverage-clover|--coverage-html|--coverage-text|--coverage-xml|--coverage-filter|-d)
+                _expects_option_value=1
+                ;;
+            --*=*) ;;
+            -*) ;;
+            *) _has_positional=1; break ;;
+        esac
+    done
+
+    _test_paths=""
+    if [ "$_has_positional" -eq 0 ]; then
+        _discovered=""
+        if [ -d "$PROJECT_ROOT/tests" ]; then
+            _discovered="$_discovered
+tests"
+        fi
+        if [ -d "$PROJECT_ROOT/packages" ]; then
+            for _dir in "$PROJECT_ROOT"/packages/*/tests; do
+                [ -d "$_dir" ] || continue
+                _discovered="$_discovered
+${_dir#$PROJECT_ROOT/}"
+            done
+        fi
+        if [ -n "$_discovered" ]; then
+            _test_paths="$(printf '%s' "$_discovered" | sed '/^$/d' | LC_ALL=C sort | tr '\n' ' ')"
+        fi
+    fi
+
+    if [ -n "$_test_paths" ]; then
+        info "Discovered test paths: $(printf '%s' "$_test_paths" | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
+    fi
+
+    (
+        env_export_compose_context
+        # shellcheck disable=SC2086
+        exec $_compose $_overlays run --rm phpunit vendor/bin/phpunit "$@" $_test_paths
+    )
 }
 
 cmd_proxy() {
@@ -1151,8 +2025,15 @@ case "$COMMAND" in
     local-domain:add) cmd_local_domain_add "$@" ;;
     local-domain:remove) cmd_local_domain_remove "$@" ;;
     local-domain:list) cmd_local_domain_list "$@" ;;
+    local-app:register) cmd_local_app_register "$@" ;;
+    local-app:reconcile) cmd_local_app_reconcile "$@" ;;
+    local-app:list) cmd_local_app_list "$@" ;;
+    local-app:remove) cmd_local_app_remove "$@" ;;
+    local-app:doctor) cmd_local_app_doctor "$@" ;;
+    lint:skin-legacy) cmd_lint_skin_legacy "$@" ;;
     install)         cmd_install "$@" ;;
     demo:install)    cmd_demo_install "$@" ;;
+    test:run)        cmd_test_run "$@" ;;
     list|help|--help|-h) cmd_list "$@" ;;
     self-test)       cmd_self_test "$@" ;;
     init)            cmd_init "$@" ;;

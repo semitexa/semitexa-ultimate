@@ -1,39 +1,63 @@
-var THEME_STORAGE_KEY = window.SEMITEXA_DEMO_THEME_KEY || 'semitexa_demo_theme';
+var SKIN_MODE_STORAGE_KEY = 'semitexa_skin_mode';
 
-function applyTheme(theme) {
-    var resolvedTheme = theme === 'dark' ? 'dark' : 'light';
-    var root = document.documentElement;
+function getInitialSkinMode() {
+    var attributeMode = document.documentElement.getAttribute('data-skin-mode');
+
+    try {
+        var storedMode = window.localStorage.getItem(SKIN_MODE_STORAGE_KEY);
+        if (storedMode === 'dark' || storedMode === 'light') {
+            return storedMode;
+        }
+    } catch (error) {
+        // Ignore storage read failures and fall back to attribute or media query.
+    }
+
+    if (attributeMode === 'dark' || attributeMode === 'light') {
+        return attributeMode;
+    }
+
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+    }
+
+    return 'light';
+}
+
+function applySkinMode(mode) {
+    var resolved = mode === 'dark' ? 'dark' : 'light';
     var body = document.body;
     var darkLabel = body !== null ? body.getAttribute('data-theme-label-dark') || 'Dark mode' : 'Dark mode';
     var lightLabel = body !== null ? body.getAttribute('data-theme-label-light') || 'Light mode' : 'Light mode';
+    var nextActionLabel = resolved === 'dark' ? lightLabel : darkLabel;
 
-    root.setAttribute('data-demo-theme', resolvedTheme);
+    document.documentElement.setAttribute('data-skin-mode', resolved);
 
-    document.querySelectorAll('[data-demo-theme-toggle]').forEach(function (toggle) {
-        toggle.setAttribute('aria-pressed', resolvedTheme === 'dark' ? 'true' : 'false');
+    document.querySelectorAll('[data-skin-toggle]').forEach(function (toggle) {
+        toggle.setAttribute('aria-pressed', resolved === 'dark' ? 'true' : 'false');
+        toggle.setAttribute('aria-label', nextActionLabel);
     });
 
-    document.querySelectorAll('[data-demo-theme-text]').forEach(function (label) {
-        label.textContent = resolvedTheme === 'dark' ? lightLabel : darkLabel;
+    document.querySelectorAll('[data-skin-text]').forEach(function (label) {
+        label.textContent = nextActionLabel;
     });
 }
 
-document.querySelectorAll('[data-demo-theme-toggle]').forEach(function (toggle) {
+document.querySelectorAll('[data-skin-toggle]').forEach(function (toggle) {
     toggle.addEventListener('click', function () {
-        var currentTheme = document.documentElement.getAttribute('data-demo-theme') === 'dark' ? 'dark' : 'light';
-        var nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        var current = document.documentElement.getAttribute('data-skin-mode') === 'dark' ? 'dark' : 'light';
+        var next = current === 'dark' ? 'light' : 'dark';
 
-        applyTheme(nextTheme);
+        applySkinMode(next);
 
         try {
-            window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+            window.localStorage.setItem(SKIN_MODE_STORAGE_KEY, next);
         } catch (error) {
-            // Ignore storage write failures and keep the in-memory theme.
+            // Ignore storage write failures and keep the in-memory mode.
         }
     });
 });
 
-applyTheme(document.documentElement.getAttribute('data-demo-theme'));
+applySkinMode(getInitialSkinMode());
 
 var lockup = document.querySelector('[data-logo-lockup]');
 
