@@ -137,6 +137,13 @@ SKIP_START=0
 # LOCAL_DOMAIN is set by ask_local_domain() and read by print_next_steps().
 # Same scope requirement as SKIP_START — must live outside both functions.
 LOCAL_DOMAIN=""
+# APP_REGISTERED is set to 1 by register_local_app() once the project has been
+# entered into the shared local app registry (~/.semitexa/router/registry/apps)
+# with a broker-allocated Swoole port written to .env. main() uses it to skip
+# the legacy linear-scan check_port_conflicts: when registration succeeds, the
+# port in .env is already broker-canonical and a second scan can only pick a
+# port outside the broker range — corrupting cross-app uniqueness.
+APP_REGISTERED=0
 
 for _arg in "$@"; do
     case "$_arg" in
@@ -697,6 +704,84 @@ check_port_conflicts() {
     esac
 }
 
+# ── Local app registration ───────────────────────────────────────────────────
+# Register the freshly scaffolded project in the shared local app registry
+# (~/.semitexa/router/registry/apps/<uuid>.env) BEFORE the first server:start.
+#
+# Why this runs at install time, not at first start:
+#   - The broker owns Swoole port allocation in a fixed range (default
+#     9501-9599) and uniqueness across every Semitexa project on this machine.
+#   - Without pre-registration, .env carries the scaffold default port (9502),
+#     and the legacy linear-scan check_port_conflicts can pick a port already
+#     owned by another local Semitexa app — colliding when that app starts.
+#   - Pre-registering guarantees this project gets a broker-canonical port
+#     that no other registered project can hold.
+#
+# `bin/semitexa local-app:register --write-env`:
+#   - Idempotent: keyed by absolute project_root in the registry; re-running
+#     reuses the existing entry instead of duplicating it.
+#   - Preserves the existing port if still in-range and still free.
+#   - Allocates a fresh port from the broker range otherwise.
+#   - Writes both SEMITEXA_APP_ID and SWOOLE_PORT to .env via env_upsert_kv,
+#     which replaces existing keys in place (no duplicate lines).
+#
+# --app-id is passed through when the installer scaffold pre-seeded one in
+# .env, so the broker registers the SAME UUID the scaffold wrote — keeping
+# .env and the broker entry coherent without a second random UUID.
+#
+# Failure here is non-fatal: server:start will retry the same logic via
+# local_app_reconcile, so the install completes even if the registry is
+# unwritable (e.g. read-only home, broker lock contention).
+register_local_app() {
+    _bin="$PROJECT_NAME/bin/semitexa"
+    if [ ! -f "$_bin" ]; then
+        warn "bin/semitexa not found in scaffold — skipping local app registration."
+        warn "It will be performed on first 'bin/semitexa server:start'."
+        return
+    fi
+
+    # Reuse the SEMITEXA_APP_ID that the installer scaffold pre-seeded (when
+    # present) so the .env id and the broker-registered id stay aligned.
+    _existing_id=""
+    if [ -f "$PROJECT_NAME/.env" ]; then
+        _existing_id="$(grep -E '^SEMITEXA_APP_ID=' "$PROJECT_NAME/.env" 2>/dev/null \
+            | head -1 \
+            | cut -d= -f2- \
+            | tr -d "\"' " \
+            | tr -d '\r' \
+            || true)"
+    fi
+
+    info "Registering app in local registry (allocates Swoole port)..."
+
+    # Stdout from local-app:register is suppressed (it duplicates the success
+    # line we emit below). Stderr is left visible so allocation warnings and
+    # broker errors still reach the user.
+    _rc=0
+    set +e
+    if [ -n "$_existing_id" ]; then
+        ( cd "$PROJECT_NAME" \
+            && sh ./bin/semitexa local-app:register \
+                "--app-id=${_existing_id}" --write-env >/dev/null )
+    else
+        ( cd "$PROJECT_NAME" \
+            && sh ./bin/semitexa local-app:register --write-env >/dev/null )
+    fi
+    _rc=$?
+    set -e
+
+    if [ "$_rc" -eq 0 ]; then
+        # Re-read the assigned port from .env so the user sees the canonical
+        # value the broker recorded (not whatever the scaffold default was).
+        _new_port="$(get_swoole_port)"
+        success "App registered → SWOOLE_PORT=${_new_port}"
+        APP_REGISTERED=1
+    else
+        warn "Local app registration failed (exit ${_rc})."
+        warn "server:start will retry via local_app_reconcile on first run."
+    fi
+}
+
 # ── Optional: start server ───────────────────────────────────────────────────
 ask_start_server() {
     # In automated pipelines (CI, Dockerfile RUN, provisioning scripts),
@@ -1028,7 +1113,10 @@ print_next_steps() {
 #   3. run_create_project       — Docker-based scaffold + fix file ownership
 #   4. setup_env                — baseline env files must exist before server:start reads them
 #   5. make_bin_executable      — chmod must run before server:start calls the bin
-#      check_port_conflicts     — guard before binding a network port
+#      register_local_app       — broker-allocate SWOOLE_PORT + SEMITEXA_APP_ID in .env
+#                                 BEFORE any server:start, so first start consumes the
+#                                 already-registered port instead of racing the broker
+#      check_port_conflicts     — fallback only when registration could not run
 #   6. ask_local_domain         — optional; requires bin to be executable
 #   7. start_server             — only when env + permissions + port are confirmed
 #
@@ -1040,19 +1128,19 @@ print_next_steps() {
 main() {
     banner
 
-    step "[1/6] Checking prerequisites..."
+    step "[1/7] Checking prerequisites..."
     # check_docker_permissions must run before check_docker: it distinguishes
     # "permission denied" (fixable by adding to docker group) from "daemon not
     # running" and offers an interactive resolution with sudo + optional re-exec.
     check_docker_permissions "$@"
     check_docker
 
-    step "[2/6] Project name..."
+    step "[2/7] Project name..."
     ask_project_name
     validate_project_name
     info "Creating project: ${C_BOLD}${PROJECT_NAME}${C_RESET}"
 
-    step "[3/6] Installing Semitexa Ultimate..."
+    step "[3/7] Installing Semitexa Ultimate..."
     # Arm the cleanup trap. From this point onward, any unexpected exit will
     # remove the partial project directory so the user can re-run cleanly.
     _CLEANUP_PROJECT="$PROJECT_NAME"
@@ -1067,21 +1155,34 @@ main() {
         exit 1
     fi
 
-    step "[4/6] Environment setup..."
+    step "[4/7] Environment setup..."
     setup_env
     make_bin_executable
-    # Resolve port conflicts early so .env always has a usable port,
-    # regardless of whether the user starts the server now or later.
-    check_port_conflicts
 
-    step "[5/6] Local domain (optional)..."
+    step "[5/7] Registering local app..."
+    # Pre-register the project in the shared local app registry so the first
+    # server:start consumes a broker-canonical SWOOLE_PORT instead of racing
+    # the broker. Must run AFTER make_bin_executable (uses bin/semitexa) and
+    # BEFORE ask_local_domain + start_server (both depend on the registered
+    # port). See register_local_app() for the full rationale.
+    register_local_app
+
+    # check_port_conflicts is the legacy linear-scan fallback. When
+    # register_local_app succeeded the port in .env is already broker-canonical
+    # and a second scan can only damage cross-app uniqueness. Only run it when
+    # registration could not be performed.
+    if [ "$APP_REGISTERED" -eq 0 ]; then
+        check_port_conflicts
+    fi
+
+    step "[6/7] Local domain (optional)..."
     # ask_local_domain must run AFTER make_bin_executable so that
     # register_local_domain can call bin/semitexa local-domain:add.
     # It must also run BEFORE print_next_steps so LOCAL_DOMAIN is available
     # for display. Called directly (not in a subshell) — see LOCAL_DOMAIN note.
     ask_local_domain
 
-    step "[6/6] Done!"
+    step "[7/7] Done!"
     # Disarm the cleanup trap — the install is complete and the directory is
     # intentional. From here, no automatic removal should happen on exit.
     _CLEANUP_PROJECT=""
