@@ -757,6 +757,8 @@ register_local_app() {
     # Stdout from local-app:register is suppressed (it duplicates the success
     # line we emit below). Stderr is left visible so allocation warnings and
     # broker errors still reach the user.
+    _rc=0
+    set +e
     if [ -n "$_existing_id" ]; then
         ( cd "$PROJECT_NAME" \
             && sh ./bin/semitexa local-app:register \
@@ -766,6 +768,7 @@ register_local_app() {
             && sh ./bin/semitexa local-app:register --write-env >/dev/null )
     fi
     _rc=$?
+    set -e
 
     if [ "$_rc" -eq 0 ]; then
         # Re-read the assigned port from .env so the user sees the canonical

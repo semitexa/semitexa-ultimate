@@ -39,6 +39,34 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         self::assertStringNotContainsString('.env.local', $bin);
     }
 
+    public function testShellEntryPointOnlyTreatsSelfPortAsReusableWhenAppIsRunning(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $bin = file_get_contents($root . '/bin/semitexa');
+
+        self::assertIsString($bin);
+        self::assertStringContainsString(
+            'project_is_app_running()',
+            $bin,
+            'bin/semitexa must keep the project-scoped runtime guard available for self-port checks.',
+        );
+        self::assertStringContainsString(
+            'if project_is_app_running "$_project_root_arg"; then',
+            $bin,
+            'Self-port reuse must be gated by the app runtime state before registry entries are treated as safe.',
+        );
+        self::assertStringContainsString(
+            'if [ "$_project_running" -eq 1 ] && [ "$PROJECT_ROOT" = "$_project_root_arg" ] && [ "$UPSTREAM_PORT" = "$_port" ]; then',
+            $bin,
+            'Router registry entries must only bypass a host-port conflict when the matching app is actually running.',
+        );
+        self::assertStringContainsString(
+            'if [ "$_project_running" -eq 1 ] && [ "$SWOOLE_PORT" = "$_port" ]; then',
+            $bin,
+            'App registry entries must only bypass a host-port conflict when the matching app is actually running.',
+        );
+    }
+
     public function testInstallerScaffoldStaysInSyncWithUltimateRuntimeFiles(): void
     {
         $ultimateRoot = dirname(__DIR__, 3);
@@ -182,6 +210,19 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
             'install.sh must read the scaffold-seeded SEMITEXA_APP_ID from .env '
             . 'before calling local-app:register so the broker entry and .env '
             . 'stay aligned.',
+        );
+    }
+
+    public function testInstallScriptMakesRegistrationFailureNonFatalUnderErrexit(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $installScript = file_get_contents($root . '/install.sh');
+
+        self::assertIsString($installScript);
+        self::assertMatchesRegularExpression(
+            '/_rc=0\s*\n\s*set \+e\s*\n\s*if \[ -n "\$_existing_id" \]; then.*\n\s*_rc=\$\?\s*\n\s*set -e/s',
+            $installScript,
+            'install.sh must temporarily disable errexit around local-app:register, capture its exit code, then restore errexit so broker failures stay non-fatal and fall through to the warn-and-continue branch.',
         );
     }
 
