@@ -232,6 +232,14 @@ is_app_running() {
     esac
 }
 
+project_is_app_running() {
+    _project_root_arg="${1:-$PROJECT_ROOT}"
+    (
+        PROJECT_ROOT="$_project_root_arg"
+        is_app_running
+    )
+}
+
 wait_for_service() {
     _service_name="$1" _host="$2" _port="$3" _max_attempts="$4" _delay="$5" _initial_wait="${6:-0}"
 
@@ -732,13 +740,17 @@ port_in_use_on_host_excluding_self() {
     if ! port_in_use_on_host "$_port"; then
         return 1
     fi
+    _project_running=0
+    if project_is_app_running "$_project_root_arg"; then
+        _project_running=1
+    fi
     if [ -d "$ROUTER_REGISTRY_DIR" ]; then
         for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
             [ -f "$_entry" ] || continue
             DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
             # shellcheck disable=SC1090
             . "$_entry"
-            if [ "$PROJECT_ROOT" = "$_project_root_arg" ] && [ "$UPSTREAM_PORT" = "$_port" ]; then
+            if [ "$_project_running" -eq 1 ] && [ "$PROJECT_ROOT" = "$_project_root_arg" ] && [ "$UPSTREAM_PORT" = "$_port" ]; then
                 return 1
             fi
         done
@@ -748,7 +760,7 @@ port_in_use_on_host_excluding_self() {
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
         # shellcheck disable=SC1090
         . "$(router_app_entry_path "$_existing")"
-        if [ "$SWOOLE_PORT" = "$_port" ]; then
+        if [ "$_project_running" -eq 1 ] && [ "$SWOOLE_PORT" = "$_port" ]; then
             return 1
         fi
     fi
