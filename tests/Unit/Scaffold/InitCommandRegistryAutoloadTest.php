@@ -102,8 +102,6 @@ final class InitCommandRegistryAutoloadTest extends TestCase
 
     private function invokePatchComposerAutoload(string $projectDir): array
     {
-        require_once dirname(__DIR__, 3) . '/src/Console/Command/InitCommand.php';
-
         $reflection = new \ReflectionClass(InitCommand::class);
         $command = $reflection->newInstanceWithoutConstructor();
         $method = $reflection->getMethod('patchComposerAutoload');

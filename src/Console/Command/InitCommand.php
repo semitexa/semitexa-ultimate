@@ -213,7 +213,11 @@ final class InitCommand extends Command
             '  2. Edit .env for local overrides when you need them',
             '  3. composer dump-autoload (if autoload was added)',
             '  4. Review the example module under src/modules/Hello/',
-            '  5. Run: bin/semitexa server:start (Docker)',
+            '  5. (Optional) bin/semitexa theme:scaffold --slug=<slug> --domain=<host>',
+            '     scaffolds src/theme/<slug>/ extending theme-base — your local',
+            '     override surface for layouts/partials/pages. The framework default',
+            '     skin (theme-base) is used until a project theme matches.',
+            '  6. Run: bin/semitexa server:start (Docker)',
         ]);
 
         return Command::SUCCESS;

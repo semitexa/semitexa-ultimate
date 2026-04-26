@@ -32,7 +32,7 @@
     --demo-elevated-bg: rgba(255, 249, 241, 0.9);
 }
 
-:root[data-demo-theme="dark"] {
+:root[data-skin-mode="dark"] {
     --demo-accent: #ef8c68;
     --demo-accent-light: #f3ae84;
     --demo-accent-dark: #ffd0b2;
@@ -71,7 +71,7 @@ html {
         linear-gradient(180deg, #fbf4eb 0%, #f5ede3 55%, #efe1cf 100%);
 }
 
-html[data-demo-theme="dark"] {
+html[data-skin-mode="dark"] {
     background:
         radial-gradient(circle at 14% 10%, rgba(239, 140, 104, 0.18), transparent 20%),
         radial-gradient(circle at 84% 16%, rgba(113, 152, 177, 0.16), transparent 18%),
@@ -137,7 +137,7 @@ body {
     backdrop-filter: var(--demo-glass-blur);
 }
 
-:root[data-demo-theme="dark"] .hello-surface {
+:root[data-skin-mode="dark"] .hello-surface {
     background: linear-gradient(180deg, rgba(17, 25, 35, 0.78), rgba(15, 22, 31, 0.58));
     border-color: var(--demo-glass-stroke);
 }
@@ -182,7 +182,7 @@ body {
     background: rgba(182, 58, 47, 0.08);
 }
 
-:root[data-demo-theme="dark"] .hello-badge {
+:root[data-skin-mode="dark"] .hello-badge {
     border-color: var(--demo-glass-stroke);
     background: rgba(18, 29, 39, 0.82);
 }
@@ -242,12 +242,12 @@ body {
     transform: translateX(1.15rem);
 }
 
-:root[data-demo-theme="dark"] .hello-theme-switch__toggle {
+:root[data-skin-mode="dark"] .hello-theme-switch__toggle {
     border-color: var(--demo-glass-stroke);
     background: rgba(18, 29, 39, 0.82);
 }
 
-:root[data-demo-theme="dark"] .hello-theme-switch__track {
+:root[data-skin-mode="dark"] .hello-theme-switch__track {
     background: rgba(167, 199, 218, 0.14);
 }
 
@@ -324,7 +324,7 @@ h2 {
     font: 700 0.8rem/1 var(--demo-font-mono);
 }
 
-:root[data-demo-theme="dark"] .signal-chip {
+:root[data-skin-mode="dark"] .signal-chip {
     border-color: var(--demo-glass-stroke);
     background: rgba(19, 29, 39, 0.72);
 }
@@ -378,8 +378,8 @@ h2 {
     background: linear-gradient(180deg, rgba(255, 249, 241, 0.82), rgba(239, 228, 213, 0.6));
 }
 
-:root[data-demo-theme="dark"] .cta--ghost,
-:root[data-demo-theme="dark"] .cta--soft {
+:root[data-skin-mode="dark"] .cta--ghost,
+:root[data-skin-mode="dark"] .cta--soft {
     border-color: var(--demo-glass-stroke);
     background: rgba(18, 29, 39, 0.76);
     color: var(--demo-text);
@@ -392,7 +392,7 @@ h2 {
         linear-gradient(180deg, rgba(255, 250, 245, 0.82), rgba(247, 237, 225, 0.64));
 }
 
-:root[data-demo-theme="dark"] .hello-surface--aside {
+:root[data-skin-mode="dark"] .hello-surface--aside {
     background:
         radial-gradient(circle at top right, rgba(239, 140, 104, 0.18), transparent 34%),
         linear-gradient(180deg, rgba(19, 30, 42, 0.92), rgba(15, 24, 34, 0.82));
@@ -415,7 +415,7 @@ h2 {
     background: var(--demo-surface-soft);
 }
 
-:root[data-demo-theme="dark"] .hello-panel__metric {
+:root[data-skin-mode="dark"] .hello-panel__metric {
     border-color: var(--demo-glass-stroke);
     background: rgba(22, 34, 46, 0.72);
 }
@@ -435,7 +435,7 @@ h2 {
     color: var(--demo-ink-blue);
 }
 
-:root[data-demo-theme="dark"] .hello-panel__metric code {
+:root[data-skin-mode="dark"] .hello-panel__metric code {
     color: var(--demo-ink-blue);
 }
 
@@ -456,7 +456,7 @@ h2 {
     background: linear-gradient(180deg, rgba(255, 251, 246, 0.82), rgba(255, 248, 240, 0.56));
 }
 
-:root[data-demo-theme="dark"] .guides-intro {
+:root[data-skin-mode="dark"] .guides-intro {
     border-color: rgba(239, 140, 104, 0.12);
     background: linear-gradient(180deg, rgba(19, 30, 42, 0.84), rgba(15, 24, 34, 0.72));
 }
@@ -485,7 +485,7 @@ h2 {
     box-shadow: var(--demo-shadow-sm);
 }
 
-:root[data-demo-theme="dark"] .guide {
+:root[data-skin-mode="dark"] .guide {
     border-color: var(--demo-glass-stroke);
     background:
         linear-gradient(180deg, rgba(20, 31, 42, 0.84), rgba(16, 25, 35, 0.74));
@@ -527,7 +527,7 @@ h2 {
     font-size: 0.84em;
 }
 
-:root[data-demo-theme="dark"] .guide code {
+:root[data-skin-mode="dark"] .guide code {
     background: rgba(167, 199, 218, 0.12);
     color: var(--demo-ink-blue);
 }
@@ -597,7 +597,7 @@ h2 {
         0 16px 32px rgba(64, 39, 21, 0.16);
 }
 
-:root[data-demo-theme="dark"] .logo-mark {
+:root[data-skin-mode="dark"] .logo-mark {
     border-color: var(--demo-glass-stroke);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.06),
