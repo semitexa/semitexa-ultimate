@@ -214,16 +214,6 @@ run_compose() {
     )
 }
 
-run_compose_all() {
-    _compose="$(compose_bin)"
-    _overlays="$(compose_all_args)"
-    (
-        env_export_compose_context
-        # shellcheck disable=SC2086
-        $_compose $_overlays "$@"
-    )
-}
-
 is_app_running() {
     _compose="$(compose_bin)"
     _overlays="$(compose_args)"
@@ -1623,7 +1613,10 @@ cmd_server_stop() {
     fi
 
     info "Stopping containers..."
-    run_compose_all down --remove-orphans
+    _compose="$(compose_bin)"
+    _overlays="$(compose_all_args)"
+    # shellcheck disable=SC2086
+    $_compose $_overlays down --remove-orphans
     success "Semitexa environment stopped."
 
     for _pidfile in "$PROJECT_ROOT/var/swoole.pid" "$PROJECT_ROOT/var/run/semitexa.pid"; do
@@ -1656,7 +1649,9 @@ cmd_server_restart() {
         run_compose up -d --build --force-recreate --no-deps "$_service"
     else
         info "Recreating all containers..."
-        run_compose_all down --remove-orphans
+        _overlays="$(compose_all_args)"
+        # shellcheck disable=SC2086
+        $_compose $_overlays down --remove-orphans
         run_compose up -d --build
     fi
 
