@@ -9,7 +9,7 @@ use App\Modules\Hello\Application\Resource\Slot\GuideThreeSlot;
 use App\Modules\Hello\Application\Resource\Slot\GuideTwoSlot;
 use Semitexa\Core\Environment;
 use Semitexa\Ssr\Attribute\AsSlotHandler;
-use Semitexa\Ssr\Contract\TypedSlotHandlerInterface;
+use Semitexa\Ssr\Domain\Contract\TypedSlotHandlerInterface;
 use Semitexa\Ssr\Http\Response\HtmlSlotResponse;
 use Semitexa\Ssr\I18n\Translator;
 use Swoole\Coroutine;

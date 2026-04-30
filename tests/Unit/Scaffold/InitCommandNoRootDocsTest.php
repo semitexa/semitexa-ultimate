@@ -63,7 +63,7 @@ final class InitCommandNoRootDocsTest extends TestCase
 
     private function readInitCommandSource(): string
     {
-        $path = dirname(__DIR__, 3) . '/src/Console/Command/InitCommand.php';
+        $path = dirname(__DIR__, 3) . '/src/Application/Console/Command/InitCommand.php';
         $source = file_get_contents($path);
         self::assertIsString($source, sprintf('Failed to read %s', $path));
 

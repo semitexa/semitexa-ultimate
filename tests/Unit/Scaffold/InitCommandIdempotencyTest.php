@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Ultimate\Tests\Unit\Scaffold;
 
 use PHPUnit\Framework\TestCase;
-use Semitexa\Ultimate\Console\Command\InitCommand;
+use Semitexa\Ultimate\Application\Console\Command\InitCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 

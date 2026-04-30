@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Ultimate\Tests\Unit\Scaffold;
 
 use PHPUnit\Framework\TestCase;
-use Semitexa\Ultimate\Console\Command\InitCommand;
+use Semitexa\Ultimate\Application\Console\Command\InitCommand;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Style\SymfonyStyle;

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Semitexa\Ultimate\Console\Command;
+namespace Semitexa\Ultimate\Application\Console\Command;
 
 use Semitexa\Core\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -406,8 +406,9 @@ EOF;
 
     private function findScaffoldRoot(string $projectRoot): ?string
     {
+        // Walk up from src/Application/Console/Command/InitCommand.php → package root.
         $candidates = [
-            dirname(__DIR__, 3),
+            dirname(__DIR__, 4),
             $projectRoot . '/vendor/semitexa/ultimate',
             $projectRoot . '/packages/semitexa-ultimate',
         ];

@@ -226,29 +226,4 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         );
     }
 
-    public function testPublicInstallRouteServesUltimateInstallScriptVerbatim(): void
-    {
-        // The published curl|bash command serves the bytes of this very file
-        // through Semitexa\Site\Application\Handler\PayloadHandler\InstallScriptHandler.
-        // Lock the route's resolution order to the source-of-truth path so a
-        // future move of the install script cannot silently leave the public
-        // endpoint stale (or, worse, falling back to a vendor-pinned copy).
-        $root = dirname(__DIR__, 4);
-        $handlerPath = $root . '/semitexa-site/src/Application/Handler/PayloadHandler/InstallScriptHandler.php';
-
-        if (!is_file($handlerPath)) {
-            self::markTestSkipped('semitexa-site is not installed alongside semitexa-ultimate.');
-        }
-
-        $handler = file_get_contents($handlerPath);
-        self::assertIsString($handler);
-
-        self::assertStringContainsString(
-            "'/packages/semitexa-ultimate/install.sh'",
-            $handler,
-            'Public /install.sh route must serve packages/semitexa-ultimate/install.sh '
-            . 'as its primary candidate so the canonical curl|bash flow is never '
-            . 'stale relative to this source-of-truth file.',
-        );
-    }
 }

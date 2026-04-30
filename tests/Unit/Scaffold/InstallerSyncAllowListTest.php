@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Ultimate\Tests\Unit\Scaffold;
 
 use PHPUnit\Framework\TestCase;
-use Semitexa\Ultimate\Console\Command\InitCommand;
+use Semitexa\Ultimate\Application\Console\Command\InitCommand;
 
 /**
  * Guardrail: the installer's sync surface is an explicit allow-list. It must
