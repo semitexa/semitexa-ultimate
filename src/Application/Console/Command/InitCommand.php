@@ -37,7 +37,7 @@ final class InitCommand extends Command
         'docker-compose.ollama.yml' => 'docker-compose.ollama.yml',
         'phpunit.xml.dist' => 'phpunit.xml.dist',
         'bin/semitexa' => 'bin/semitexa',
-        '.gitignore' => 'gitignore',
+        '.gitignore' => 'scaffold/gitignore',
         'public/.htaccess' => 'public/.htaccess',
         'AI_NOTES.md' => 'AI_NOTES.md',
         'tests/.gitkeep' => 'tests/.gitkeep',
