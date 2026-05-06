@@ -226,4 +226,29 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         );
     }
 
+    /**
+     * Regression guard: ensure the public installer endpoint advertised in docs
+     * is byte-for-byte aligned with the local file in this package.
+     */
+    public function testPublicInstallerEndpointStaysAlignedWithPackageScript(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $local = (string) file_get_contents($root . '/install.sh');
+
+        // Allow fetching via curl in tests — help text or CI runner should
+        // have network access to semitexa.com.
+        $remote = (string) @file_get_contents('https://semitexa.com/install.sh');
+
+        if ($remote === '') {
+            self::markTestSkipped('Cannot reach https://semitexa.com/install.sh to verify alignment.');
+        }
+
+        self::assertSame(
+            $local,
+            $remote,
+            'Public installer at https://semitexa.com/install.sh has drifted from packages/semitexa-ultimate/install.sh. '
+            . 'Sync the site repository with the framework version.',
+        );
+    }
+
 }
