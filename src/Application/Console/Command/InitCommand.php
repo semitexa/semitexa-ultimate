@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Semitexa\Ultimate\Console\Command;
+namespace Semitexa\Ultimate\Application\Console\Command;
 
 use Semitexa\Core\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -37,7 +37,7 @@ final class InitCommand extends Command
         'docker-compose.ollama.yml' => 'docker-compose.ollama.yml',
         'phpunit.xml.dist' => 'phpunit.xml.dist',
         'bin/semitexa' => 'bin/semitexa',
-        '.gitignore' => 'gitignore',
+        '.gitignore' => 'scaffold/gitignore',
         'public/.htaccess' => 'public/.htaccess',
         'AI_NOTES.md' => 'AI_NOTES.md',
         'tests/.gitkeep' => 'tests/.gitkeep',
@@ -406,8 +406,9 @@ EOF;
 
     private function findScaffoldRoot(string $projectRoot): ?string
     {
+        // Walk up from src/Application/Console/Command/InitCommand.php → package root.
         $candidates = [
-            dirname(__DIR__, 3),
+            dirname(__DIR__, 4),
             $projectRoot . '/vendor/semitexa/ultimate',
             $projectRoot . '/packages/semitexa-ultimate',
         ];

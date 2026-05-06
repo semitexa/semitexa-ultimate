@@ -10,7 +10,7 @@ use Semitexa\Core\Attribute\AsPayloadHandler;
 use Semitexa\Core\Attribute\InjectAsReadonly;
 use Semitexa\Core\Contract\TypedHandlerInterface;
 use Semitexa\Core\ModuleRegistry;
-use Semitexa\Tenancy\Support\TenantUrlResolver;
+use Semitexa\Tenancy\Application\Service\TenantUrlResolver;
 
 #[AsPayloadHandler(payload: HelloPayload::class, resource: HelloResource::class)]
 final class HelloHandler implements TypedHandlerInterface

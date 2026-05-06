@@ -226,29 +226,29 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         );
     }
 
-    public function testPublicInstallRouteServesUltimateInstallScriptVerbatim(): void
+    /**
+     * Regression guard: ensure the public installer endpoint advertised in docs
+     * is byte-for-byte aligned with the local file in this package.
+     */
+    public function testPublicInstallerEndpointStaysAlignedWithPackageScript(): void
     {
-        // The published curl|bash command serves the bytes of this very file
-        // through Semitexa\Site\Application\Handler\PayloadHandler\InstallScriptHandler.
-        // Lock the route's resolution order to the source-of-truth path so a
-        // future move of the install script cannot silently leave the public
-        // endpoint stale (or, worse, falling back to a vendor-pinned copy).
-        $root = dirname(__DIR__, 4);
-        $handlerPath = $root . '/semitexa-site/src/Application/Handler/PayloadHandler/InstallScriptHandler.php';
+        $root = dirname(__DIR__, 3);
+        $local = (string) file_get_contents($root . '/install.sh');
 
-        if (!is_file($handlerPath)) {
-            self::markTestSkipped('semitexa-site is not installed alongside semitexa-ultimate.');
+        // Allow fetching via curl in tests — help text or CI runner should
+        // have network access to semitexa.com.
+        $remote = (string) @file_get_contents('https://semitexa.com/install.sh');
+
+        if ($remote === '') {
+            self::markTestSkipped('Cannot reach https://semitexa.com/install.sh to verify alignment.');
         }
 
-        $handler = file_get_contents($handlerPath);
-        self::assertIsString($handler);
-
-        self::assertStringContainsString(
-            "'/packages/semitexa-ultimate/install.sh'",
-            $handler,
-            'Public /install.sh route must serve packages/semitexa-ultimate/install.sh '
-            . 'as its primary candidate so the canonical curl|bash flow is never '
-            . 'stale relative to this source-of-truth file.',
+        self::assertSame(
+            $local,
+            $remote,
+            'Public installer at https://semitexa.com/install.sh has drifted from packages/semitexa-ultimate/install.sh. '
+            . 'Sync the site repository with the framework version.',
         );
     }
+
 }

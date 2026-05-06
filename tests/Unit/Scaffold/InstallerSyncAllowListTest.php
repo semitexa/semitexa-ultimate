@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Semitexa\Ultimate\Tests\Unit\Scaffold;
 
 use PHPUnit\Framework\TestCase;
-use Semitexa\Ultimate\Console\Command\InitCommand;
+use Semitexa\Ultimate\Application\Console\Command\InitCommand;
 
 /**
  * Guardrail: the installer's sync surface is an explicit allow-list. It must
@@ -25,6 +25,11 @@ final class InstallerSyncAllowListTest extends TestCase
                 $projectPath,
                 sprintf('SCAFFOLD_FILE_MAP entry "%s" routes installer code into consumer src/Console.', $projectPath),
             );
+            self::assertStringStartsNotWith(
+                'src/Application/Console/',
+                $projectPath,
+                sprintf('SCAFFOLD_FILE_MAP entry "%s" routes installer code into consumer src/Application/Console.', $projectPath),
+            );
         }
     }
 
@@ -37,6 +42,11 @@ final class InstallerSyncAllowListTest extends TestCase
                 'src/Console',
                 $dir,
                 sprintf('FULL_INIT_DIRECTORY_SYNC entry "%s" mirrors installer code into consumer src/Console.', $dir),
+            );
+            self::assertStringStartsNotWith(
+                'src/Application/Console',
+                $dir,
+                sprintf('FULL_INIT_DIRECTORY_SYNC entry "%s" mirrors installer code into consumer src/Application/Console.', $dir),
             );
         }
     }

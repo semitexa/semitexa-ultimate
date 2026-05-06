@@ -6,7 +6,7 @@ namespace Semitexa\Ultimate\Tests\Unit\Scaffold;
 
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
-use Semitexa\Ultimate\Console\Command\InitCommand;
+use Semitexa\Ultimate\Application\Console\Command\InitCommand;
 
 /**
  * Regression guard preventing the empty `src/infrastructure/{database,migrations}`
@@ -56,7 +56,7 @@ final class NoInfrastructureScaffoldTest extends TestCase
 
     public function testInitCommandSourceContainsNoInfrastructurePath(): void
     {
-        $sourcePath = __DIR__ . '/../../../src/Console/Command/InitCommand.php';
+        $sourcePath = __DIR__ . '/../../../src/Application/Console/Command/InitCommand.php';
         $source = file_get_contents($sourcePath);
 
         self::assertNotFalse($source, sprintf('Failed to read %s.', $sourcePath));
