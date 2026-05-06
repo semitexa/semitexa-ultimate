@@ -40,7 +40,6 @@ final class InitCommand extends Command
         '.gitignore' => 'scaffold/gitignore',
         'public/.htaccess' => 'public/.htaccess',
         'AI_NOTES.md' => 'AI_NOTES.md',
-        'tests/.gitkeep' => 'tests/.gitkeep',
         'var/docs/.gitkeep' => 'var/docs/.gitkeep',
         'var/docs/README.md' => 'var/docs/README.md',
         'var/run/.gitkeep' => 'var/run/.gitkeep',
@@ -108,7 +107,6 @@ final class InitCommand extends Command
             'public',
             'src/registry',
             'src/modules',
-            'tests',
             'var/cache',
             'var/log',
             'var/docs',
@@ -151,7 +149,6 @@ final class InitCommand extends Command
             'bin/semitexa',
             '.gitignore',
             'public/.htaccess',
-            'tests/.gitkeep',
             'var/docs/.gitkeep',
             'var/docs/README.md',
             'var/run/.gitkeep',
@@ -333,7 +330,6 @@ final class InitCommand extends Command
         }
 
         $psr4['App\\'] = 'src/';
-        $psr4['App\\Tests\\'] = 'tests/';
         $psr4['App\\Modules\\'] = 'src/modules/';
         $psr4['App\\Registry\\'] = 'src/registry/';
         $json['autoload'] = array_merge($autoload, ['psr-4' => $psr4]);
@@ -349,7 +345,7 @@ final class InitCommand extends Command
             return false;
         }
 
-        $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Tests\\": "tests/", "App\\Modules\\": "src/modules/", "App\\Registry\\": "src/registry/"');
+        $io->text('Updated composer.json: autoload.psr-4 "App\\": "src/", "App\\Modules\\": "src/modules/", "App\\Registry\\": "src/registry/"');
 
         return true;
     }

@@ -25,4 +25,4 @@ Hand-rolling payload/handler/resource is legacy. See `AI_ENTRY.md` Generators ta
 
 - Run tests with **`bin/semitexa test:run`** — executes PHPUnit inside Docker with `APP_ENV=dev`. Do **not** run `vendor/bin/phpunit` directly.
 - PHPUnit args pass positionally: `bin/semitexa test:run --filter MyTest`.
-- Test location: `tests/` or `src/modules/*/Tests/`.
+- Test location: `packages/<package>/tests/` (auto-discovered by `bin/semitexa test:run`). Local module tests live next to the module they cover at `src/modules/<Module>/tests/`. There is no root-level `tests/` directory and no shared catch-all test bucket.

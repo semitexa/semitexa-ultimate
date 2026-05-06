@@ -92,7 +92,11 @@ final class InitCommandRegistryAutoloadTest extends TestCase
             $decoded = $this->invokePatchComposerAutoload($tempDir);
 
             self::assertSame('src/', $decoded['autoload']['psr-4']['App\\'] ?? null);
-            self::assertSame('tests/', $decoded['autoload']['psr-4']['App\\Tests\\'] ?? null);
+            self::assertArrayNotHasKey(
+                'App\\Tests\\',
+                $decoded['autoload']['psr-4'] ?? [],
+                'Installer must not scaffold a root-level App\\Tests\\ mapping; tests live next to the code they verify (packages/<pkg>/tests/, src/modules/<mod>/tests/).',
+            );
             self::assertSame('src/modules/', $decoded['autoload']['psr-4']['App\\Modules\\'] ?? null);
             self::assertSame('src/registry/', $decoded['autoload']['psr-4']['App\\Registry\\'] ?? null);
         } finally {

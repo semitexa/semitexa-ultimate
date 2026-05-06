@@ -1920,15 +1920,20 @@ cmd_test_run() {
     _test_paths=""
     if [ "$_has_positional" -eq 0 ]; then
         _discovered=""
-        if [ -d "$PROJECT_ROOT/tests" ]; then
-            _discovered="$_discovered
-tests"
-        fi
         if [ -d "$PROJECT_ROOT/packages" ]; then
             for _dir in "$PROJECT_ROOT"/packages/*/tests; do
                 [ -d "$_dir" ] || continue
                 _discovered="$_discovered
 ${_dir#$PROJECT_ROOT/}"
+            done
+        fi
+        if [ -d "$PROJECT_ROOT/src/modules" ]; then
+            for _dir in "$PROJECT_ROOT"/src/modules/*/tests; do
+                [ -d "$_dir" ] || continue
+                if find "$_dir" -mindepth 1 -name '*Test.php' -print -quit 2>/dev/null | grep -q .; then
+                    _discovered="$_discovered
+${_dir#$PROJECT_ROOT/}"
+                fi
             done
         fi
         if [ -n "$_discovered" ]; then

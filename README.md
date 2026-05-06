@@ -85,9 +85,9 @@ This wraps PHPUnit with the correct container, environment, and test-path discov
 
 ```bash
 bin/semitexa test:run --filter MyTest
-bin/semitexa test:run tests/Unit/Foo/BarTest.php
+bin/semitexa test:run packages/semitexa-core/tests/Integration
 ```
 
 Running `vendor/bin/phpunit` directly on the host is **not supported** — the environment, service dependencies, and path resolution only match when tests run through `bin/semitexa test:run`.
 
-Configuration lives in `phpunit.xml.dist`; add tests in `tests/` or in `packages/*/tests/` for monorepo packages (both are auto-discovered).
+Configuration lives in `phpunit.xml.dist`; tests live in `packages/<package>/tests/` (auto-discovered). Local module tests live next to the module they cover at `src/modules/<Module>/tests/`. There is no root-level `tests/` directory and no shared catch-all test bucket.

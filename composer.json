@@ -8,7 +8,10 @@
             "App\\": "src/",
             "App\\Registry\\": "src/registry/",
             "Semitexa\\Ultimate\\": "src/"
-        }
+        },
+        "exclude-from-classmap": [
+            "/src/modules/"
+        ]
     },
     "require": {
         "php": "^8.4",
