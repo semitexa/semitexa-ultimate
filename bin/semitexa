@@ -1936,6 +1936,10 @@ ${_dir#$PROJECT_ROOT/}"
                 fi
             done
         fi
+        if [ -f "$PROJECT_ROOT/vendor/semitexa/testing/tests/Integration/ProjectPayloadsContractTest.php" ]; then
+            _discovered="$_discovered
+vendor/semitexa/testing/tests/Integration/ProjectPayloadsContractTest.php"
+        fi
         if [ -n "$_discovered" ]; then
             _test_paths="$(printf '%s' "$_discovered" | sed '/^$/d' | LC_ALL=C sort | tr '\n' ' ')"
         fi
