@@ -67,7 +67,103 @@ services:
     volumes:
       - .:/var/www/html
     working_dir: /var/www/html
-    command: ["sh", "/var/www/html/scripts/bootstrap-project.sh"]
+    # Bootstrap the project on first `docker compose up`: fetch the full
+    # semitexa/ultimate skeleton via composer, install dependencies, and copy
+    # the result into the bind mount while preserving installer-owned files
+    # (Dockerfile, docker-compose*.yml, .env*, bin/semitexa). The marker file
+    # at var/install/bootstrap-complete.json makes the run idempotent.
+    command:
+      - sh
+      - -euc
+      - |
+        TARGET_DIR=/var/www/html
+        TEMP_DIR=/tmp/semitexa-bootstrap
+        BACKUP_DIR=/tmp/semitexa-bootstrap-backup
+        MARKER_PATH="$$TARGET_DIR/var/install/bootstrap-complete.json"
+        LOG_PATH="$$TARGET_DIR/var/log/install-bootstrap.log"
+        PACKAGE_NAME=semitexa/ultimate
+        BOOTSTRAP_VERSION=1
+
+        log() {
+          mkdir -p "$$TARGET_DIR/var/log" 2>/dev/null || true
+          ts="$$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          printf '[%s] [BOOTSTRAP] %s\n' "$$ts" "$$*"
+          printf '[%s] [BOOTSTRAP] %s\n' "$$ts" "$$*" >> "$$LOG_PATH" 2>/dev/null || true
+        }
+        fail() { log "ERROR: $$*"; rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"; exit 2; }
+
+        [ -d "$$TARGET_DIR" ] || fail "$$TARGET_DIR does not exist"
+        [ -w "$$TARGET_DIR" ] || fail "$$TARGET_DIR is not writable"
+        for b in composer php cp rm mkdir date; do
+          command -v "$$b" >/dev/null 2>&1 || fail "missing required binary: $$b"
+        done
+
+        if [ -f "$$TARGET_DIR/composer.json" ] && [ -f "$$MARKER_PATH" ]; then
+          log "already bootstrapped (marker $$MARKER_PATH)"
+          exit 0
+        fi
+
+        rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"
+
+        log "step 1/5 create project skeleton"
+        composer create-project "$$PACKAGE_NAME" "$$TEMP_DIR" \
+          --no-install --no-dev --no-interaction --prefer-dist \
+          || fail "composer create-project failed"
+
+        log "step 2/5 configure allow-plugins"
+        composer config --no-plugins --working-dir="$$TEMP_DIR" \
+          allow-plugins.semitexa/core true \
+          || fail "composer config failed"
+
+        log "step 3/5 install dependencies"
+        composer install --working-dir="$$TEMP_DIR" \
+          --no-dev --no-interaction --prefer-dist --optimize-autoloader \
+          || fail "composer install failed"
+
+        log "step 4/5 sync project files"
+        host_uid="$$(stat -c '%u' "$$TARGET_DIR")"
+        host_gid="$$(stat -c '%g' "$$TARGET_DIR")"
+        mkdir -p "$$BACKUP_DIR/bin"
+        for f in .env.default .env .gitignore Dockerfile \
+                 docker-compose.yml docker-compose.mysql.yml \
+                 docker-compose.redis.yml docker-compose.nats.yml \
+                 docker-compose.ollama.yml docker-compose.override.yml.example
+        do
+          if [ -e "$$TARGET_DIR/$$f" ]; then
+            cp -a "$$TARGET_DIR/$$f" "$$BACKUP_DIR/$$f"
+          fi
+        done
+        if [ -e "$$TARGET_DIR/bin/semitexa" ]; then
+          cp -a "$$TARGET_DIR/bin/semitexa" "$$BACKUP_DIR/bin/semitexa"
+        fi
+
+        cp -a "$$TEMP_DIR/." "$$TARGET_DIR/" || fail "copy into bind mount failed"
+
+        for f in .env.default .env .gitignore Dockerfile \
+                 docker-compose.yml docker-compose.mysql.yml \
+                 docker-compose.redis.yml docker-compose.nats.yml \
+                 docker-compose.ollama.yml docker-compose.override.yml.example \
+                 bin/semitexa
+        do
+          if [ -e "$$BACKUP_DIR/$$f" ]; then
+            mkdir -p "$$TARGET_DIR/$$(dirname "$$f")"
+            cp -a "$$BACKUP_DIR/$$f" "$$TARGET_DIR/$$f"
+          fi
+        done
+
+        chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/" 2>/dev/null || true
+        chmod +x "$$TARGET_DIR/bin/semitexa" 2>/dev/null || true
+
+        log "step 5/5 write success marker"
+        mkdir -p "$$TARGET_DIR/var/install"
+        printf '{\n  "status": "ok",\n  "installed_package": "%s",\n  "installed_at": "%s",\n  "bootstrap_version": %s\n}\n' \
+          "$$PACKAGE_NAME" \
+          "$$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+          "$$BOOTSTRAP_VERSION" > "$$MARKER_PATH" \
+          || fail "marker write failed"
+
+        rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"
+        log "bootstrap complete"
     restart: "no"
 
   cli:

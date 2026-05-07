@@ -5,7 +5,7 @@
          colors="true">
     <testsuites>
         <testsuite name="default">
-            <directory>tests</directory>
+            <directory>packages</directory>
         </testsuite>
     </testsuites>
     <source>
