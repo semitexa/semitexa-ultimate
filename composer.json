@@ -26,7 +26,7 @@
         "semitexa/workflow": "2026.05.08.1640",
         "semitexa/cache": "2026.05.08.1640",
         "semitexa/storage": "2026.05.08.1640",
-        "semitexa/ssr": "2026.05.19.1709",
+        "semitexa/ssr": "2026.05.20.1518",
         "semitexa/dev": "2026.05.08.1640",
         "semitexa/tenancy": "2026.05.08.1640",
         "semitexa/locale": "2026.05.09.0726",
@@ -37,7 +37,7 @@
         "semitexa/llm": "2026.05.08.1640",
         "semitexa/scheduler": "2026.05.08.1640",
         "semitexa/ledger": "2026.05.08.1640",
-        "semitexa/project-graph": "2026.05.08.1640",
+        "semitexa/project-graph": "2026.05.20.1518",
         "semitexa/theme": "2026.05.08.1640"
     },
     "require-dev": {
