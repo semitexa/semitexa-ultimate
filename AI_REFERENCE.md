@@ -6,5 +6,4 @@ This root file is a stable wrapper.
 
 The canonical Semitexa AI philosophy document lives in:
 
-- `packages/semitexa-docs/AI_REFERENCE.md` in the monorepo
-- `vendor/semitexa/docs/AI_REFERENCE.md` in an installed project
+- `packages/semitexa-docs/AI_REFERENCE.md`
