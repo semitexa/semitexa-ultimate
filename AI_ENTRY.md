@@ -16,7 +16,7 @@
 | DI bindings for interface | `bin/semitexa contracts:list --json` + `ai:review-graph:query --usages=<InterfaceFQCN>` | grep `implements` |
 | Create a page/endpoint | `bin/semitexa make:page --module=<M> --name=<N> --path=/<p> --method=GET --write --json` | hand-writing payload + handler + resource |
 | Create service / contract / listener | `bin/semitexa make:<service\|contract\|event-listener> --write --json` | Edit/Write from scratch |
-| Verify a change | `bin/semitexa ai:verify --files=<paths> --json` | running phpunit by hand |
+| Verify a change | `bin/semitexa ai:verify --files=<paths> --json` (also enforces [`MODULE_STRUCTURE.md`](packages/semitexa-docs/docs/MODULE_STRUCTURE.md)) | running phpunit by hand |
 | Decompose non-trivial work | `bin/semitexa ai:epic start` + `ai:work start` | keeping plan only in chat |
 | Read logs | `bin/semitexa ai:ask logs --grep=<term> --lines=200 --json` | `tail var/log/app.log` |
 

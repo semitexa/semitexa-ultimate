@@ -523,8 +523,7 @@ One clear update per meaningful step. Say which `ai:*` command ran and what it r
 Clarifications break rhythm. Ask only when:
 
 - intent is ambiguous, OR
-- classify confidence < 0.6, OR
-- two recipes are within 2 points, OR
+- `ai:task` reports `confidence: low` or `none` (low already folds in a weak score or a tie within 2 points), OR
 - the change crosses a hard guard (`AGENTS.md` §9).
 
 Otherwise: pick the best option, say which and why, and proceed.

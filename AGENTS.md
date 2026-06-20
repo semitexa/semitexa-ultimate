@@ -49,8 +49,8 @@ operator input
      │ ├── CAPTURE → DOCTRINE §2
      │ └── REFINE  → DOCTRINE §3
      ▼ EXECUTE
-[1] ai:task                  classify → recipe + score + next-step
-     │ └─ confidence<0.6 → clarify
+[1] ai:task                  classify → recipe + score + confidence + next-step
+     │ └─ confidence: low/none → clarify
      ▼
 [2] inline-vs-epic triage (§3)
      │ └── inline → edit → ai:verify → ai:trace → done
@@ -100,12 +100,12 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 | Command | Role | When |
 |---|---|---|
 | **`ai:orient`** | Session dashboard — git + active epic + in-progress tasks + recent traces + last verify + next step | **First command on cold start.** Replaces ~6 probes. |
-| `ai:task` | Classify prose → recipe + score + next-step | Every new EXECUTE unit |
+| `ai:task` | Classify prose → recipe + score + `confidence` (high/low/none) + next-step | Every new EXECUTE unit |
 | `ai:epic` | Orchestrate N tasks under a shared goal | CAPTURE save / non-trivial EXECUTE |
 | `ai:work` | Track one executable leaf unit | Every leaf task |
 | `ai:context <recipe>` | Prior-art for a recipe | Before edits, once per task |
 | `ai:plan --files` | Risk-score recipe + files | Before edits on >1 file or unclear risk |
-| `ai:verify` | Precise lint+test subset on diff | **After every edit.** Non-negotiable. |
+| `ai:verify` | Precise lint+test+module-structure subset on diff (see [`MODULE_STRUCTURE.md`](packages/semitexa-docs/docs/MODULE_STRUCTURE.md)) | **After every edit.** Non-negotiable. |
 | `ai:trace` | Durable cross-session event stream | Always. `export SEMITEXA_AI_TRACE_ID=<id>` at task start; `ai:task` / `ai:context` / `ai:plan` / `ai:verify` auto-append. |
 | `ai:backlog` | Stats + hygiene (`status=discarded`, never hard-delete) | Before big renders; on operator request |
 
