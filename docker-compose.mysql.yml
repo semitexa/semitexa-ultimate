@@ -34,4 +34,12 @@ services:
       start_period: 30s
 
 volumes:
+  # FOOTGUN: this is a project-scoped Docker named volume (`<project>_mysql_data`).
+  # It SURVIVES `rm -rf` of the project directory and is reused by any later
+  # install whose dir name (compose project) matches — so a "fresh install" does
+  # NOT reset the database. If a prior install initialised it with different
+  # credentials, the app gets "Access denied" while the port still answers.
+  # `bin/semitexa server:start` now verifies the configured user can actually
+  # authenticate (not just that the port is open) and prints the reset command:
+  #   docker volume rm <project>_mysql_data
   mysql_data:
