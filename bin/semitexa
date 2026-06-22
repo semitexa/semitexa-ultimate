@@ -268,6 +268,43 @@ wait_for_service() {
     return 1
 }
 
+# A TCP-reachable MySQL is NOT proof the app can use it. `mysql_data` is a
+# project-scoped Docker named volume that SURVIVES deleting/recreating the
+# project dir, so a "fresh" re-install of the same dir name silently inherits a
+# pre-existing database — and if that volume was initialised with different
+# credentials than the current .env, the app gets "Access denied" while the port
+# still answers. A plain port check reports a false-green here. Verify the
+# configured user can actually authenticate (retried, since on a genuinely fresh
+# init the port opens a moment before the user is created).
+verify_mysql_auth() {
+    # Use the APP's configured credentials (works whether the compose creates a
+    # dedicated app user or only root), passed into the mysql container via -e so
+    # special characters survive. A stale volume rejects them; a correct one
+    # accepts (`%` host grants match the in-container connection too).
+    _vu="$(env_val DB_USERNAME "root")"
+    _vp="$(env_val DB_PASSWORD "")"
+    _att=1
+    while [ "$_att" -le 6 ]; do
+        if run_compose exec -T -e _VCHK_U="$_vu" -e _VCHK_P="$_vp" mysql \
+            sh -c 'mysql -u"$_VCHK_U" -p"$_VCHK_P" -e "SELECT 1" >/dev/null 2>&1'; then
+            success "MySQL: credentials verified"
+            return 0
+        fi
+        _att=$((_att + 1))
+        [ "$_att" -le 6 ] && sleep 3
+    done
+    _proj="$(basename "$PROJECT_ROOT")"
+    warn "MySQL: port is reachable but the configured user CANNOT authenticate."
+    warn "  This is almost always a STALE MySQL data volume — initialised with"
+    warn "  different credentials than the current .env. The named volume"
+    warn "  '${_proj}_mysql_data' persists across deleting/recreating the project"
+    warn "  dir, so a fresh install does NOT reset the database. Reset it with:"
+    warn "    bin/semitexa server:stop"
+    warn "    docker volume rm '${_proj}_mysql_data'"
+    warn "    bin/semitexa server:start"
+    return 1
+}
+
 # ── Shared local router helpers ─────────────────────────────────────────────
 SEMITEXA_HOME="${SEMITEXA_HOME:-$HOME/.semitexa}"
 ROUTER_ROOT="$SEMITEXA_HOME/router"
@@ -1627,7 +1664,9 @@ cmd_server_start() {
     esac
 
     _db="$(env_val DB_DRIVER "")"
-    [ -n "$_db" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ] && wait_for_service "MySQL" "mysql" "3306" 5 4 20 || true
+    if [ -n "$_db" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
+        wait_for_service "MySQL" "mysql" "3306" 5 4 20 && verify_mysql_auth || true
+    fi
 
     _redis="$(env_val REDIS_HOST "")"
     [ -n "$_redis" ] && [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ] && wait_for_service "Redis" "redis" "6379" 3 2 1 || true
