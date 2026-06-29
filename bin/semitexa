@@ -2203,6 +2203,39 @@ ${_url_clean}/tests"
         info "Discovered test paths: $(printf '%s' "$_test_paths" | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
     fi
 
+    # ── Phase 1a: test-DB schema parity (idempotent) ────────────────────
+    # The test database (DB_TEST_DATABASE, default semitexa_test — pinned by
+    # the phpunit service env in docker-compose.test.yml) must carry every
+    # table the ORM code schema declares, or runtime smoke tests 500 on
+    # missing tables while the same routes are green in dev. The ORM is the
+    # single schema authority (#[FromTable] resources + orm:sync), so parity
+    # is one idempotent safe-ops sync run INSIDE the phpunit service — same
+    # env the suites get, dev DB unreachable by construction.
+    #
+    # EXTENSION CONTRACT — "new table in dev → test DB follows":
+    #   declare the table as an ORM resource (#[FromTable] + #[Column]s),
+    #   which dev work must do anyway to use it; the next test:run syncs it
+    #   here with ZERO edits. There is no second place to update. Ad-hoc DDL
+    #   tables (none today) are NOT covered — declare them as resources.
+    #
+    # Deliberately NO --allow-destructive: stale tables in the test DB are
+    # left in place (they don't fail tests); destructive cleanup is an
+    # operator decision, never an automatic side effect of running tests.
+    _sync_rc=0
+    info "Test-DB schema parity: orm:sync against the test database (safe ops only)..."
+    (
+        env_export_compose_context
+        # shellcheck disable=SC2086
+        $_compose $_overlays run --rm phpunit php vendor/bin/semitexa orm:sync
+    ) || _sync_rc=$?
+    if [ "$_sync_rc" -ne 0 ]; then
+        printf "\n"
+        error "Test-DB schema sync failed (exit $_sync_rc). Aborting before PHPUnit —"
+        error "a drifted test schema would produce misleading route-smoke failures."
+        exit "$_sync_rc"
+    fi
+    success "Test-DB schema parity ensured."
+
     # `set -e` is in effect at the top of this script; wrap with `|| ...`
     # so a non-zero exit is captured here instead of killing the script
     # silently before we can report it and decide whether to continue.
