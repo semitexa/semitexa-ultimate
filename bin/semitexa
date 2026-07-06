@@ -2322,11 +2322,17 @@ ${_url_clean}/tests"
         exit "$_app_rc"
     fi
 
+    # Discovery is the single source of truth for WHICH specs run: the
+    # compose service's default command lets playwright.config.ts testMatch
+    # glob every packages/*/tests/E2E dir, including packages composer never
+    # installed. Passing the discovered dirs as path filters keeps the two
+    # in agreement.
+    _e2e_spec_args="$(printf '%s' "$_e2e_dirs" | tr '\n' ' ')"
     _e2e_rc=0
     (
         env_export_compose_context
         # shellcheck disable=SC2086
-        $_compose $_overlays run --rm e2e-runner
+        $_compose $_overlays run --rm e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args
     ) || _e2e_rc=$?
 
     if [ "$_e2e_rc" -ne 0 ]; then
