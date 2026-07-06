@@ -286,7 +286,7 @@ verify_mysql_auth() {
     _att=1
     while [ "$_att" -le 6 ]; do
         if run_compose exec -T -e _VCHK_U="$_vu" -e _VCHK_P="$_vp" mysql \
-            sh -c 'mysql -u"$_VCHK_U" -p"$_VCHK_P" -e "SELECT 1" >/dev/null 2>&1'; then
+            sh -c 'MYSQL_PWD="$_VCHK_P" mysql -u"$_VCHK_U" -e "SELECT 1" >/dev/null 2>&1'; then
             success "MySQL: credentials verified"
             return 0
         fi
