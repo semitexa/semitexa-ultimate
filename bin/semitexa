@@ -2150,6 +2150,17 @@ $_url_clean"
         if [ -d "$PROJECT_ROOT/packages" ]; then
             for _dir in "$PROJECT_ROOT"/packages/*/tests; do
                 [ -d "$_dir" ] || continue
+                # Only sweep tests of packages that are actually installed:
+                # a release/tagging checkout keeps every package repo under
+                # packages/, but composer installs a subset — tests of a
+                # not-installed package cannot autoload its src classes.
+                _pkg_composer="$(dirname "$_dir")/composer.json"
+                if [ -f "$_pkg_composer" ]; then
+                    _pkg_name="$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_pkg_composer" | head -n 1)"
+                    if [ -n "$_pkg_name" ] && [ ! -d "$PROJECT_ROOT/vendor/$_pkg_name" ]; then
+                        continue
+                    fi
+                fi
                 _discovered="$_discovered
 ${_dir#$PROJECT_ROOT/}"
             done
