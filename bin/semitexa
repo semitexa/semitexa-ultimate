@@ -1941,6 +1941,18 @@ discover_e2e_dirs() {
     if [ -d "$PROJECT_ROOT/packages" ]; then
         for _dir in "$PROJECT_ROOT"/packages/*/tests/E2E; do
             [ -d "$_dir" ] || continue
+            # Same guard as the PHPUnit discovery: only sweep E2E specs of
+            # packages composer actually installed — a release/tagging
+            # checkout keeps every package repo under packages/ while the
+            # app runs with a subset, and a not-installed package's specs
+            # exercise routes the app does not even serve.
+            _pkg_composer="${_dir%/tests/E2E}/composer.json"
+            if [ -f "$_pkg_composer" ]; then
+                _pkg_name="$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_pkg_composer" | head -n 1)"
+                if [ -n "$_pkg_name" ] && [ ! -d "$PROJECT_ROOT/vendor/$_pkg_name" ]; then
+                    continue
+                fi
+            fi
             if find "$_dir" -mindepth 1 -name '*.spec.ts' -print -quit 2>/dev/null | grep -q .; then
                 printf '%s\n' "${_dir#$PROJECT_ROOT/}"
             fi
