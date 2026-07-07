@@ -21,6 +21,9 @@ services:
   mysql:
     image: mysql:8.4
     restart: unless-stopped
+    # Test suites + a running app stack share this instance; the 151 default
+    # peaks out during full phpunit runs (observed Max_used_connections=152).
+    command: ["mysqld", "--max-connections=500"]
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
       MYSQL_DATABASE: ${DB_DATABASE:-semitexa}
