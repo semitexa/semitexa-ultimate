@@ -127,7 +127,7 @@
 
     {{ __ssr_deferred_manifest|default('')|raw }}
     {{ __ssr_runtime_script|default('')|raw }}
-    <script src="/assets/Hello/js/hello.js" defer></script>
+    <script src="{{ asset('js/hello.js', 'Hello') }}" defer></script>
     {{ asset_body() }}
 </body>
 </html>
