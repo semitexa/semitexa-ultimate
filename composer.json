@@ -35,6 +35,7 @@
         "semitexa/mail": "2026.07.06.1438",
         "semitexa/media": "2026.07.11.0936",
         "semitexa/llm": "2026.07.12.0729",
+        "semitexa/prompt": "2026.07.13.1014",
         "semitexa/scheduler": "2026.07.06.1438",
         "semitexa/ledger": "2026.07.11.0928",
         "semitexa/project-graph": "2026.07.07.1936",
