@@ -31,14 +31,14 @@
         "semitexa/tenancy": "2026.07.07.1936",
         "semitexa/locale": "2026.07.07.1936",
         "semitexa/orm": "2026.07.11.0619-beta",
-        "semitexa/search": "2026.06.21.0352",
+        "semitexa/search": "2026.07.14.0610",
         "semitexa/mail": "2026.07.06.1438",
         "semitexa/media": "2026.07.11.0936",
-        "semitexa/llm": "2026.07.12.0729",
-        "semitexa/prompt": "2026.07.13.1014",
+        "semitexa/llm": "2026.07.14.0610",
+        "semitexa/prompt": "2026.07.14.0610",
         "semitexa/scheduler": "2026.07.06.1438",
         "semitexa/ledger": "2026.07.11.0928",
-        "semitexa/project-graph": "2026.07.07.1936",
+        "semitexa/project-graph": "2026.07.14.0610",
         "semitexa/theme": "2026.06.21.0352"
     },
     "require-dev": {
