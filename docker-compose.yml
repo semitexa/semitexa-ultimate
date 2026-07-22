@@ -17,7 +17,16 @@ services:
     ports:
       - "${SWOOLE_PORT:-8080}:${SWOOLE_PORT:-8080}"
     restart: unless-stopped
-    command: ["php", "server.php"]
+    # Blocking-I/O detection (Swoole >= 6.2 tracer): Off by default; opt in
+    # per-environment via .env. When On, any internal call that blocks a
+    # coroutine longer than the threshold (µs) prints a backtrace to stdout.
+    command:
+      - php
+      - -d
+      - swoole.blocking_detection=${SWOOLE_BLOCKING_DETECTION:-Off}
+      - -d
+      - swoole.blocking_threshold=${SWOOLE_BLOCKING_THRESHOLD:-100000}
+      - server.php
     depends_on:
       setup:
         condition: service_completed_successfully

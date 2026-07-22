@@ -2265,8 +2265,14 @@ ${_url_clean}/tests"
     _phpunit_rc=0
     (
         env_export_compose_context
+        # An explicit command to `compose run` overrides the phpunit service
+        # command, so the env-gated Swoole blocking-detection flags from
+        # docker-compose.test.yml must be repeated here or they are bypassed.
         # shellcheck disable=SC2086
-        $_compose $_overlays run --rm phpunit vendor/bin/phpunit "$@" $_test_paths
+        $_compose $_overlays run --rm phpunit \
+            php -d "swoole.blocking_detection=${SWOOLE_BLOCKING_DETECTION:-Off}" \
+                -d "swoole.blocking_threshold=${SWOOLE_BLOCKING_THRESHOLD:-100000}" \
+                vendor/bin/phpunit "$@" $_test_paths
     ) || _phpunit_rc=$?
 
     if [ "$_phpunit_rc" -ne 0 ]; then
