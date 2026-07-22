@@ -2571,12 +2571,14 @@ proxy_run_one_off_app() {
     _overlays="$(compose_args)"
     (
         env_export_compose_context
+        # Run as the host user: a root one-off writing into the bind-mounted
+        # project leaves root:0600 files the host user cannot read.
         if [ -t 0 ] && [ -t 1 ]; then
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         else
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm -T app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm -T --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         fi
     )
 }
