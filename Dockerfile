@@ -6,7 +6,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
 ARG IMAGICK_VERSION=3.8.1
 
-RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev git unzip imagemagick-dev \
+RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic \
     && docker-php-ext-install pdo pdo_mysql sockets \
     && pecl install --nobuild swoole \
     && cd "$(pecl config-get temp_dir)/swoole" \
