@@ -1458,15 +1458,40 @@ cmd_local_app_doctor() {
     cmd_local_app_list
 }
 
-# Run the frontend skin-mode regression guard (scripts/lint-skin-legacy-markers.sh).
-# Fails when forbidden legacy theme markers reappear in the migrated marketing
-# packages or when the three site.js files drift apart. Demo + Hello scaffold
-# are intentionally NOT scanned (deferred to tk-demo-hello-skin-migration-followup).
+# Locate a guard script that ships inside semitexa/theme.
+#
+# These two lints used to live only in <projectRoot>/scripts/, which in this
+# workspace meant they lived nowhere under version control at all — the project
+# root is not a git repository, so a machine reinstall would have taken them
+# with it, and no consumer ever received them. They now ship with the package
+# that owns skins. A project-local copy still wins, so an operator can pin a
+# modified guard without editing the package.
+#
+# Echoes the resolved path, or nothing when no copy is reachable.
+find_theme_script() {
+    _name="$1"
+    for _candidate in \
+        "$PROJECT_ROOT/scripts/$_name" \
+        "$PROJECT_ROOT/vendor/semitexa/theme/resources/guards/$_name" \
+        "$PROJECT_ROOT/packages/semitexa-theme/resources/guards/$_name"
+    do
+        if [ -f "$_candidate" ]; then
+            echo "$_candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Run the frontend skin-mode regression guard (lint-skin-legacy-markers.sh).
+# Fails when forbidden legacy theme markers reappear in the guarded packages,
+# or when the guard would scan nothing at all. Demo + Hello scaffold are
+# intentionally NOT scanned (deferred to tk-demo-hello-skin-migration-followup).
 cmd_lint_skin_legacy() {
-    _script="$PROJECT_ROOT/scripts/lint-skin-legacy-markers.sh"
-    if [ ! -f "$_script" ]; then
+    _script="$(find_theme_script lint-skin-legacy-markers.sh || true)"
+    if [ -z "$_script" ]; then
         info "Skin-mode legacy guard script not present in this project."
-        info "  (Expected at: scripts/lint-skin-legacy-markers.sh)"
+        info "  (Looked in: scripts/, then semitexa/theme's resources/guards/)"
         info "  This is normal for fresh installs / single-app starters that don't"
         info "  ship the marketing-site packages. Nothing to enforce — skipping."
         exit 0
@@ -1479,10 +1504,10 @@ cmd_lint_skin_legacy() {
 # rebuild of skin.json, or when the canonical structural markers / forbidden
 # legacy markers regress. Runs locally — does not require the app container.
 cmd_lint_skin_tokens() {
-    _script="$PROJECT_ROOT/scripts/lint-skin-tokens.php"
-    if [ ! -f "$_script" ]; then
+    _script="$(find_theme_script lint-skin-tokens.php || true)"
+    if [ -z "$_script" ]; then
         info "Skin token canonical guard script not present in this project."
-        info "  (Expected at: scripts/lint-skin-tokens.php)"
+        info "  (Looked in: scripts/, then semitexa/theme's resources/guards/)"
         info "  This is normal for fresh installs without src/skins/ — skipping."
         exit 0
     fi
@@ -1490,7 +1515,7 @@ cmd_lint_skin_tokens() {
         error "php CLI not available — cannot run lint:skin-tokens locally."
         exit 1
     fi
-    php "$_script" "$@"
+    SEMITEXA_PROJECT_ROOT="$PROJECT_ROOT" php "$_script" "$@"
 }
 
 # Returns 0 if the captured compose log contains a clear port-conflict signal
@@ -1789,15 +1814,17 @@ cmd_self_test() {
     _arch="$(uname -m 2>/dev/null || echo unknown)"
     case "$_arch" in x86_64|amd64) success "Arch: AMD64" ;; aarch64|arm64) success "Arch: ARM64" ;; *) warn "Arch: $_arch (untested)" ;; esac
     if is_app_running; then success "App container: running"; _ok=$((_ok+1)); else info "App container: not running"; fi
-    if [ -f "$PROJECT_ROOT/scripts/lint-skin-legacy-markers.sh" ]; then
-        if ( PROJECT_ROOT="$PROJECT_ROOT" sh "$PROJECT_ROOT/scripts/lint-skin-legacy-markers.sh" >/dev/null 2>&1 ); then
+    _skin_legacy="$(find_theme_script lint-skin-legacy-markers.sh || true)"
+    if [ -n "$_skin_legacy" ]; then
+        if ( PROJECT_ROOT="$PROJECT_ROOT" sh "$_skin_legacy" >/dev/null 2>&1 ); then
             success "Skin-mode legacy guard: clean"; _ok=$((_ok+1))
         else
             error "Skin-mode legacy guard: FAILED — run 'bin/semitexa lint:skin-legacy' for details"; _fail=$((_fail+1))
         fi
     fi
-    if [ -f "$PROJECT_ROOT/scripts/lint-skin-tokens.php" ] && command -v php >/dev/null 2>&1; then
-        if ( php "$PROJECT_ROOT/scripts/lint-skin-tokens.php" >/dev/null 2>&1 ); then
+    _skin_tokens="$(find_theme_script lint-skin-tokens.php || true)"
+    if [ -n "$_skin_tokens" ] && command -v php >/dev/null 2>&1; then
+        if ( SEMITEXA_PROJECT_ROOT="$PROJECT_ROOT" php "$_skin_tokens" >/dev/null 2>&1 ); then
             success "Skin token canonical guard: clean"; _ok=$((_ok+1))
         else
             error "Skin token canonical guard: FAILED — run 'bin/semitexa lint:skin-tokens' for details"; _fail=$((_fail+1))
