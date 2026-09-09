@@ -3,5 +3,16 @@
 var/cache/*
 var/log/*
 var/docs/*
+
+# Runtime var/ dirs the framework writes on its own: the update lock
+# (semitexa-update), generated sitemaps (semitexa-ssr), the project-graph
+# sqlite and other internal stores (semitexa-project-graph), and uploads
+# handled by the local storage driver (semitexa-storage). None is source.
+# var/migrations/history/ is deliberately absent — it is a schema audit
+# trail a project may well want under version control.
+var/lock/*
+var/sitemap/*
+var/storage/*
+var/uploads/*
 !.gitkeep
 !var/docs/README.md
