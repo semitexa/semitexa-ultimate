@@ -1731,6 +1731,20 @@ cmd_server_stop() {
 # ═══════════════════════════════════════════════════════════════════════
 #  server:restart
 # ═══════════════════════════════════════════════════════════════════════
+
+# `docker compose build` for a restart: success is silent, failure is a warning
+# and the caller starts the containers from the images it already has. Never
+# an exit — a restart that cannot rebuild must still bring the stack back up.
+# Nothing is hidden: the compose output stays on screen, and the warning names
+# the consequence (a possibly stale image) and the way out.
+server_restart_build_or_warn() {
+    if run_compose build "$@"; then
+        return 0
+    fi
+    warn "Image build failed — restarting on the existing images instead (they may be stale)."
+    warn "Fix the network / Dockerfile problem, then run 'bin/semitexa server:restart' again to pick up a fresh build."
+    return 0
+}
 cmd_server_restart() {
     _service="${1:-}"
     printf "\n%s%s Semitexa — Restarting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
@@ -1742,15 +1756,22 @@ cmd_server_restart() {
 
     _compose="$(compose_bin)"
 
+    # Build BEFORE anything is taken down. `up -d --build` did both in one
+    # step, so a build that could not reach Docker Hub (a DNS blip, a laptop
+    # offline) died after `down` had already run and left the developer with
+    # no stack at all — measured 2026-09-10. A failed build is now a warning:
+    # the restart goes ahead on the images that already exist, and says so.
     if [ -n "$_service" ]; then
         info "Recreating service: $_service"
-        run_compose up -d --build --force-recreate --no-deps "$_service"
+        server_restart_build_or_warn "$_service"
+        run_compose up -d --no-build --force-recreate --no-deps "$_service"
     else
         info "Recreating all containers..."
+        server_restart_build_or_warn
         _overlays="$(compose_all_args)"
         # shellcheck disable=SC2086
         $_compose $_overlays down --remove-orphans
-        run_compose up -d --build
+        run_compose up -d --no-build
     fi
 
     success "Semitexa environment restarted!"
