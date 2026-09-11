@@ -1807,6 +1807,11 @@ cmd_list() {
     printf "  %-32s %s\n" "self-test"             "Verify setup"
     printf "  %-32s %s\n" "list"                  "Show this help"
 
+    if [ "${1:-}" = "--shell-only" ]; then
+        printf '\nPHP command help needs an installed runtime; no services were started.\n'
+        return 0
+    fi
+
     printf "\n%s%s PHP Commands (proxied to app container):%s\n" "$C_BOLD" "$C_YELLOW" "$C_RESET"
     if is_app_running; then
         run_compose exec -T app php vendor/bin/semitexa list --raw 2>/dev/null | while IFS= read -r _line; do
@@ -2106,6 +2111,27 @@ report_host_headroom() {
 }
 
 cmd_test_run() {
+    [ "${1:-}" != "--" ] || shift
+    _test_information=0
+    for _test_arg in "$@"; do
+        case "$_test_arg" in
+            --) break ;;
+            -h|--help|-V|--version|--atleast-version|--atleast-version=*)
+                cmd_information vendor/bin/phpunit "$@"
+                return $?
+                ;;
+            --list-tests|--list-suites|--list-groups|--list-test-files|--list-tests-xml|--list-tests-xml=*)
+                _test_information=1
+                ;;
+        esac
+    done
+
+    # Everything below this point is about RUNNING tests, and a listing does
+    # not run any. Asking for one on a host with local PHP and no Docker used
+    # to die on the Compose prerequisite several steps before reaching the
+    # local fallback that exists precisely for that host — the fallback was
+    # unreachable by the only caller that needed it.
+    if [ "$_test_information" -eq 0 ]; then
     if ! has_compose; then
         error "Docker Compose is required. Install Docker Desktop or docker-compose."
         exit 1
@@ -2146,6 +2172,11 @@ cmd_test_run() {
     # ── Phase 1: PHPUnit ────────────────────────────────────────────────
     printf "\n%s%s Phase 1/2 — PHPUnit (Docker) %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
     info "Compose files: $_files_display"
+    fi
+
+    if [ "$_test_information" -eq 1 ]; then
+        info "Listing tests only — no Docker, schema sync, test execution, or E2E phase."
+    fi
 
     # Build test-path list on the host, appended only when the user did not pass
     # any positional targets. Fresh installs only have tests/; monorepo layouts
@@ -2363,6 +2394,15 @@ ${_url_clean}/tests"
         info "Discovered test paths: $(printf '%s' "$_test_paths" | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
     fi
 
+    if [ "$_test_information" -eq 1 ]; then
+        # PHPUnit may load the project's bootstrap to discover test classes.
+        # This is not a sandbox for arbitrary bootstrap code. It NEVER enters
+        # the schema-sync / test / E2E phases or starts a service, though.
+        # shellcheck disable=SC2086
+        cmd_information vendor/bin/phpunit "$@" $_test_paths
+        return $?
+    fi
+
     # ── Phase 1a: test-DB schema parity (idempotent) ────────────────────
     # The test database (DB_TEST_DATABASE, default semitexa_test — pinned by
     # the phpunit service env in docker-compose.test.yml) must carry every
@@ -2387,7 +2427,11 @@ ${_url_clean}/tests"
     # schema sync now, the suites after it — runs against the database the
     # developer actually works in. Nothing downstream can tell the difference,
     # so the check belongs here, before the first write.
-    _live_db="$(env_val DB_DATABASE semitexa)"
+    # The EFFECTIVE value, not merely the file's. DB_TEST_DATABASE below is
+    # read from the process first, so comparing it against a .env-only reading
+    # of DB_DATABASE let an exported pair that both name the live database slip
+    # through the one check standing between a test run and that database.
+    _live_db="${DB_DATABASE:-$(env_val DB_DATABASE semitexa)}"
     _test_db="${DB_TEST_DATABASE:-$(env_val DB_TEST_DATABASE semitexa_test)}"
     if [ "$_test_db" = "$_live_db" ]; then
         error "DB_TEST_DATABASE and DB_DATABASE are both '$_live_db'."
@@ -2757,6 +2801,43 @@ proxy_run_one_off_app() {
     )
 }
 
+# Help and listings must not auto-start a stack or a one-off container.
+# Reuse a running app's PHP, or an already installed local PHP; fail otherwise.
+cmd_information() {
+    _information_entry="$1"
+    shift
+    if [ ! -f "$PROJECT_ROOT/$_information_entry" ]; then
+        error "$_information_entry not found. Install dependencies explicitly first."
+        return 1
+    fi
+    if [ -f "$PROJECT_ROOT/docker-compose.yml" ] && has_compose && is_app_running; then
+        if [ "$_information_entry" = "vendor/bin/phpunit" ]; then
+            _information_db="${DB_TEST_DATABASE:-$(env_val DB_TEST_DATABASE semitexa_test)}"
+            if [ "$_information_db" = "${DB_DATABASE:-$(env_val DB_DATABASE semitexa)}" ]; then
+                error "Test database matches the live database; refusing to load the test bootstrap."
+                return 1
+            fi
+            run_compose exec -T -e "DB_DATABASE=$_information_db" -e APP_ENV=dev app php "$_information_entry" "$@"
+        else
+            run_compose exec -T app php "$_information_entry" "$@"
+        fi
+    elif command -v php >/dev/null 2>&1; then
+        if [ "$_information_entry" = "vendor/bin/phpunit" ]; then
+            _information_db="${DB_TEST_DATABASE:-$(env_val DB_TEST_DATABASE semitexa_test)}"
+            if [ "$_information_db" = "${DB_DATABASE:-$(env_val DB_DATABASE semitexa)}" ]; then
+                error "Test database matches the live database; refusing to load the test bootstrap."
+                return 1
+            fi
+            APP_ENV=dev DB_DATABASE="$_information_db" php "$PROJECT_ROOT/$_information_entry" "$@"
+        else
+            php "$PROJECT_ROOT/$_information_entry" "$@"
+        fi
+    else
+        error "Information mode needs local PHP or an already-running app container. No services were started."
+        return 1
+    fi
+}
+
 cmd_proxy() {
     if command -v php >/dev/null 2>&1; then
         if [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ]; then
@@ -2839,6 +2920,29 @@ fi
 COMMAND="${1:-}"
 [ -z "$COMMAND" ] && { cmd_list; exit 0; }
 shift
+# Handle help BEFORE dispatching native commands (especially restart/install).
+# test:run owns PHPUnit's help and listing modes, not the framework's help.
+if [ "$COMMAND" != "test:run" ]; then
+    for _information_arg in "$@"; do
+        case "$_information_arg" in
+            --) break ;;
+            -V|--version)
+                cmd_information vendor/bin/semitexa --version
+                exit $?
+                ;;
+            -h|--help)
+                case "$COMMAND" in
+                    list|server:*|local-router:*|local-domain:*|local-app:*|install|demo:install|init|self-test|lint:skin-legacy|lint:skin-tokens)
+                        printf 'Usage: bin/semitexa %s [options]\n' "$COMMAND"
+                        cmd_list --shell-only
+                        ;;
+                    *) cmd_information vendor/bin/semitexa "$COMMAND" "$@" ;;
+                esac
+                exit $?
+                ;;
+        esac
+    done
+fi
 case "$COMMAND" in
     server:start)    cmd_server_start "$@" ;;
     server:stop)     cmd_server_stop "$@" ;;
@@ -2862,7 +2966,10 @@ case "$COMMAND" in
     install)         cmd_install "$@" ;;
     demo:install)    cmd_demo_install "$@" ;;
     test:run)        cmd_test_run "$@" ;;
-    list|help|--help|-h) cmd_list "$@" ;;
+    --help|-h)       cmd_list --shell-only ;;
+    --version|-V)    cmd_information vendor/bin/semitexa --version ;;
+    help)           if [ $# -eq 0 ]; then cmd_list --shell-only; else cmd_information vendor/bin/semitexa help "$@"; fi ;;
+    list)           cmd_list "$@" ;;
     self-test)       cmd_self_test "$@" ;;
     init)            cmd_init "$@" ;;
     *)               cmd_proxy "$COMMAND" "$@" ;;
