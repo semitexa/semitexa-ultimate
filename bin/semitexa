@@ -2126,6 +2126,12 @@ cmd_test_run() {
         esac
     done
 
+    # Everything below this point is about RUNNING tests, and a listing does
+    # not run any. Asking for one on a host with local PHP and no Docker used
+    # to die on the Compose prerequisite several steps before reaching the
+    # local fallback that exists precisely for that host — the fallback was
+    # unreachable by the only caller that needed it.
+    if [ "$_test_information" -eq 0 ]; then
     if ! has_compose; then
         error "Docker Compose is required. Install Docker Desktop or docker-compose."
         exit 1
@@ -2164,12 +2170,13 @@ cmd_test_run() {
     _files_display="$(printf '%s' "$_overlays" | sed 's/-f //g' | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
 
     # ── Phase 1: PHPUnit ────────────────────────────────────────────────
-    if [ "$_test_information" -eq 1 ]; then
-        info "Listing tests only — no schema sync, test execution, or E2E phase."
-    else
-        printf "\n%s%s Phase 1/2 — PHPUnit (Docker) %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
-    fi
+    printf "\n%s%s Phase 1/2 — PHPUnit (Docker) %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
     info "Compose files: $_files_display"
+    fi
+
+    if [ "$_test_information" -eq 1 ]; then
+        info "Listing tests only — no Docker, schema sync, test execution, or E2E phase."
+    fi
 
     # Build test-path list on the host, appended only when the user did not pass
     # any positional targets. Fresh installs only have tests/; monorepo layouts
@@ -2420,7 +2427,11 @@ ${_url_clean}/tests"
     # schema sync now, the suites after it — runs against the database the
     # developer actually works in. Nothing downstream can tell the difference,
     # so the check belongs here, before the first write.
-    _live_db="$(env_val DB_DATABASE semitexa)"
+    # The EFFECTIVE value, not merely the file's. DB_TEST_DATABASE below is
+    # read from the process first, so comparing it against a .env-only reading
+    # of DB_DATABASE let an exported pair that both name the live database slip
+    # through the one check standing between a test run and that database.
+    _live_db="${DB_DATABASE:-$(env_val DB_DATABASE semitexa)}"
     _test_db="${DB_TEST_DATABASE:-$(env_val DB_TEST_DATABASE semitexa_test)}"
     if [ "$_test_db" = "$_live_db" ]; then
         error "DB_TEST_DATABASE and DB_DATABASE are both '$_live_db'."
@@ -2802,7 +2813,7 @@ cmd_information() {
     if [ -f "$PROJECT_ROOT/docker-compose.yml" ] && has_compose && is_app_running; then
         if [ "$_information_entry" = "vendor/bin/phpunit" ]; then
             _information_db="${DB_TEST_DATABASE:-$(env_val DB_TEST_DATABASE semitexa_test)}"
-            if [ "$_information_db" = "$(env_val DB_DATABASE semitexa)" ]; then
+            if [ "$_information_db" = "${DB_DATABASE:-$(env_val DB_DATABASE semitexa)}" ]; then
                 error "Test database matches the live database; refusing to load the test bootstrap."
                 return 1
             fi
@@ -2813,7 +2824,7 @@ cmd_information() {
     elif command -v php >/dev/null 2>&1; then
         if [ "$_information_entry" = "vendor/bin/phpunit" ]; then
             _information_db="${DB_TEST_DATABASE:-$(env_val DB_TEST_DATABASE semitexa_test)}"
-            if [ "$_information_db" = "$(env_val DB_DATABASE semitexa)" ]; then
+            if [ "$_information_db" = "${DB_DATABASE:-$(env_val DB_DATABASE semitexa)}" ]; then
                 error "Test database matches the live database; refusing to load the test bootstrap."
                 return 1
             fi
@@ -2921,7 +2932,7 @@ if [ "$COMMAND" != "test:run" ]; then
                 ;;
             -h|--help)
                 case "$COMMAND" in
-                    server:*|local-router:*|local-domain:*|local-app:*|install|demo:install|init|self-test|lint:skin-legacy|lint:skin-tokens)
+                    list|server:*|local-router:*|local-domain:*|local-app:*|install|demo:install|init|self-test|lint:skin-legacy|lint:skin-tokens)
                         printf 'Usage: bin/semitexa %s [options]\n' "$COMMAND"
                         cmd_list --shell-only
                         ;;

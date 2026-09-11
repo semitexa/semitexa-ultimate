@@ -16,9 +16,14 @@ final class ShellInformationModeTest extends TestCase
         foreach (['bin', 'stubs', 'vendor/bin'] as $directory) {
             mkdir($this->root . '/' . $directory, 0755, true);
         }
-        $ultimate = dirname(__DIR__, 3);
-        $source = dirname($ultimate) . '/semitexa-installer/scaffold/bin/semitexa';
-        copy(is_file($source) ? $source : $ultimate . '/bin/semitexa', $this->root . '/bin/semitexa');
+        // THIS package's copy, unconditionally. Preferring the installer's
+        // scaffold when it happens to sit next door meant these assertions
+        // could exercise a different file than the one this package ships —
+        // green here while ultimate's own binary was broken, which is the
+        // single thing a test in this package exists to prevent. The four
+        // copies being byte-identical is a separate guarantee, checked
+        // elsewhere; this test must not depend on it holding.
+        copy(dirname(__DIR__, 3) . '/bin/semitexa', $this->root . '/bin/semitexa');
         file_put_contents($this->root . '/.env', "APP_ENV=dev\nDB_DATABASE=live\nDB_TEST_DATABASE=isolated_test\n");
         file_put_contents($this->root . '/composer.json', '{}');
         foreach (['docker-compose.yml', 'docker-compose.test.yml', 'vendor/bin/semitexa', 'vendor/bin/phpunit'] as $file) {
