@@ -44,6 +44,7 @@
         "semitexa/platform-settings": "2026.09.11.0529"
     },
     "require-dev": {
+        "phpstan/phpstan": "2.1.40",
         "semitexa/testing": "2026.09.11.0529"
     },
     "keywords": [
@@ -54,5 +55,13 @@
         "twig",
         "frontend",
         "starter-kit"
-    ]
+    ],
+    "scripts": {
+        "phpstan": "docker compose exec -T app ./vendor/bin/phpstan analyse --memory-limit=1G",
+        "phpstan:strict": "docker compose exec -T app ./vendor/bin/phpstan analyse --memory-limit=1G -c phpstan-strict.neon"
+    },
+    "scripts-descriptions": {
+        "phpstan": "Analyse src/ at level max with Semitexa's architecture rules. Runs in the app container: a host PHP differs from the runtime, and the rules resolve framework classes out of vendor/.",
+        "phpstan:strict": "The same analysis with reportUnmatchedIgnoredErrors. Fails when a phpstan-baseline.neon entry no longer matches a real error, which is what stops a baseline from becoming a place new errors land."
+    }
 }
