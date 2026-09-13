@@ -261,6 +261,7 @@ If an idea isn't in `ai:epic`, it doesn't exist from a backlog standpoint. The f
 - Do **not** add root-level directories, change module discovery, or add Composer dependencies without explicit approval.
 - Do **not** create documentation files (`*.md`) unless explicitly requested.
 - Do **not** put the consumer's code, configuration, environment values, or credentials into an `ai:report`. It publishes to a **public** tracker, usually from someone else's machine. A minimal reproduction is the ceiling; the command refuses obvious credential shapes, but that is a backstop, not the rule. Never publish without the operator seeing the rendered issue first.
+- Calling a **new** API of another `semitexa/*` package? Put a floor on it: `"semitexa/core": ">=2026.09.13.0749"`, naming the release that first shipped what you call. Internal deps are `*` by default, and `*` cannot say "at least" — a consumer installing one package beside an older pinned core got a resolution composer accepted and a worker that died on a missing class. Nothing rewrites a floor afterwards; it is a fact about the code, not about the current release.
 - Do **not** add per-module PSR-4 entries to root `composer.json` — modules autoload from `src/modules/`.
 - Do **not** add routes outside a module — `App\` is not discovered for routes.
 - Do **not** treat any document as the backlog (§5). Doc mining is opt-in only.
