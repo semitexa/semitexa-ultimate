@@ -1,40 +1,25 @@
 # PHPStan for a Semitexa project.
 #
-# The rules below are Semitexa's own — they ship inside semitexa/core and
-# enforce the framework's architecture, not general PHP hygiene: that
+# The included rule list is Semitexa's own — the rules ship inside semitexa/core
+# and enforce the framework's architecture, not general PHP hygiene: that
 # dependencies arrive through #[InjectAsReadonly] rather than a constructor,
 # that a handler returns a response, that a package's absence is expressed as a
 # composer requirement rather than a runtime class_exists(). Breaking one of
 # them produces code that looks fine and fails at boot or under load.
 #
-# They shipped with the framework long before anything wired them up here. Add
-# your own paths below; `src` is the whole of an ordinary project.
+# They shipped with the framework long before anything wired them up here. The
+# list is included rather than copied so that a rule added to semitexa/core
+# reaches your project on the next update instead of the next time somebody
+# remembers to paste it. Add your own paths below; `src` is the whole of an
+# ordinary project.
 
 includes:
+    # The rule list ships with the rules, in semitexa/core.
+    - vendor/semitexa/core/config/phpstan-rules.neon
     # Delete this line until you have generated a baseline, or PHPStan will
     # refuse to start. See "Existing projects" at the bottom of this file.
     # - phpstan-baseline.neon
 
-rules:
-    - Semitexa\Core\PHPStan\Rules\InjectionViaConstructorRule
-    - Semitexa\Core\PHPStan\Rules\ConfigOnClassTypeRule
-    - Semitexa\Core\PHPStan\Rules\ConfigOnArrayTypeRule
-    - Semitexa\Core\PHPStan\Rules\InjectOnScalarTypeRule
-    - Semitexa\Core\PHPStan\Rules\StaticContainerAccessRule
-    - Semitexa\Core\PHPStan\Rules\UnannotatedServicePropertyRule
-    - Semitexa\Core\PHPStan\Rules\InjectedPropertyVisibilityRule
-    - Semitexa\Core\PHPStan\Rules\ExecutionScopedWithoutAttributeRule
-    - Semitexa\Core\PHPStan\Rules\DirectResponseConstructionRule
-    - Semitexa\Core\PHPStan\Rules\HandlerReturnsResponseRule
-    - Semitexa\Core\PHPStan\Rules\ExplicitOptionalDependencyRule
-    - Semitexa\Core\PHPStan\Rules\EventListenerMissingExecutionRule
-    - Semitexa\Core\PHPStan\Rules\DiscoveryCallSiteRule
-    - Semitexa\Core\PHPStan\Rules\FactoryStringKeyRule
-    - Semitexa\Core\PHPStan\Rules\FactoryContractRule
-    - Semitexa\Core\PHPStan\Rules\FactoryClosedWorldRule
-    - Semitexa\Core\PHPStan\Rules\TraitInjectionRule
-    - Semitexa\Core\PHPStan\Rules\ModuleContractOwnershipRule
-    - Semitexa\Core\PHPStan\Rules\DisallowErrorLogRule
 
 parameters:
     level: max
