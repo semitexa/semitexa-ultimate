@@ -40,7 +40,7 @@
         "semitexa/ledger": "2026.09.13.1330",
         "semitexa/project-graph": "2026.08.25.0718",
         "semitexa/theme": "2026.09.17.1037",
-        "semitexa/platform-ui": "2026.09.17.1037",
+        "semitexa/platform-ui": "2026.09.17.1829",
         "semitexa/platform-settings": "2026.09.11.0529"
     },
     "require-dev": {
