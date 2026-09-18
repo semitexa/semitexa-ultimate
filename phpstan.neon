@@ -15,7 +15,7 @@
 
 includes:
     # The rule list ships with the rules, in semitexa/core.
-    - vendor/semitexa/core/config/phpstan-rules.neon
+    - %currentWorkingDirectory%/vendor/semitexa/core/config/phpstan-rules.neon
     # Delete this line until you have generated a baseline, or PHPStan will
     # refuse to start. See "Existing projects" at the bottom of this file.
     # - phpstan-baseline.neon
