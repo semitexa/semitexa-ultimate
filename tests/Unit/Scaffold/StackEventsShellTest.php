@@ -62,6 +62,30 @@ final class StackEventsShellTest extends TestCase
     }
 
     #[Test]
+    public function a_project_path_with_a_space_still_names_the_live_agent(): void
+    {
+        // Word-splitting find's output turned each session file into two names
+        // that do not exist, and the live agent got no warning.
+        exec('rm -rf ' . escapeshellarg($this->root));
+        $this->root = sys_get_temp_dir() . '/semitexa stack ' . uniqid();
+        mkdir($this->root . '/var/ai-work/agents', 0o755, true);
+        $this->agent('codex-live01', 'writing the SSR demo article', null);
+
+        self::assertStringContainsString('codex-live01', $this->shell('stack_warn_live_agents restart', 'claude-self1'));
+    }
+
+    #[Test]
+    public function a_single_service_restart_does_not_claim_to_remove_their_containers(): void
+    {
+        $this->agent('codex-live01', 'writing the SSR demo article', null);
+
+        $out = $this->shell('stack_warn_live_agents restart app', 'claude-self1');
+
+        self::assertStringContainsString("recreates the 'app' container", $out);
+        self::assertStringNotContainsString('removes their one-off CLI containers', $out);
+    }
+
+    #[Test]
     public function nobody_else_live_means_no_warning(): void
     {
         $this->agent('claude-self1', 'me, restarting', null);

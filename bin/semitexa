@@ -1641,19 +1641,26 @@ stack_event() {
 stack_warn_live_agents() {
     _sw_dir="$PROJECT_ROOT/var/ai-work/agents"
     [ -d "$_sw_dir" ] || return 0
-    _sw_found=""
-    for _sw_file in $(find "$_sw_dir" -name '*.json' -mmin -15 2>/dev/null); do
+    # Read line by line, never word-split: a project path with a space in it
+    # would otherwise turn each session file into two names that do not exist,
+    # and the agent working there would get no warning at all.
+    _sw_found="$(find "$_sw_dir" -name '*.json' -mmin -15 2>/dev/null | while IFS= read -r _sw_file; do
         grep -q '"ended_at": null' "$_sw_file" 2>/dev/null || continue
         _sw_id="$(basename "$_sw_file" .json)"
         [ "$_sw_id" = "${SEMITEXA_AGENT_SESSION:-}" ] && continue
         _sw_intent="$(sed -n 's/^ *"intent": "\(.*\)",$/\1/p' "$_sw_file" | head -1)"
-        _sw_found="${_sw_found}      ${_sw_id} — ${_sw_intent}
-"
-    done
+        printf '      %s — %s\n' "$_sw_id" "$_sw_intent"
+    done)"
     [ -n "$_sw_found" ] || return 0
     warn "Other agents are working in this project right now:"
-    printf '%s' "$_sw_found" >&2
-    warn "This $1 interrupts the running server, and removes their one-off CLI containers."
+    printf '%s\n' "$_sw_found" >&2
+    # A service restart recreates one container and runs no `down`; only the
+    # full stop/restart removes the others' one-off CLI containers.
+    if [ -n "${2:-}" ]; then
+        warn "This $1 recreates the '$2' container; if that is app, their running server requests are cut off."
+    else
+        warn "This $1 interrupts the running server, and removes their one-off CLI containers."
+    fi
     [ -n "${SEMITEXA_AGENT_SESSION:-}" ] || warn "You have not joined (ai:agent join): the stack log will record this $1 as by nobody."
 }
 
@@ -1802,7 +1809,7 @@ cmd_server_restart() {
     fi
 
     _compose="$(compose_bin)"
-    stack_warn_live_agents restart
+    stack_warn_live_agents restart "$_service"
     stack_event restart "$_service"
 
     # Build BEFORE anything is taken down. `up -d --build` did both in one
