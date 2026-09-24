@@ -154,6 +154,7 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 | `ai:context <recipe>` | Prior-art for a recipe | Before edits, once per task |
 | `ai:plan --files` | Risk-score recipe + files | Before edits on >1 file or unclear risk |
 | `ai:verify` | Precise lint+test+module-structure subset on diff (see [`MODULE_STRUCTURE.md`](packages/semitexa-docs/docs/MODULE_STRUCTURE.md)) | **After every edit.** Non-negotiable. |
+| `ai:quality` | Quality ledger: numbers that may only go down (`check` / `record` / `accept --metric --reason`). `ai:verify` already holds it; a regression fails, and so does an improvement until `record` locks it in. Raising a number needs `accept` with a reason, which lands in the diff. Workspace-only for now — elsewhere it reports `skipped` | When `ai:verify` names a `QualityLedgerGateTest` failure |
 | `ai:trace` | Durable cross-session event stream | Always. `export SEMITEXA_AI_TRACE_ID=<id>` at task start; `ai:task` / `ai:context` / `ai:plan` / `ai:verify` auto-append. |
 | `ai:backlog` | Stats + hygiene (`status=discarded`, never hard-delete) | Before big renders; on operator request |
 | `ai:report` | File a **framework** defect + the workaround as a Semitexa issue. Requires evidence; searches for duplicates first and adds a sighting instead; drafts locally when `gh` is unavailable so nothing is lost | Whenever you work around a Semitexa bug — see Directive 4a |
