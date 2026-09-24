@@ -1622,7 +1622,12 @@ server_start_run_with_port_conflict_fallback() {
 # names the live agents it is about to interrupt. It warns; it does not block.
 stack_event() {
     _se_dir="$PROJECT_ROOT/var/ai-work"
-    mkdir -p "$_se_dir" 2>/dev/null || return 0
+    # Never blocks the lifecycle command, but never fails silently either:
+    # an unrecorded restart is exactly the one nobody can attribute later.
+    if ! mkdir -p "$_se_dir" 2>/dev/null; then
+        warn "could not create $_se_dir; stack event '$1' was not recorded"
+        return 0
+    fi
     _se_by="${SEMITEXA_AGENT_SESSION:-}"
     case "$_se_by" in ''|*[!A-Za-z0-9_.:-]*) _se_by="" ;; esac
     # Detail comes from arguments; quotes, backslashes and control characters
@@ -1633,7 +1638,8 @@ stack_event() {
         "$1" \
         "$( [ -n "$_se_by" ] && printf '"%s"' "$_se_by" || printf 'null')" \
         "$(id -un 2>/dev/null | tr -d '"\\' || printf '?')" \
-        "$_se_detail" >> "$_se_dir/stack-events.ndjson" 2>/dev/null || true
+        "$_se_detail" >> "$_se_dir/stack-events.ndjson" 2>/dev/null \
+        || warn "could not append stack event '$1' to $_se_dir/stack-events.ndjson"
 }
 
 # Live agents other than the caller: a session file touched in the last 15
@@ -2843,16 +2849,19 @@ proxy_diagnose_port_conflict() {
 proxy_run_one_off_app() {
     _compose="$(compose_bin)"
     _overlays="$(compose_args)"
+    # Read before env_export_compose_context: a value in .env would otherwise
+    # replace the caller's own session and trace.
+    _agent_env="$(agent_env_args)"
     (
         env_export_compose_context
         # Run as the host user: a root one-off writing into the bind-mounted
         # project leaves root:0600 files the host user cannot read.
         if [ -t 0 ] && [ -t 1 ]; then
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm $(agent_env_args) --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         else
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm -T $(agent_env_args) --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm -T $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         fi
     )
 }

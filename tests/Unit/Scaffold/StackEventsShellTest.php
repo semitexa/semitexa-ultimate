@@ -43,6 +43,8 @@ final class StackEventsShellTest extends TestCase
         self::assertIsArray($first, 'a hostile detail must not break the line');
         self::assertSame(['restart', 'claude-aaaaaa'], [$first['action'], $first['by']]);
         self::assertStringNotContainsString('"', $first['detail']);
+        // Sanitised, not emptied: the words around the dropped quote survive.
+        self::assertStringStartsWith('app; rm -rf /', $first['detail']);
         self::assertNull($second['by'], 'a session value that is not an id is recorded as nobody');
     }
 
@@ -113,9 +115,11 @@ final class StackEventsShellTest extends TestCase
     private function agent(string $id, string $intent, ?string $endedAt): void
     {
         // Pretty-printed, as AgentRegistry writes it: the shell reads it by line.
-        file_put_contents($this->root . '/var/ai-work/agents/' . $id . '.json', json_encode([
+        // A fixture that failed to write would let the exclusion checks pass on nothing.
+        $written = file_put_contents($this->root . '/var/ai-work/agents/' . $id . '.json', json_encode([
             'id' => $id, 'agent' => 'x', 'intent' => $intent, 'task' => null, 'repos' => [],
             'started_at' => 'x', 'beat_at' => 'x', 'ended_at' => $endedAt,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+        self::assertNotFalse($written, "fixture for {$id} must be written");
     }
 }
