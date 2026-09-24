@@ -1613,6 +1613,50 @@ server_start_run_with_port_conflict_fallback() {
 # ═══════════════════════════════════════════════════════════════════════
 #  server:start
 # ═══════════════════════════════════════════════════════════════════════
+# ── Dev-stack events: who started, stopped or restarted the stack ─────────
+# Several agents share one stack. A restart runs `down --remove-orphans`,
+# which also removes every one-off `compose run` container the others were
+# using, and until now nothing said who did it or why — the others found out
+# by having their work vanish. Each lifecycle command now appends one line to
+# var/ai-work/stack-events.ndjson (read by ai:orient and ai:agent list), and
+# names the live agents it is about to interrupt. It warns; it does not block.
+stack_event() {
+    _se_dir="$PROJECT_ROOT/var/ai-work"
+    mkdir -p "$_se_dir" 2>/dev/null || return 0
+    _se_by="${SEMITEXA_AGENT_SESSION:-}"
+    case "$_se_by" in ''|*[!A-Za-z0-9_.:-]*) _se_by="" ;; esac
+    # Detail comes from arguments; quotes, backslashes and control characters
+    # are dropped so the line stays one valid JSON object.
+    _se_detail="$(printf '%s' "${2:-}" | tr -d '"\\\000-\037' | cut -c1-120)"
+    printf '{"at":"%s","action":"%s","by":%s,"user":"%s","detail":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
+        "$1" \
+        "$( [ -n "$_se_by" ] && printf '"%s"' "$_se_by" || printf 'null')" \
+        "$(id -un 2>/dev/null | tr -d '"\\' || printf '?')" \
+        "$_se_detail" >> "$_se_dir/stack-events.ndjson" 2>/dev/null || true
+}
+
+# Live agents other than the caller: a session file touched in the last 15
+# minutes (every ai:* command touches it) that has not ended.
+stack_warn_live_agents() {
+    _sw_dir="$PROJECT_ROOT/var/ai-work/agents"
+    [ -d "$_sw_dir" ] || return 0
+    _sw_found=""
+    for _sw_file in $(find "$_sw_dir" -name '*.json' -mmin -15 2>/dev/null); do
+        grep -q '"ended_at": null' "$_sw_file" 2>/dev/null || continue
+        _sw_id="$(basename "$_sw_file" .json)"
+        [ "$_sw_id" = "${SEMITEXA_AGENT_SESSION:-}" ] && continue
+        _sw_intent="$(sed -n 's/^ *"intent": "\(.*\)",$/\1/p' "$_sw_file" | head -1)"
+        _sw_found="${_sw_found}      ${_sw_id} — ${_sw_intent}
+"
+    done
+    [ -n "$_sw_found" ] || return 0
+    warn "Other agents are working in this project right now:"
+    printf '%s' "$_sw_found" >&2
+    warn "This $1 interrupts the running server, and removes their one-off CLI containers."
+    [ -n "${SEMITEXA_AGENT_SESSION:-}" ] || warn "You have not joined (ai:agent join): the stack log will record this $1 as by nobody."
+}
+
 cmd_server_start() {
     printf "\n%s%s Semitexa — Starting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
 
@@ -1626,6 +1670,7 @@ cmd_server_start() {
     # SWOOLE_PORT is unique on this workstation. May rewrite .env when a port
     # collision is detected. compose_args reads .env, so this must run first.
     local_app_reconcile || warn "Local app reconcile reported a problem; continuing with current .env."
+    stack_event start
 
     _overlays="$(compose_args)"
     [ -n "$_overlays" ] && info "Compose files: $_overlays"
@@ -1710,6 +1755,8 @@ cmd_server_stop() {
         exit 0
     fi
 
+    stack_warn_live_agents stop
+    stack_event stop
     info "Stopping containers..."
     _compose="$(compose_bin)"
     _overlays="$(compose_all_args)"
@@ -1755,6 +1802,8 @@ cmd_server_restart() {
     fi
 
     _compose="$(compose_bin)"
+    stack_warn_live_agents restart
+    stack_event restart "$_service"
 
     # Build BEFORE anything is taken down. `up -d --build` did both in one
     # step, so a build that could not reach Docker Hub (a DNS blip, a laptop

@@ -38,6 +38,9 @@ The **agent** is the reasoning system (Claude, Codex, Copilot). **Semitexa** is 
     have uncommitted edits; then `ai:agent join --name=<you> --intent="<one sentence>" --repo=<repo>`
     and `export SEMITEXA_AGENT_SESSION=<id>`. Moving a task to `in_progress` claims it; a task a
     live agent holds is refused (coordinate, or `--take-over`). `ai:agent leave` when done.
+    - `server:start|stop|restart` names the live agents it is about to interrupt (a restart also
+      removes their one-off CLI containers) and logs who ran it; `ai:orient` shows the last one.
+      Prefer `server:restart app` over a full restart when only the app needs reloading.
     - Before committing in a repo another live agent claimed, or one flagged "claimed by no
       agent", run `git status` as its own step and commit by pathspec — those files may not be yours.
 
