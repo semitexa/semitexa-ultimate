@@ -33,6 +33,17 @@ The **agent** is the reasoning system (Claude, Codex, Copilot). **Semitexa** is 
     - *Cadence, not per-keystroke*: a run of edits that only makes sense together is verified
       once, when it is coherent. Verifying mid-sequence reports failures you are about to fix
       anyway, and the cost is real — see §4 on not wrapping it in `server:restart`.
+11. **Say you are here.** Other agents (Claude, Codex, …) may be working in this same checkout,
+    backlog and dev stack. On cold start `ai:orient` shows who (**Working now**) and which repos
+    have uncommitted edits; then `ai:agent join --name=<you> --intent="<one sentence>" --repo=<repo>`
+    and `export SEMITEXA_AGENT_SESSION=<id>`. Moving a task to `in_progress` claims it; a task a
+    live agent holds is refused (coordinate, or `--take-over`). `ai:agent leave` when done.
+    - `server:stop|restart` names the live agents it is about to interrupt (a full restart also
+      removes their one-off CLI containers); `server:start|stop|restart` log who ran them, and
+      `ai:orient` shows the last one.
+      Prefer `server:restart app` over a full restart when only the app needs reloading.
+    - Before committing in a repo another live agent claimed, or one flagged "claimed by no
+      agent", run `git status` as its own step and commit by pathspec — those files may not be yours.
 
 Violating any is a defect. Where a directive names its own exception, applying that exception
 is not a violation — it is the rule working. A rule that has to be broken regularly and
@@ -147,13 +158,15 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 
 | Command | Role | When |
 |---|---|---|
-| **`ai:orient`** | Session dashboard — git + active epic + in-progress tasks + recent traces + last verify + next step | **First command on cold start.** Replaces ~6 probes. |
+| **`ai:orient`** | Session dashboard — **who else is working now** + git + active epic + in-progress tasks (with the agent holding each) + recent traces + last verify + next step | **First command on cold start.** Replaces ~6 probes. |
+| `ai:agent` | Presence: `join --name --intent --repo` (then export `SEMITEXA_AGENT_SESSION`), `list` (live agents + uncommitted edits per repo, and who claimed them), `leave`. Every `ai:*` command is a heartbeat; silent 15 min = not live | Right after `ai:orient`; `leave` when done |
 | `ai:task` | Classify prose → recipe + score + `confidence` (high/low/none) + next-step | Every new EXECUTE unit |
 | `ai:epic` | Orchestrate N tasks under a shared goal | CAPTURE save / non-trivial EXECUTE |
 | `ai:work` | Track one executable leaf unit | Every leaf task |
 | `ai:context <recipe>` | Prior-art for a recipe | Before edits, once per task |
 | `ai:plan --files` | Risk-score recipe + files | Before edits on >1 file or unclear risk |
 | `ai:verify` | Precise lint+test+module-structure subset on diff (see [`MODULE_STRUCTURE.md`](packages/semitexa-docs/docs/MODULE_STRUCTURE.md)) | **After every edit.** Non-negotiable. |
+| `ai:quality` | Quality ledger: numbers that may only go down (`check` / `record` / `accept --metric --reason`). `ai:verify` already holds it; a regression fails, and so does an improvement until `record` locks it in. Raising a number needs `accept` with a reason, which lands in the diff. `ai:quality next` names what to improve next (also in `ai:orient`); humans see the same ledger, with trends, at `/__quality`. Workspace-only for now — elsewhere it reports `skipped` | When `ai:verify` names a `QualityLedgerGateTest` failure, or when choosing what to improve |
 | `ai:trace` | Durable cross-session event stream | Always. `export SEMITEXA_AI_TRACE_ID=<id>` at task start; `ai:task` / `ai:context` / `ai:plan` / `ai:verify` auto-append. |
 | `ai:backlog` | Stats + hygiene (`status=discarded`, never hard-delete) | Before big renders; on operator request |
 | `ai:report` | File a **framework** defect + the workaround as a Semitexa issue. Requires evidence; searches for duplicates first and adds a sighting instead; drafts locally when `gh` is unavailable so nothing is lost | Whenever you work around a Semitexa bug — see Directive 4a |
