@@ -33,6 +33,13 @@ The **agent** is the reasoning system (Claude, Codex, Copilot). **Semitexa** is 
     - *Cadence, not per-keystroke*: a run of edits that only makes sense together is verified
       once, when it is coherent. Verifying mid-sequence reports failures you are about to fix
       anyway, and the cost is real — see §4 on not wrapping it in `server:restart`.
+11. **Say you are here.** Other agents (Claude, Codex, …) may be working in this same checkout,
+    backlog and dev stack. On cold start `ai:orient` shows who (**Working now**) and which repos
+    have uncommitted edits; then `ai:agent join --name=<you> --intent="<one sentence>" --repo=<repo>`
+    and `export SEMITEXA_AGENT_SESSION=<id>`. Moving a task to `in_progress` claims it; a task a
+    live agent holds is refused (coordinate, or `--take-over`). `ai:agent leave` when done.
+    - Before committing in a repo another live agent claimed, or one flagged "claimed by no
+      agent", run `git status` as its own step and commit by pathspec — those files may not be yours.
 
 Violating any is a defect. Where a directive names its own exception, applying that exception
 is not a violation — it is the rule working. A rule that has to be broken regularly and
@@ -147,7 +154,8 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 
 | Command | Role | When |
 |---|---|---|
-| **`ai:orient`** | Session dashboard — git + active epic + in-progress tasks + recent traces + last verify + next step | **First command on cold start.** Replaces ~6 probes. |
+| **`ai:orient`** | Session dashboard — **who else is working now** + git + active epic + in-progress tasks (with the agent holding each) + recent traces + last verify + next step | **First command on cold start.** Replaces ~6 probes. |
+| `ai:agent` | Presence: `join --name --intent --repo` (then export `SEMITEXA_AGENT_SESSION`), `list` (live agents + uncommitted edits per repo, and who claimed them), `leave`. Every `ai:*` command is a heartbeat; silent 15 min = not live | Right after `ai:orient`; `leave` when done |
 | `ai:task` | Classify prose → recipe + score + `confidence` (high/low/none) + next-step | Every new EXECUTE unit |
 | `ai:epic` | Orchestrate N tasks under a shared goal | CAPTURE save / non-trivial EXECUTE |
 | `ai:work` | Track one executable leaf unit | Every leaf task |

@@ -2793,10 +2793,10 @@ proxy_run_one_off_app() {
         # project leaves root:0600 files the host user cannot read.
         if [ -t 0 ] && [ -t 1 ]; then
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm $(agent_env_args) --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         else
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm -T --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm -T $(agent_env_args) --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         fi
     )
 }
@@ -2838,11 +2838,26 @@ cmd_information() {
     fi
 }
 
+# The agent's identity and trace, carried into the container. `compose exec`
+# and `compose run` pass nothing from the caller's environment, so an agent
+# that did `export SEMITEXA_AI_TRACE_ID=<task>` (as AGENTS.md says) reached PHP
+# with no trace at all, and every auto-append silently went nowhere. Only ids
+# of a safe shape are forwarded: they are spliced into the command line.
+agent_env_args() {
+    for _agent_var in SEMITEXA_AI_TRACE_ID SEMITEXA_AGENT_SESSION; do
+        eval "_agent_val=\${${_agent_var}:-}"
+        case "$_agent_val" in
+            ''|*[!A-Za-z0-9_.:-]*) ;;
+            *) printf ' -e %s=%s' "$_agent_var" "$_agent_val" ;;
+        esac
+    done
+}
+
 cmd_proxy() {
     if command -v php >/dev/null 2>&1; then
         if [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ]; then
             if is_app_running; then
-                if [ -t 0 ] && [ -t 1 ]; then run_compose exec app php vendor/bin/semitexa "$@"; else run_compose exec -T app php vendor/bin/semitexa "$@"; fi
+                if [ -t 0 ] && [ -t 1 ]; then run_compose exec $(agent_env_args) app php vendor/bin/semitexa "$@"; else run_compose exec $(agent_env_args) -T app php vendor/bin/semitexa "$@"; fi
             elif has_compose; then
                 if env_runtime_file_exists; then
                     # CLI commands don't need a long-running, port-publishing
@@ -2883,7 +2898,7 @@ cmd_proxy() {
     else
         if has_compose; then
             if is_app_running; then
-                if [ -t 0 ] && [ -t 1 ]; then run_compose exec app php vendor/bin/semitexa "$@"; else run_compose exec -T app php vendor/bin/semitexa "$@"; fi
+                if [ -t 0 ] && [ -t 1 ]; then run_compose exec $(agent_env_args) app php vendor/bin/semitexa "$@"; else run_compose exec $(agent_env_args) -T app php vendor/bin/semitexa "$@"; fi
             elif env_runtime_file_exists; then
                 _swoole_port="$(env_val SWOOLE_PORT '')"
                 if [ -n "$_swoole_port" ] && port_in_use_on_host "$_swoole_port"; then
