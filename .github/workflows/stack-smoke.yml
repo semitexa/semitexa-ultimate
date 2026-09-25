@@ -91,6 +91,13 @@ jobs:
       REDIS_PORT: '6379'
       SWOOLE_PORT: '9502'
       SEMITEXA_SMOKE_SERVICES: present
+      # Known debt, not a waiver: these packages' own suites still assume the
+      # private framework workspace (a sibling checkout, shipped-docs paths,
+      # production sources to scan). Everything they ship is still installed,
+      # linted, booted and crawled above; only their unit suites are held back.
+      # Remove a name the day its suite passes standalone — a gate that is red
+      # for reasons nobody will fix is a gate people learn to ignore.
+      SEMITEXA_SMOKE_SKIP_SUITES: 'dev api docs prompt'
 
     steps:
       # Pinned to commit SHAs, not tags: a tag is mutable, and the action it
