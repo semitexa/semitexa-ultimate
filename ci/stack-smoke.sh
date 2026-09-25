@@ -218,13 +218,14 @@ stage_install() {
     fi
 
     log "install: swap vendor/semitexa/* for git checkouts (default ref $DEFAULT_REF)"
-    local pkg url ref var sha n=0 bad=0 ptable=$WORK/packages.tsv
+    local pkg url ref var sha n=0 bad=0 matched=0 ptable=$WORK/packages.tsv
     : > "$ptable"
     for dir in vendor/semitexa/*/; do
         pkg=$(basename "$dir")
         url=$($PHP "$HELPER" repo-url "$pkg")
         repo=$(basename "$url" .git)
         if override_matches "$pkg" "$repo"; then
+            matched=1
             [ -d "${SEMITEXA_OVERRIDE_PATH:-}" ] || { note "SEMITEXA_OVERRIDE_PATH is not a directory"; bad=1; continue; }
             rm -rf "vendor/semitexa/$pkg"; mkdir -p "vendor/semitexa/$pkg"
             tar -C "$SEMITEXA_OVERRIDE_PATH" --exclude=./vendor --exclude=./.git -cf - . | tar -C "vendor/semitexa/$pkg" -xf -
@@ -243,6 +244,11 @@ stage_install() {
     done
     table < "$ptable"
     [ "$bad" = 0 ] || { record install FAIL "package checkout failed"; return 1; }
+    # An override that matched nothing would leave the caller's own change
+    # untested behind a green run.
+    if [ -n "${SEMITEXA_OVERRIDE_REPO:-}" ] && [ "$matched" = 0 ]; then
+        record install FAIL "override $SEMITEXA_OVERRIDE_REPO matches no installed semitexa package"; return 1
+    fi
 
     if ! $PHP "$HELPER" sync-installed 2> "$WORK/logs/missing-deps.txt"; then
         sed 's/^/    missing: /' "$WORK/logs/missing-deps.txt"
@@ -319,7 +325,8 @@ stage_server() {
 
     local res code rc ctype fail=0 skipped=0 tolerated=0 total=0 first
     res=$(curl -s -o "$WORK/logs/first-response.html" -m 60 -w '%{http_code}' "$BASE/"); first=$res
-    if [ "$first" = 000 ] || [ "$first" -ge 500 ]; then
+    # 4xx fails too: a fresh install whose home route did not register answers 404.
+    if [ "$first" = 000 ] || [ "$first" -ge 400 ]; then
         note "FIRST request GET / -> $first"; fail=1
     else
         note "first request GET / -> $first"
