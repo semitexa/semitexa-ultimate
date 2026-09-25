@@ -10,9 +10,9 @@ use Semitexa\Ssr\Application\Service\Http\Response\HtmlSlotResponse;
 #[AsSlotResource(
     handle: 'hello',
     slot: 'guide_01',
-    template: '@project-layouts-Hello/slots/guide.html.twig',
+    template: '@project-layouts-Hello/deferred/guide.html.twig',
     deferred: true,
-    skeletonTemplate: '@project-layouts-Hello/slots/guide.skeleton.html.twig',
+    skeletonTemplate: '@project-layouts-Hello/deferred/guide.skeleton.html.twig',
     mode: 'template',
     context: [
         'index' => '01',
