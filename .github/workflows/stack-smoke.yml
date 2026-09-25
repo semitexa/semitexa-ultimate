@@ -1,0 +1,154 @@
+# Boot the whole stack the way a fresh install does, from every package's
+# development line, and fail if any of it does not work.
+#
+# Nothing else in the framework does this. Each package tests itself in its own
+# repository; none of them installs this skeleton, swaps in every other
+# package, starts the server and asks it for a page. A fresh install that could
+# not boot went unnoticed for exactly that reason. ci/stack-smoke.sh is the
+# whole gate (install, first request, every route, linters, doctor, every
+# package's test suite inside the app); this workflow only gives it PHP, MySQL
+# and Redis, so no route and no doctor check is excused for a missing service.
+#
+# Other repositories reuse it through workflow_call, passing their own checkout
+# in place of the develop line of that one package:
+#
+#   jobs:
+#     stack:
+#       uses: semitexa/semitexa-ultimate/.github/workflows/stack-smoke.yml@develop
+#       with:
+#         override_repo: semitexa-core
+#         override_ref: ${{ github.event.pull_request.head.sha || github.sha }}
+#
+# The schedule matters as much as the pushes: the gate checks out other
+# repositories' develop branches, which move without anything happening here.
+name: Stack smoke
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+  schedule:
+    # Nightly, 03:23 UTC.
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      override_repo:
+        description: 'Package repository to test from a ref instead of develop (e.g. semitexa-core)'
+        type: string
+        default: ''
+      override_ref:
+        description: 'Branch, tag or SHA of override_repo'
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      override_repo:
+        description: 'Package repository to test from a ref instead of develop: a name under semitexa/ (semitexa-core) or owner/name'
+        type: string
+        default: ''
+      override_ref:
+        description: 'Branch, tag or SHA of override_repo'
+        type: string
+        default: ''
+
+# Read-only. The one token in use is handed to composer for GitHub downloads,
+# which a read-only token is enough for.
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: smoke
+          MYSQL_DATABASE: semitexa
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -psmoke"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+
+    # The app's own .env keys (see .env.default). The process environment wins
+    # over the env files, so these reach the CLI and every Swoole worker.
+    env:
+      DB_DRIVER: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: semitexa
+      DB_USERNAME: root
+      DB_PASSWORD: smoke
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: '6379'
+      SWOOLE_PORT: '9502'
+      SEMITEXA_SMOKE_SERVICES: present
+      # Known debt, not a waiver: these packages' own suites still assume the
+      # private framework workspace (a sibling checkout, shipped-docs paths,
+      # production sources to scan). Everything they ship is still installed,
+      # linted, booted and crawled above; only their unit suites are held back.
+      # Remove a name the day its suite passes standalone — a gate that is red
+      # for reasons nobody will fix is a gate people learn to ignore.
+      SEMITEXA_SMOKE_SKIP_SUITES: 'dev api docs prompt'
+
+    steps:
+      # Pinned to commit SHAs, not tags: a tag is mutable, and the action it
+      # names runs with this workflow's token. The comment carries the version
+      # the SHA was, because a bare SHA tells a later reader nothing about what
+      # it is or whether it has moved on.
+      #
+      # Called from another repository, this workflow runs in that repository's
+      # context, so the skeleton is named explicitly: its develop line there,
+      # the commit under test here.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (2026-07-16)
+        with:
+          repository: ${{ github.event.repository.name == 'semitexa-ultimate' && github.repository || 'semitexa/semitexa-ultimate' }}
+          ref: ${{ github.event.repository.name == 'semitexa-ultimate' && github.sha || 'develop' }}
+          path: app
+          # Nothing after this step needs git credentials, and the app, its
+          # tests and every package's tests run below with access to .git.
+          persist-credentials: false
+
+      - name: Check out the package under test
+        if: inputs.override_repo != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (2026-07-16)
+        with:
+          repository: ${{ contains(inputs.override_repo, '/') && inputs.override_repo || format('semitexa/{0}', inputs.override_repo) }}
+          ref: ${{ inputs.override_ref }}
+          path: override
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2 (2026-06-08)
+        with:
+          php-version: '8.4'
+          extensions: swoole, redis, pdo_mysql, zlib, imagick
+          tools: composer:v2
+          coverage: none
+
+      - name: Stack smoke
+        working-directory: app
+        env:
+          SMOKE_GITHUB_TOKEN: ${{ github.token }}
+          SEMITEXA_OVERRIDE_REPO: ${{ inputs.override_repo }}
+          SEMITEXA_OVERRIDE_PATH: ${{ inputs.override_repo != '' && format('{0}/override', github.workspace) || '' }}
+        run: ci/stack-smoke.sh
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stack-smoke-logs
+          path: |
+            app/var/stack-smoke/
+            app/var/log/
+          if-no-files-found: ignore
+          retention-days: 14
