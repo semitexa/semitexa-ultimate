@@ -25,7 +25,7 @@ final class DeferredTemplatesClientCompatibilityTest extends TestCase
         $projectRoot = dirname(__DIR__, 3);
         $console = $projectRoot . '/vendor/bin/semitexa';
         if (!is_file($console)) {
-            self::markTestSkipped('Needs an installed project (vendor/bin/semitexa).');
+            self::fail('Needs an installed project (vendor/bin/semitexa): this gate must not pass unchecked.');
         }
 
         $command = sprintf(

@@ -390,10 +390,11 @@ stage_lint() {
     [ -n "$cmds" ] || { record lint FAIL "no lint:* commands found"; return 1; }
     for c in $cmds; do
         n=$((n + 1))
-        if $CLI "$c" --no-interaction > "$WORK/logs/$c.txt" 2>&1; then
+        # Log names drop the colon: upload-artifact refuses it (NTFS-safe names).
+        if $CLI "$c" --no-interaction > "$WORK/logs/${c//:/-}.txt" 2>&1; then
             note "PASS $c"
         else
-            note "FAIL $c"; tail -15 "$WORK/logs/$c.txt" | sed 's/^/      /'; fail=$((fail + 1))
+            note "FAIL $c"; tail -15 "$WORK/logs/${c//:/-}.txt" | sed 's/^/      /'; fail=$((fail + 1))
         fi
     done
     if [ "$fail" = 0 ]; then record lint PASS "$n commands"; else record lint FAIL "$fail of $n commands failed"; return 1; fi
@@ -441,7 +442,9 @@ XML
         note "PASS $name: $line"; record "tests:$name" PASS "$line"
     else
         note "FAIL $name (exit $rc): $line"
-        grep -E '^[0-9]+\) ' "$out" | head -25 | sed 's/^/      /'
+        # Each failure with the first lines of its message, so a red run can
+        # be read from the job log alone.
+        awk '/^[0-9]+\) /{n=5} n>0{print; n--}' "$out" | head -60 | sed 's/^/      /'
         [ "$1" = 0 ] && tail -15 "$out" | sed 's/^/      /'
         record "tests:$name" FAIL "$line"
     fi
