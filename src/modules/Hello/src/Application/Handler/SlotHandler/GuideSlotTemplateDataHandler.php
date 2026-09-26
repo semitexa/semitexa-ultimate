@@ -33,8 +33,12 @@ final class GuideSlotTemplateDataHandler implements TypedSlotHandlerInterface
         // visible in the browser so Semitexa's async slot rendering is easy to notice.
         $this->sleepForSlot((string) ($context['index'] ?? ''));
 
+        // A deferred slot is also rendered by the client, which only reads
+        // plain context paths: every translated string has to arrive here,
+        // never through trans() in the template.
         return $slot->withRenderContext([
             'index' => (string) ($context['index'] ?? ''),
+            'eyebrow' => Translator::trans('hello.card_eyebrow'),
             'title' => $titleKey !== '' ? Translator::trans($titleKey) : '',
             'bodyHtml' => $bodyKey !== '' ? $this->sanitizeGuideBody(Translator::trans($bodyKey)) : '',
         ]);

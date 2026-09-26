@@ -71,6 +71,11 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
     {
         $ultimateRoot = dirname(__DIR__, 3);
         $installerRoot = dirname($ultimateRoot) . '/semitexa-installer/scaffold';
+        // The installer is a sibling checkout only in the framework workspace; a
+        // standalone clone (CI, a consumer) has nothing to compare against.
+        if (!is_dir($installerRoot)) {
+            self::markTestSkipped('semitexa-installer is not checked out next to this repository.');
+        }
         $pathPairs = [
             [
                 'ultimate' => $ultimateRoot . '/docker-compose.yml',

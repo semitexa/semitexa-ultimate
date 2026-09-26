@@ -9,6 +9,7 @@ composer.lock
 var/log/*
 var/cache/*
 var/ai-report/*
+var/stack-smoke/
 !var/log/.gitkeep
 !var/cache/.gitkeep
 .phpunit.result.cache
