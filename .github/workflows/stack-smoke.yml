@@ -4,7 +4,7 @@
 # Nothing else in the framework does this. Each package tests itself in its own
 # repository; none of them installs this skeleton, swaps in every other
 # package, starts the server and asks it for a page. A fresh install that could
-# not boot went unnoticed for exactly that reason. ci/stack-smoke.sh is the
+# not boot went unnoticed for exactly that reason. tools/stack-smoke.sh is the
 # whole gate (install, first request, every route, linters, doctor, every
 # package's test suite inside the app); this workflow only gives it PHP, MySQL
 # and Redis, so no route and no doctor check is excused for a missing service.
@@ -141,7 +141,7 @@ jobs:
           SMOKE_GITHUB_TOKEN: ${{ github.token }}
           SEMITEXA_OVERRIDE_REPO: ${{ inputs.override_repo }}
           SEMITEXA_OVERRIDE_PATH: ${{ inputs.override_repo != '' && format('{0}/override', github.workspace) || '' }}
-        run: ci/stack-smoke.sh
+        run: tools/stack-smoke.sh
 
       - name: Keep the logs
         if: always()
