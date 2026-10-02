@@ -21,6 +21,16 @@ var/evidence/
 # Request traces (7 days) and scratch space: runtime output, never source.
 var/trace/
 var/tmp/
+# The Observatory's process journal and coroutine snapshots, and run-time
+# state (var/run holds the dev session cookie): written by the server.
+var/observatory/
+var/run/
+# What the framework writes on its own, as in the installer scaffold: the
+# update lock, sitemaps, the project-graph sqlite and other stores, uploads.
+var/lock/*
+var/sitemap/*
+var/storage/*
+var/uploads/*
 !var/log/.gitkeep
 !var/cache/.gitkeep
 .phpunit.result.cache
