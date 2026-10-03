@@ -58,10 +58,10 @@ Official framework documentation lives in `packages/semitexa-docs/`. Package-lev
 | **AI context for this project** | [AI_CONTEXT.md](AI_CONTEXT.md) |
 | **Framework docs hub** | [packages/semitexa-docs/docs/README.md](packages/semitexa-docs/docs/README.md) |
 | **Workspace / monorepo docs** — architecture, DI, PHPStan, testing, policy | [packages/semitexa-docs/docs/workspace/README.md](packages/semitexa-docs/docs/workspace/README.md) |
-| **Running the app** — Docker, ports, logs | [vendor/semitexa/core/docs/RUNNING.md](vendor/semitexa/core/docs/RUNNING.md) |
-| **Adding pages and routes** — modules, Request/Handler | [vendor/semitexa/core/docs/ADDING_ROUTES.md](vendor/semitexa/core/docs/ADDING_ROUTES.md) |
-| **Attributes** — AsPayload, AsPayloadHandler, AsResource, etc. | [vendor/semitexa/core/docs/attributes/README.md](vendor/semitexa/core/docs/attributes/README.md) |
-| **Service contracts** — contracts:list, active implementation | [vendor/semitexa/core/docs/SERVICE_CONTRACTS.md](vendor/semitexa/core/docs/SERVICE_CONTRACTS.md) |
+| **Running the app** — Docker, ports, logs | [packages/semitexa-docs/docs/en/get-started/installation.md](packages/semitexa-docs/docs/en/get-started/installation.md) |
+| **Adding pages and routes** — modules, Request/Handler | [packages/semitexa-docs/docs/en/routing/adding-routes.md](packages/semitexa-docs/docs/en/routing/adding-routes.md) |
+| **Attributes** — AsPublicPayload, AsPayloadHandler, AsResource, etc. | [packages/semitexa-docs/docs/en/reference/attributes-core.md](packages/semitexa-docs/docs/en/reference/attributes-core.md) |
+| **Service contracts** — contracts:list, active implementation | [packages/semitexa-docs/docs/en/di/contracts.md](packages/semitexa-docs/docs/en/di/contracts.md) |
 
 The repository does not treat a root-level `./docs/` directory as canonical. Project-level AI guidance lives at root (`AGENTS.md`, `AI_ENTRY.md`, `AI_CONTEXT.md`, `AI_NOTES.md`); framework guidance lives in `packages/semitexa-docs/`; per-package reference lives in `packages/<package>/docs/`.
 

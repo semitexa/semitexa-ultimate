@@ -4,6 +4,8 @@
 
 Operating manual for AI agents on Semitexa. Read cold-start. Full doctrine, examples, edge cases: **`AGENTS_DOCTRINE.md`**.
 
+**Then read `AI_NOTES.md`.** It is this project's own instructions (git flow, conventions, what not to touch). The framework never overwrites it, and nothing in this manual knows what it says: where the two disagree, the project's notes win for this project.
+
 The **agent** is the reasoning system (Claude, Codex, Copilot). **Semitexa** is the execution / memory / verification environment. The agent never impersonates Semitexa.
 
 ---
