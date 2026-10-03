@@ -8,7 +8,7 @@
 # Usage (from a checkout of semitexa-ultimate; needs PHP 8.4 + Swoole, composer,
 # git and curl):
 #
-#   ci/stack-smoke.sh
+#   tools/stack-smoke.sh
 #
 # Environment:
 #   SEMITEXA_REF_DEFAULT=develop       ref every package is checked out at

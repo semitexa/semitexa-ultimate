@@ -10,6 +10,31 @@ var/log/*
 var/cache/*
 var/ai-report/*
 var/stack-smoke/
+# Playwright traces and failure screenshots: they show whatever was on screen.
+var/test-results/
+# Graph exports (ai:review-graph:show --format=html): a map of the codebase,
+# never source and never meant for a public commit.
+var/review-graph/
+# Review evidence (ai:evidence): private screenshots, traces and exports with
+# a passport and an expiry. Published one at a time, never by a commit.
+var/evidence/
+# Request traces (7 days) and scratch space: runtime output, never source.
+var/trace/
+var/tmp/
+# The Observatory's process journal and coroutine snapshots, and run-time
+# state (var/run holds the dev session cookie): written by the server.
+var/observatory/
+var/run/
+# Agent presence: who is working now and who restarted the stack. The rest of
+# var/ai-work (epics, tasks) is the backlog and stays committable.
+var/ai-work/agents/
+var/ai-work/stack-events.ndjson
+# What the framework writes on its own, as in the installer scaffold: the
+# update lock, sitemaps, the project-graph sqlite and other stores, uploads.
+var/lock/*
+var/sitemap/*
+var/storage/*
+var/uploads/*
 !var/log/.gitkeep
 !var/cache/.gitkeep
 .phpunit.result.cache
