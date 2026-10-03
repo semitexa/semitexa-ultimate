@@ -56,12 +56,12 @@ Official framework documentation lives in `packages/semitexa-docs/`. Package-lev
 | Topic | File or folder |
 |-------|----------------|
 | **AI context for this project** | [AI_CONTEXT.md](AI_CONTEXT.md) |
-| **Framework docs hub** | [packages/semitexa-docs/docs/README.md](packages/semitexa-docs/docs/README.md) |
-| **Workspace / monorepo docs** — architecture, DI, PHPStan, testing, policy | [packages/semitexa-docs/docs/workspace/README.md](packages/semitexa-docs/docs/workspace/README.md) |
-| **Running the app** — Docker, ports, logs | [packages/semitexa-docs/docs/en/get-started/installation.md](packages/semitexa-docs/docs/en/get-started/installation.md) |
-| **Adding pages and routes** — modules, Request/Handler | [packages/semitexa-docs/docs/en/routing/adding-routes.md](packages/semitexa-docs/docs/en/routing/adding-routes.md) |
-| **Attributes** — AsPublicPayload, AsPayloadHandler, AsResource, etc. | [packages/semitexa-docs/docs/en/reference/attributes-core.md](packages/semitexa-docs/docs/en/reference/attributes-core.md) |
-| **Service contracts** — contracts:list, active implementation | [packages/semitexa-docs/docs/en/di/contracts.md](packages/semitexa-docs/docs/en/di/contracts.md) |
+| **Framework docs hub** | [vendor/semitexa/docs/docs/README.md](vendor/semitexa/docs/docs/README.md) |
+| **Workspace / monorepo docs** — architecture, DI, PHPStan, testing, policy | [vendor/semitexa/docs/docs/workspace/README.md](vendor/semitexa/docs/docs/workspace/README.md) |
+| **Running the app** — Docker, ports, logs | [vendor/semitexa/docs/docs/en/get-started/installation.md](vendor/semitexa/docs/docs/en/get-started/installation.md) |
+| **Adding pages and routes** — modules, Request/Handler | [vendor/semitexa/docs/docs/en/routing/adding-routes.md](vendor/semitexa/docs/docs/en/routing/adding-routes.md) |
+| **Attributes** — AsPublicPayload, AsPayloadHandler, AsResource, etc. | [vendor/semitexa/docs/docs/en/reference/attributes-core.md](vendor/semitexa/docs/docs/en/reference/attributes-core.md) |
+| **Service contracts** — contracts:list, active implementation | [vendor/semitexa/docs/docs/en/di/contracts.md](vendor/semitexa/docs/docs/en/di/contracts.md) |
 
 The repository does not treat a root-level `./docs/` directory as canonical. Project-level AI guidance lives at root (`AGENTS.md`, `AI_ENTRY.md`, `AI_CONTEXT.md`, `AI_NOTES.md`); framework guidance lives in `packages/semitexa-docs/`; per-package reference lives in `packages/<package>/docs/`.
 
