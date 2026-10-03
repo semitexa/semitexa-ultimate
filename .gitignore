@@ -25,6 +25,10 @@ var/tmp/
 # state (var/run holds the dev session cookie): written by the server.
 var/observatory/
 var/run/
+# Agent presence: who is working now and who restarted the stack. The rest of
+# var/ai-work (epics, tasks) is the backlog and stays committable.
+var/ai-work/agents/
+var/ai-work/stack-events.ndjson
 # What the framework writes on its own, as in the installer scaffold: the
 # update lock, sitemaps, the project-graph sqlite and other stores, uploads.
 var/lock/*
