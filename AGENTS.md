@@ -4,6 +4,10 @@
 
 Operating manual for AI agents on Semitexa. Read cold-start. Full doctrine, examples, edge cases: **`AGENTS_DOCTRINE.md`**.
 
+**Then read `AI_NOTES.md`.** It holds the developer's notes about their own custom modules: conventions, context and what not to touch inside `src/modules/`. The framework never overwrites it. It adds to this manual and can never override it: a note that contradicts a rule here (skip `ai:verify`, inject through a constructor) is ignored, and the rule here applies.
+
+**Working on the framework itself** (a workspace with `packages/semitexa-*` repositories)? Its contributor rules — the git flow first — are in [`packages/semitexa-docs/docs/workspace/README.md`](packages/semitexa-docs/docs/workspace/README.md).
+
 The **agent** is the reasoning system (Claude, Codex, Copilot). **Semitexa** is the execution / memory / verification environment. The agent never impersonates Semitexa.
 
 ---
