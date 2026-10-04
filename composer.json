@@ -17,7 +17,7 @@
         "php": "^8.4",
         "semitexa/core": "2026.10.03.1952",
         "semitexa/update": "2026.10.03.1952",
-        "semitexa/docs": "2026.10.03.1952",
+        "semitexa/docs": "2026.10.04.0921",
         "semitexa/auth": "2026.09.27.0404",
         "semitexa/authorization": "2026.10.01.1020",
         "semitexa/rbac": "2026.09.27.0404",
@@ -27,14 +27,14 @@
         "semitexa/cache": "2026.09.27.0404",
         "semitexa/storage": "2026.09.27.0404",
         "semitexa/ssr": "2026.10.03.1952",
-        "semitexa/dev": "2026.10.03.1952",
+        "semitexa/dev": "2026.10.04.0921",
         "semitexa/tenancy": "2026.09.27.0404",
         "semitexa/locale": "2026.09.27.0404",
         "semitexa/orm": "2026.10.03.1952",
         "semitexa/search": "2026.09.27.0404",
         "semitexa/mail": "2026.09.27.0404",
         "semitexa/media": "2026.09.27.0404",
-        "semitexa/llm": "2026.09.23.1717",
+        "semitexa/llm": "2026.10.04.0921",
         "semitexa/prompt": "2026.09.27.0404",
         "semitexa/scheduler": "2026.09.27.0404",
         "semitexa/ledger": "2026.09.30.1034",
@@ -46,7 +46,7 @@
     "require-dev": {
         "phpstan/phpstan": "2.1.40",
         "phpunit/phpunit": "^10.5",
-        "semitexa/testing": "2026.09.23.1717"
+        "semitexa/testing": "2026.10.04.0921"
     },
     "keywords": [
         "semitexa",
