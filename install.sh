@@ -391,13 +391,18 @@ check_docker_permissions() {
     info "  newgrp docker   (opens a new shell with the group active)"
     printf "\n"
     info "Then re-run the installer:"
+    # The script's own arguments, rebuilt: inside this function "$*" would be
+    # the function's (none), and a flag piped to bash without "-s" is read by
+    # bash itself ("bash --start" fails).
+    _args=""
+    [ -n "$PROJECT_NAME" ] && _args="${_args} ${PROJECT_NAME}"
+    [ "$AUTO_START" -eq 1 ]  && _args="${_args} --start"
+    [ "$WANT_LOCAL_DOMAIN" -eq 1 ] && _args="${_args} --local-domain"
     if [ -f "$0" ]; then
-        info "  sh $0 $*"
+        info "  sh $0${_args}"
     else
         _rerun="curl -fsSL https://semitexa.com/install.sh | bash"
-        [ -n "$PROJECT_NAME" ] && _rerun="${_rerun} -s ${PROJECT_NAME}"
-        [ "$AUTO_START" -eq 1 ]  && _rerun="${_rerun} --start"
-        [ "$WANT_LOCAL_DOMAIN" -eq 1 ] && _rerun="${_rerun} --local-domain"
+        [ -n "$_args" ] && _rerun="${_rerun} -s${_args}"
         info "  ${_rerun}"
     fi
     printf "\n"
