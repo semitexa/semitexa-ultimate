@@ -1903,7 +1903,16 @@ cmd_self_test() {
     case "$_arch" in x86_64|amd64) success "Arch: AMD64" ;; aarch64|arm64) success "Arch: ARM64" ;; *) warn "Arch: $_arch (untested)" ;; esac
     if is_app_running; then success "App container: running"; _ok=$((_ok+1)); else info "App container: not running"; fi
     _skin_legacy="$(find_theme_script lint-skin-legacy-markers.sh || true)"
-    if [ -n "$_skin_legacy" ]; then
+    # The legacy-marker guard scans the framework's own packages/semitexa-*
+    # checkouts. A consumer project has none, so the guard would fail with
+    # "verified NOTHING": report it as not applicable there instead.
+    _has_workspace_packages=0
+    for _dir in "$PROJECT_ROOT"/packages/semitexa-*; do
+        [ -d "$_dir" ] && { _has_workspace_packages=1; break; }
+    done
+    if [ -n "$_skin_legacy" ] && [ "$_has_workspace_packages" -eq 0 ]; then
+        info "Skin-mode legacy guard: not applicable (no packages/semitexa-* in this project; framework workspace only)"
+    elif [ -n "$_skin_legacy" ]; then
         if ( PROJECT_ROOT="$PROJECT_ROOT" sh "$_skin_legacy" >/dev/null 2>&1 ); then
             success "Skin-mode legacy guard: clean"; _ok=$((_ok+1))
         else

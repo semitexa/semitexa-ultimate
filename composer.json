@@ -48,6 +48,11 @@
         "phpunit/phpunit": "^10.5",
         "semitexa/testing": "2026.10.04.0921"
     },
+    "config": {
+        "allow-plugins": {
+            "semitexa/core": true
+        }
+    },
     "keywords": [
         "semitexa",
         "ultimate",
