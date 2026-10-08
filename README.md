@@ -55,9 +55,10 @@ To stop the stack: `bin/semitexa server:stop`. To see every command: `bin/semite
 
 ## Tests
 
-Tests run inside the project's containers:
+Tests run inside the project's containers. The installer installs without dev dependencies, so add them once (PHPUnit is one of them):
 
 ```bash
+docker compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install
 bin/semitexa test:run
 bin/semitexa test:run --filter MyTest
 ```
