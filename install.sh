@@ -1134,6 +1134,7 @@ print_next_steps() {
     if [ -n "$LOCAL_DOMAIN" ]; then
         printf "    http://%s          %s# local domain%s\n"  "$LOCAL_DOMAIN" "$C_YELLOW" "$C_RESET"
     fi
+    printf "    bin/semitexa orm:sync          %s# create the database tables%s\n" "$C_YELLOW" "$C_RESET"
     printf "    bin/semitexa list              %s# all CLI commands%s\n"           "$C_YELLOW" "$C_RESET"
     printf "    docker compose logs -f         %s# live logs%s\n"                 "$C_YELLOW" "$C_RESET"
     printf "\n"
