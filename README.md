@@ -1,93 +1,70 @@
-# About Semitexa
+<!--
+Source: semitexa/ultimate scaffold. This file is copied into new projects by `bin/semitexa init`.
+In the semitexa.dev workspace edit the root copy and run `bin/semitexa scaffold:sync-docs` to propagate;
+in a consumer project, `bin/semitexa init --only-docs` refreshes it and local edits are overwritten.
+-->
 
-> **Source: `semitexa/ultimate` scaffold.** This file is bundled with the Semitexa Ultimate package and is copied into new projects by `bin/semitexa init`. In the `semitexa.dev` monorepo edit the root copy and run `bin/semitexa scaffold:sync-docs` to propagate; in a consumer project, `bin/semitexa init --only-docs` refreshes the file and local edits will be overwritten.
+# Semitexa
 
-"Make it work, make it right, make it fast." — Kent Beck
+Semitexa is a modular PHP framework with a Swoole-first runtime: server-side rendered pages, typed request payloads and handlers, an ORM and an event bus, all running in long-lived workers inside Docker. It is for PHP developers who want an application that stays fast under load and that an AI coding agent can work on safely: the framework describes its own structure and checks every change.
 
-Semitexa isn't just a framework; it's a philosophy of efficiency.
-Engineered for the high-performance Swoole ecosystem and built with an AI-first mindset,
-it allows you to stop fighting the infrastructure and start building the future.
+This repository is **Semitexa Ultimate**, the project skeleton a new Semitexa application starts from.
 
-Simple by design. Powerful by nature.
+## Three ideas
 
-## Requirements
+- **Project Graph.** Semitexa scans your code into a graph of classes and the real edges between them (instantiates, implements, handles, serves route, and so on). You, or an agent, can ask who uses a class or what a change would affect instead of grepping: `bin/semitexa ai:review-graph:query --usages=<Class>`, `bin/semitexa ai:review-graph:impact <Class>`.
+- **ai:verify.** After an edit, `bin/semitexa ai:verify` runs the lints, tests and module-structure checks that apply to the changed files, and writes a receipt that records what it checked, so a "verified" claim can be checked rather than believed.
+- **Swoole SSR with live updates over SSE.** Pages are rendered on the server by long-lived Swoole workers. Slow parts of a page can be deferred and streamed into it over Server-Sent Events, and server-side changes can be pushed to pages that are already open the same way.
 
-- Docker and Docker Compose
-- Composer (on host for install)
+## Quickstart
 
-## Install
-
-From an empty folder (get the framework and install dependencies):
-
-```bash
-composer require semitexa/ultimate
-```
-
-From a clone or existing project (dependencies already in `composer.json`):
+Prerequisites: Docker with Compose v2, and a user in the `docker` group. You do not need PHP or Composer on the host; the runtime (PHP 8.4 + Swoole 6.x) runs inside the container.
 
 ```bash
-composer install
+curl -fsSL https://semitexa.com/install.sh | bash -s my-project
+cd my-project
+bin/semitexa server:start      # first run takes about a minute (Composer runs in the setup container); prints the URL
+# open http://localhost:9502   (the default; if 9502 is busy, a free port in 9501-9599 is picked and written to .env)
+bin/semitexa orm:sync          # create the database tables (the stack runs MySQL, Redis and NATS)
 ```
 
-Then:
+What the installer does outside the project directory: it registers the app in `~/.semitexa/router/registry/apps/` so that several Semitexa projects on one machine get different ports. A local `.test` domain is optional and off by default. If you ask for one (`--local-domain`, or answer yes to the prompt), it starts shared router containers on host port 80 and, with sudo, changes your system DNS (systemd-resolved, `/etc/resolv.conf`) or `/etc/hosts`.
 
-```bash
-cp .env.default .env
-```
+To stop the stack: `bin/semitexa server:stop`. To see every command: `bin/semitexa list`.
 
-## Run (Docker — supported way)
+## What to open next
 
-```bash
-bin/semitexa server:start
-```
+- **The Hello page.** The page at `/` of a new project is the `Hello` module in `src/modules/Hello/`. Read it as a working example of a module: a payload declares the route, a handler fills a resource, and a Twig template renders it.
+- **Your first page.** `make:page` generates the payload, handler, resource and template in one go. It is a dry run by default; add `--write` to create the files, then restart the server:
 
-To stop:
+  ```bash
+  bin/semitexa make:page --module=Hello --name=About --path=/about --method=GET --access=public
+  bin/semitexa make:page --module=Hello --name=About --path=/about --method=GET --access=public --write
+  bin/semitexa server:restart
+  ```
 
-```bash
-bin/semitexa server:stop
-```
+- **Schema and data.** `bin/semitexa orm:sync` creates and updates tables from your entities; `orm:diff`, `orm:status` and `orm:seed` sit next to it.
+- **Logs.** `bin/semitexa logs:app`.
 
-Default URL: **http://0.0.0.0:9502** (configurable via `.env` `SWOOLE_PORT`).
+## Project layout
 
-## Documentation
-
-Official framework documentation lives in `packages/semitexa-docs/`. Package-level deep reference lives in `vendor/` (or `packages/` in the monorepo).
-
-| Topic | File or folder |
-|-------|----------------|
-| **AI context for this project** | [AI_CONTEXT.md](AI_CONTEXT.md) |
-| **Framework docs hub** | [vendor/semitexa/docs/docs/README.md](vendor/semitexa/docs/docs/README.md) |
-| **Workspace / monorepo docs** — architecture, DI, PHPStan, testing, policy | [vendor/semitexa/docs/docs/workspace/README.md](vendor/semitexa/docs/docs/workspace/README.md) |
-| **Running the app** — Docker, ports, logs | [vendor/semitexa/docs/docs/en/get-started/installation.md](vendor/semitexa/docs/docs/en/get-started/installation.md) |
-| **Adding pages and routes** — modules, Request/Handler | [vendor/semitexa/docs/docs/en/routing/adding-routes.md](vendor/semitexa/docs/docs/en/routing/adding-routes.md) |
-| **Attributes** — AsPublicPayload, AsPayloadHandler, AsResource, etc. | [vendor/semitexa/docs/docs/en/reference/attributes-core.md](vendor/semitexa/docs/docs/en/reference/attributes-core.md) |
-| **Service contracts** — contracts:list, active implementation | [vendor/semitexa/docs/docs/en/di/contracts.md](vendor/semitexa/docs/docs/en/di/contracts.md) |
-
-The repository does not treat a root-level `./docs/` directory as canonical. Project-level AI guidance lives at root (`AGENTS.md`, `AI_ENTRY.md`, `AI_CONTEXT.md`, `AI_NOTES.md`); framework guidance lives in `packages/semitexa-docs/`; per-package reference lives in `packages/<package>/docs/`.
-
-## Structure
-
-- `src/modules/` – your application modules (add new pages and endpoints here). New routes only in modules.
-- `packages/semitexa-docs/` – official Semitexa framework and workspace documentation.
-- `packages/<package>/docs/` – per-package canonical reference.
-- `var/docs/` – working directory for notes, drafts, research, and remediation reports; not canonical.
-- `AI_ENTRY.md`, `AI_CONTEXT.md`, `AGENTS.md` – AI entrypoints and rules at project root; `AI_NOTES.md` is your notes (never overwritten).
+- `src/modules/<Module>/` holds your application code (namespace `App\Modules\<Module>\`). Modules are picked up automatically; routes live only in modules.
+- `AGENTS.md`, `AI_ENTRY.md`, `AI_CONTEXT.md` are the instructions for AI coding agents. `AI_NOTES.md` is yours and is never overwritten.
+- `var/docs/` is a scratch folder for notes and drafts.
+- `.env.default` is the committed baseline; put local overrides in `.env`.
 
 ## Tests
 
-Semitexa is Docker-based. **Tests must run inside the project's test container.** The only supported command is:
+Tests run inside the project's containers:
 
 ```bash
 bin/semitexa test:run
-```
-
-This wraps PHPUnit with the correct container, environment, and test-path discovery. Pass PHPUnit arguments positionally:
-
-```bash
 bin/semitexa test:run --filter MyTest
-bin/semitexa test:run packages/semitexa-core/tests/Integration
 ```
 
-Running `vendor/bin/phpunit` directly on the host is **not supported** — the environment, service dependencies, and path resolution only match when tests run through `bin/semitexa test:run`.
+Module tests live next to the module they cover, in `src/modules/<Module>/tests/`.
 
-Configuration lives in `phpunit.xml.dist`; tests live in `packages/<package>/tests/` (auto-discovered). Local module tests live next to the module they cover at `src/modules/<Module>/tests/`. There is no root-level `tests/` directory and no shared catch-all test bucket.
+## Learn more
+
+- Documentation: https://semitexa.com/docs
+- Live demo of the framework: https://framework.semitexa.com

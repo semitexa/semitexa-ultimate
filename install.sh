@@ -6,10 +6,16 @@
 #   curl -fsSL https://semitexa.com/install.sh | bash
 #   curl -fsSL https://semitexa.com/install.sh | bash -s my-project
 #   curl -fsSL https://semitexa.com/install.sh | bash -s my-project --start
+#   curl -fsSL https://semitexa.com/install.sh | bash -s my-project --local-domain
 #
 # Options:
-#   <name>    Project directory name (prompted if omitted)
-#   --start   Auto-start server after install (non-interactive)
+#   <name>          Project directory name (prompted if omitted)
+#   --start         Auto-start server after install (non-interactive)
+#   --local-domain  Also register <name>.test as a local domain (opt-in). This
+#                   starts the shared router containers on host port 80 and,
+#                   with sudo, changes system DNS (systemd-resolved /
+#                   /etc/resolv.conf) or /etc/hosts. Never done without it in a
+#                   non-interactive run; the interactive prompt defaults to No.
 #
 # Requirements: Docker with Compose v2 (no PHP, no Composer on host)
 # Compatible:   macOS, Linux, Windows (Git Bash / WSL)
@@ -137,6 +143,11 @@ SKIP_START=0
 # LOCAL_DOMAIN is set by ask_local_domain() and read by print_next_steps().
 # Same scope requirement as SKIP_START — must live outside both functions.
 LOCAL_DOMAIN=""
+# WANT_LOCAL_DOMAIN is 1 only when --local-domain was passed: the explicit
+# consent to touch system DNS / /etc/hosts and host port 80. Without it a
+# non-interactive run never registers a local domain, and the interactive
+# prompt defaults to No.
+WANT_LOCAL_DOMAIN=0
 # APP_REGISTERED is set to 1 by register_local_app() once the project has been
 # entered into the shared local app registry (~/.semitexa/router/registry/apps)
 # with a broker-allocated Swoole port written to .env. main() uses it to skip
@@ -148,7 +159,8 @@ APP_REGISTERED=0
 for _arg in "$@"; do
     case "$_arg" in
         --start) AUTO_START=1 ;;
-        --*)     warn "Unknown option: $_arg (did you mean --start?)" ;;
+        --local-domain) WANT_LOCAL_DOMAIN=1 ;;
+        --*)     warn "Unknown option: $_arg (known: --start, --local-domain)" ;;
         *)       [ -z "$PROJECT_NAME" ] && PROJECT_NAME="$_arg" ;;
     esac
 done
@@ -385,6 +397,7 @@ check_docker_permissions() {
         _rerun="curl -fsSL https://semitexa.com/install.sh | bash"
         [ -n "$PROJECT_NAME" ] && _rerun="${_rerun} -s ${PROJECT_NAME}"
         [ "$AUTO_START" -eq 1 ]  && _rerun="${_rerun} --start"
+        [ "$WANT_LOCAL_DOMAIN" -eq 1 ] && _rerun="${_rerun} --local-domain"
         info "  ${_rerun}"
     fi
     printf "\n"
@@ -980,10 +993,20 @@ register_local_domain() {
 # Sets the global LOCAL_DOMAIN variable — called directly (not in a subshell)
 # so the assignment propagates to main() and print_next_steps().
 #
-# Behaviour by environment:
-#   TTY present      — full interactive prompt (confirm + optional custom name)
-#   AUTO_START=1     — non-interactive: use generated default and register
-#   No TTY, no auto  — skip with a tip for manual registration later
+# A local domain is OPT-IN: it starts the shared router containers on host
+# port 80 and, with sudo, changes system DNS or /etc/hosts. Behaviour:
+#   TTY present            — explain the changes, then ask; default answer is No
+#                            (Yes when --local-domain was passed)
+#   No TTY or --start      — register only when --local-domain was passed,
+#                            otherwise skip with a tip for later
+explain_local_domain() {
+    printf "  A local domain (%s) is optional. Setting it up will:\n" "$1"
+    printf "    - start the shared Semitexa router containers, bound to host port 80;\n"
+    printf "    - with sudo, change your system DNS (systemd-resolved, /etc/resolv.conf)\n"
+    printf "      or add a line to /etc/hosts.\n"
+    printf "  Without it the app is still served at http://localhost:<port>.\n"
+}
+
 ask_local_domain() {
     LOCAL_DOMAIN=""
     _suggested="$(sanitize_for_domain "$PROJECT_NAME").test"
@@ -1001,28 +1024,41 @@ ask_local_domain() {
     #   1. No usable TTY  — can't ask anything
     #   2. --start passed — caller explicitly requested zero interaction
     if ! tty_available || [ "$AUTO_START" -eq 1 ]; then
-        if [ "$AUTO_START" -eq 1 ]; then
-            info "Auto mode (--start): registering default domain '${_suggested}'."
+        if [ "$WANT_LOCAL_DOMAIN" -eq 1 ]; then
+            explain_local_domain "$_suggested"
+            info "--local-domain passed: registering default domain '${_suggested}'."
             LOCAL_DOMAIN="$_suggested"
             register_local_domain "$LOCAL_DOMAIN"
         else
-            info "Local domain setup skipped (no TTY)."
+            info "Local domain skipped (opt-in; pass --local-domain to set one up)."
             info "Register later: cd ${PROJECT_NAME} && bin/semitexa local-domain:add <name>.test"
         fi
         return
     fi
 
     # ── Interactive path ──────────────────────────────────────────────────────
-    printf "\n%s  Local domain setup%s\n" "$C_BOLD" "$C_RESET"
-    printf "  Would you like to register a local .test domain for this project?\n"
-    printf "  %sDefault: %s%s%s  [Y/n]: " "$C_CYAN" "$C_BOLD" "$_suggested" "$C_RESET"
+    printf "\n%s  Local domain setup (optional)%s\n" "$C_BOLD" "$C_RESET"
+    explain_local_domain "$_suggested"
+    if [ "$WANT_LOCAL_DOMAIN" -eq 1 ]; then
+        printf "  Register a local .test domain for this project? [Y/n]: "
+    else
+        printf "  Register a local .test domain for this project? [y/N]: "
+    fi
     read -r _confirm </dev/tty
 
+    # Empty input (Enter) means No, unless --local-domain was passed.
     case "$_confirm" in
+        y|Y|yes|Yes|YES) ;;
         n|N|no|No|NO)
             info "Local domain registration skipped."
             info "Register later: cd ${PROJECT_NAME} && bin/semitexa local-domain:add <name>.test"
             return ;;
+        *)
+            if [ "$WANT_LOCAL_DOMAIN" -ne 1 ]; then
+                info "Local domain registration skipped."
+                info "Register later: cd ${PROJECT_NAME} && bin/semitexa local-domain:add <name>.test"
+                return
+            fi ;;
     esac
 
     printf "  Enter domain name (or press Enter to use %s%s%s): " \
@@ -1098,6 +1134,7 @@ print_next_steps() {
     if [ -n "$LOCAL_DOMAIN" ]; then
         printf "    http://%s          %s# local domain%s\n"  "$LOCAL_DOMAIN" "$C_YELLOW" "$C_RESET"
     fi
+    printf "    bin/semitexa orm:sync          %s# create the database tables%s\n" "$C_YELLOW" "$C_RESET"
     printf "    bin/semitexa list              %s# all CLI commands%s\n"           "$C_YELLOW" "$C_RESET"
     printf "    docker compose logs -f         %s# live logs%s\n"                 "$C_YELLOW" "$C_RESET"
     printf "\n"
@@ -1117,7 +1154,7 @@ print_next_steps() {
 #                                 BEFORE any server:start, so first start consumes the
 #                                 already-registered port instead of racing the broker
 #      check_port_conflicts     — fallback only when registration could not run
-#   6. ask_local_domain         — optional; requires bin to be executable
+#   6. ask_local_domain         — opt-in (default No); requires bin to be executable
 #   7. start_server             — only when env + permissions + port are confirmed
 #
 # RECOVERING FROM A PARTIAL FAILURE:

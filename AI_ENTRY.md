@@ -76,9 +76,15 @@ All are **dry-run by default** — pass `--write` to commit. All emit `next_comm
 
 ## Quick start
 
+New project (Docker with Compose v2 and a user in the `docker` group; no host PHP or Composer):
+
 ```bash
-cp .env.default .env
-bin/semitexa server:start   # http://0.0.0.0:9502 by default
+curl -fsSL https://semitexa.com/install.sh | bash -s my-project
+cd my-project
+bin/semitexa server:start   # prints the URL; http://localhost:9502 by default (a free port in 9501-9599 if busy, written to .env)
+bin/semitexa orm:sync       # create the database tables
 ```
 
-See `packages/semitexa-docs/README.md` for framework philosophy, `packages/semitexa-core/docs/` for framework reference.
+In an existing project, `bin/semitexa server:start` is enough: `.env.default` is the baseline and `.env` holds optional local overrides.
+
+Docs: https://semitexa.com/docs
