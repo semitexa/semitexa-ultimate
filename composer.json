@@ -16,7 +16,7 @@
     "require": {
         "php": "^8.4",
         "semitexa/core": "2026.10.08.0620",
-        "semitexa/update": "2026.10.08.0620",
+        "semitexa/update": "2026.10.09.0714",
         "semitexa/docs": "2026.10.08.0620",
         "semitexa/auth": "2026.10.08.0620",
         "semitexa/authorization": "2026.10.08.0620",
@@ -27,7 +27,7 @@
         "semitexa/cache": "2026.10.08.0620",
         "semitexa/storage": "2026.10.08.0620",
         "semitexa/ssr": "2026.10.08.0620",
-        "semitexa/dev": "2026.10.08.0620",
+        "semitexa/dev": "2026.10.09.0714",
         "semitexa/tenancy": "2026.10.08.0620",
         "semitexa/locale": "2026.10.08.0620",
         "semitexa/orm": "2026.10.08.0620",
@@ -40,9 +40,9 @@
         "semitexa/ledger": "2026.10.08.0620",
         "semitexa/project-graph": "2026.10.08.0620",
         "semitexa/theme": "2026.10.08.0620",
-        "semitexa/platform-ui": "2026.10.08.0620",
+        "semitexa/platform-ui": "2026.10.09.0714",
         "semitexa/platform-settings": "2026.10.08.0620",
-        "semitexa/crud": "2026.10.08.0620"
+        "semitexa/crud": "2026.10.09.0714"
     },
     "require-dev": {
         "phpstan/phpstan": "2.1.40",
