@@ -41,7 +41,8 @@
         "semitexa/project-graph": "2026.10.08.0620",
         "semitexa/theme": "2026.10.08.0620",
         "semitexa/platform-ui": "2026.10.08.0620",
-        "semitexa/platform-settings": "2026.10.08.0620"
+        "semitexa/platform-settings": "2026.10.08.0620",
+        "semitexa/crud": "2026.10.08.0620"
     },
     "require-dev": {
         "phpstan/phpstan": "2.1.40",
