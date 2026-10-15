@@ -1581,18 +1581,16 @@ project_ownership_reclaim() {
     _reclaim_gid="${_reclaim_ids##*:}"
     _reclaim_first="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
     [ -n "$_reclaim_first" ] || return 0
-    if [ "$_reclaim_uid" = 0 ]; then
-        # A root service user writes root files anyway — unless the engine is
-        # rootless, where container root IS the host user and cannot touch
-        # files a rootful engine left owned by host root (a switch from
-        # rootful to rootless Docker). No container can fix that; the host can.
-        if [ "$(id -u)" != 0 ] && docker_is_rootless; then
-            error "Host-root-owned project files (e.g. ${_reclaim_first#"$PROJECT_ROOT"/}) are left from a rootful Docker; under rootless Docker the app cannot write them."
-            info  "Fix on the host: sudo chown -R $(id -u):$(id -g) \"$PROJECT_ROOT\""
-            return 1
-        fi
-        return 0
+    # Under rootless Docker no container can chown a file owned by HOST root
+    # (container root is the host user), whatever service uid is configured —
+    # files a rootful engine left behind need the host. Checked first.
+    if [ "$(id -u)" != 0 ] && docker_is_rootless; then
+        error "Host-root-owned project files (e.g. ${_reclaim_first#"$PROJECT_ROOT"/}) are left from a rootful Docker; under rootless Docker the app cannot write them."
+        info  "Fix on the host: sudo chown -R $(id -u):$(id -g) \"$PROJECT_ROOT\""
+        return 1
     fi
+    # A root service user writes root files anyway.
+    [ "$_reclaim_uid" != 0 ] || return 0
     info "Handing root-owned project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
     # Build first: the image may be gone (pruned, first start after an
     # update). A separate `build`, not `run --build`, which Compose v1 lacks.
