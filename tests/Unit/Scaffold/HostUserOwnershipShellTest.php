@@ -71,7 +71,7 @@ final class HostUserOwnershipShellTest extends TestCase
 
         self::assertStringContainsString('e.g. var/cache/x', $out);
         self::assertStringContainsString(
-            'COMPOSE run --rm --build --no-deps -T --user 0:0 app find /var/www/html -xdev -user 0 -exec chown -h 2000:2001 {} +',
+            'COMPOSE run --rm --no-deps -T --user 0:0 app find /var/www/html -xdev -user 0 -exec chown -h 2000:2001 {} +',
             $out,
         );
         self::assertStringEndsWith('rc=0', $out);
@@ -141,11 +141,14 @@ final class HostUserOwnershipShellTest extends TestCase
     public function start_and_restart_reclaim_and_the_services_run_as_the_host_user(): void
     {
         $script = $this->script();
-        foreach (['cmd_server_start', 'cmd_server_restart'] as $fn) {
+        foreach (['cmd_server_start', 'cmd_server_restart', 'cmd_test_run'] as $fn) {
+            // The function's own body only: a pattern allowed to run on would
+            // find the call in the NEXT function and stay green without it.
+            self::assertSame(1, preg_match('/^' . $fn . '\(\) \{\n(.*?)^\}$/ms', $script, $body), "{$fn} must exist");
             self::assertMatchesRegularExpression(
-                '/^' . $fn . '\(\) \{\n.*?^\s+project_ownership_reclaim \|\| exit 1$.*?^\}$/ms',
-                $script,
-                "{$fn} must hand root-owned files back before the stack comes up",
+                '/^\s+project_ownership_reclaim \|\| exit 1$/m',
+                $body[1],
+                "{$fn} must hand root-owned files back before containers write",
             );
         }
 

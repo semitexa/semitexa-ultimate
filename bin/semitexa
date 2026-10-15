@@ -1594,11 +1594,12 @@ project_ownership_reclaim() {
         return 0
     fi
     info "Handing root-owned project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
-    # --build: the image may be gone (pruned, first start after an update);
-    # without it the handover fails and the non-root app meets root's files.
+    # Build first: the image may be gone (pruned, first start after an
+    # update). A separate `build`, not `run --build`, which Compose v1 lacks.
     # In a subshell: run_compose assigns _compose/_overlays, and a caller
     # (test:run, between choosing the test overlay and using it) keeps its own.
-    ( run_compose run --rm --build --no-deps -T --user 0:0 app \
+    ( run_compose build app >/dev/null 2>&1 || true
+      run_compose run --rm --no-deps -T --user 0:0 app \
         find /var/www/html -xdev -user 0 -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + ) || true
     _reclaim_left="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
     if [ -n "$_reclaim_left" ]; then
