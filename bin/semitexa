@@ -123,11 +123,12 @@ env_val() {
 # the developer cannot read. Asked once per process.
 docker_is_rootless() {
     if [ -z "${_SEMITEXA_ROOTLESS:-}" ]; then
+        # The connected engine's own mode: a rootless Podman service reports
+        # it here too, and a rootful one (the client name says nothing) does not.
         case "$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null)" in
             *rootless*) _SEMITEXA_ROOTLESS=1 ;;
             *) _SEMITEXA_ROOTLESS=0 ;;
         esac
-        command -v docker >/dev/null 2>&1 && docker --version 2>/dev/null | grep -qi podman && _SEMITEXA_ROOTLESS=1
     fi
     [ "$_SEMITEXA_ROOTLESS" = 1 ]
 }
@@ -1578,9 +1579,20 @@ project_ownership_reclaim() {
     _reclaim_ids="$(env_export_compose_context; printf '%s:%s' "$SEMITEXA_UID" "$SEMITEXA_GID")"
     _reclaim_uid="${_reclaim_ids%%:*}"
     _reclaim_gid="${_reclaim_ids##*:}"
-    [ "$_reclaim_uid" != 0 ] || return 0
     _reclaim_first="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
     [ -n "$_reclaim_first" ] || return 0
+    if [ "$_reclaim_uid" = 0 ]; then
+        # A root service user writes root files anyway — unless the engine is
+        # rootless, where container root IS the host user and cannot touch
+        # files a rootful engine left owned by host root (a switch from
+        # rootful to rootless Docker). No container can fix that; the host can.
+        if [ "$(id -u)" != 0 ] && docker_is_rootless; then
+            error "Host-root-owned project files (e.g. ${_reclaim_first#"$PROJECT_ROOT"/}) are left from a rootful Docker; under rootless Docker the app cannot write them."
+            info  "Fix on the host: sudo chown -R $(id -u):$(id -g) \"$PROJECT_ROOT\""
+            return 1
+        fi
+        return 0
+    fi
     info "Handing root-owned project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
     # --build: the image may be gone (pruned, first start after an update);
     # without it the handover fails and the non-root app meets root's files.

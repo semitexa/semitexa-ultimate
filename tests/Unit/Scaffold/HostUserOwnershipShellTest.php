@@ -108,6 +108,23 @@ final class HostUserOwnershipShellTest extends TestCase
     }
 
     #[Test]
+    public function rootless_docker_over_files_a_rootful_one_left_asks_the_host_to_fix_them(): void
+    {
+        // Switched from rootful to rootless: the service user is 0:0 (the
+        // host user), which still cannot write files owned by host root.
+        $out = $this->shell(
+            'find(){ echo "$PROJECT_ROOT/var/cache"; }; run_compose(){ echo COMPOSE; }; project_ownership_reclaim; echo rc=$?',
+            '',
+            rootless: true,
+        );
+
+        self::assertStringNotContainsString('COMPOSE', $out, 'no container can chown as host root here');
+        self::assertStringContainsString('left from a rootful Docker', $out);
+        self::assertStringContainsString('sudo chown -R', $out);
+        self::assertStringEndsWith('rc=1', $out);
+    }
+
+    #[Test]
     public function files_still_root_owned_after_the_handover_stop_the_start(): void
     {
         $out = $this->shell(
