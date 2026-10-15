@@ -42,62 +42,65 @@ final class HostUserOwnershipShellTest extends TestCase
     }
 
     #[Test]
-    public function an_explicit_id_from_env_or_the_caller_wins(): void
+    public function the_caller_wins_over_env_and_env_wins_over_the_host(): void
     {
-        self::assertSame('4242:4343', $this->shell(
+        $print = 'env_export_compose_context; printf "%s:%s" "$SEMITEXA_UID" "$SEMITEXA_GID"';
+
+        self::assertSame('4242:4343', $this->shell($print, "SEMITEXA_UID=4242\nSEMITEXA_GID=4343"));
+        self::assertSame('77:88', $this->shell('SEMITEXA_UID=77 SEMITEXA_GID=88; ' . $print, "SEMITEXA_UID=0\nSEMITEXA_GID=0"));
+    }
+
+    #[Test]
+    public function rootless_docker_keeps_the_container_root_which_is_the_host_user(): void
+    {
+        self::assertSame('0:0', $this->shell(
             'env_export_compose_context; printf "%s:%s" "$SEMITEXA_UID" "$SEMITEXA_GID"',
-            "SEMITEXA_UID=4242\nSEMITEXA_GID=4343",
-        ));
-        self::assertSame('77:88', $this->shell(
-            'SEMITEXA_UID=77 SEMITEXA_GID=88; env_export_compose_context; printf "%s:%s" "$SEMITEXA_UID" "$SEMITEXA_GID"',
             '',
+            rootless: true,
         ));
     }
 
     #[Test]
-    public function root_owned_files_are_handed_back_through_a_root_one_off(): void
+    public function root_owned_files_go_to_the_ids_the_services_run_as(): void
     {
         $out = $this->shell(
-            'id(){ case "$1" in -u|-g) echo 1000;; *) echo dev;; esac; }; '
-            . 'find(){ echo "$PROJECT_ROOT/var/cache/x"; }; '
-            . 'run_compose(){ echo "COMPOSE $*"; }; project_ownership_reclaim',
-            '',
+            'find(){ [ -f "$PROJECT_ROOT/.done" ] || echo "$PROJECT_ROOT/var/cache/x"; }; '
+            . 'run_compose(){ echo "COMPOSE $*"; : > "$PROJECT_ROOT/.done"; }; project_ownership_reclaim; echo rc=$?',
+            "SEMITEXA_UID=2000\nSEMITEXA_GID=2001",
         );
 
         self::assertStringContainsString('e.g. var/cache/x', $out);
         self::assertStringContainsString(
-            'COMPOSE run --rm --no-deps -T --user 0:0 app find /var/www/html -xdev -user 0 -exec chown -h 1000:1000 {} +',
+            'COMPOSE run --rm --build --no-deps -T --user 0:0 app find /var/www/html -xdev -user 0 -exec chown -h 2000:2001 {} +',
             $out,
         );
+        self::assertStringEndsWith('rc=0', $out);
     }
 
     #[Test]
-    public function a_clean_project_or_a_root_host_starts_no_container(): void
+    public function a_clean_project_or_a_root_service_user_starts_no_container(): void
     {
-        $clean = $this->shell(
-            'id(){ echo 1000; }; find(){ :; }; run_compose(){ echo COMPOSE; }; project_ownership_reclaim; echo rc=$?',
-            '',
-        );
-        $rootHost = $this->shell(
-            'id(){ echo 0; }; find(){ echo "$PROJECT_ROOT/x"; }; run_compose(){ echo COMPOSE; }; project_ownership_reclaim; echo rc=$?',
-            '',
+        $clean = $this->shell('find(){ :; }; run_compose(){ echo COMPOSE; }; project_ownership_reclaim; echo rc=$?', '');
+        $rootService = $this->shell(
+            'find(){ echo "$PROJECT_ROOT/x"; }; run_compose(){ echo COMPOSE; }; project_ownership_reclaim; echo rc=$?',
+            "SEMITEXA_UID=0\nSEMITEXA_GID=0",
         );
 
         self::assertSame('rc=0', $clean);
-        self::assertSame('rc=0', $rootHost);
+        self::assertSame('rc=0', $rootService);
     }
 
     #[Test]
-    public function a_failed_handover_warns_and_does_not_stop_the_start(): void
+    public function files_still_root_owned_after_the_handover_stop_the_start(): void
     {
         $out = $this->shell(
-            'id(){ case "$1" in -u|-g) echo 1000;; *) echo dev;; esac; }; find(){ echo "$PROJECT_ROOT/x"; }; '
-            . 'run_compose(){ return 1; }; project_ownership_reclaim; echo rc=$?',
-            '',
+            'find(){ echo "$PROJECT_ROOT/var/install"; }; run_compose(){ return 1; }; project_ownership_reclaim; echo rc=$?',
+            "SEMITEXA_UID=1000\nSEMITEXA_GID=1000",
         );
 
-        self::assertStringContainsString('WARN: Could not hand root-owned project files back', $out);
-        self::assertStringEndsWith('rc=0', $out);
+        self::assertStringContainsString('ERROR: Root-owned project files remain (e.g. var/install)', $out);
+        self::assertStringContainsString('SEMITEXA_UID=0 SEMITEXA_GID=0 bin/semitexa server:start', $out);
+        self::assertStringEndsWith('rc=1', $out);
     }
 
     #[Test]
@@ -106,7 +109,7 @@ final class HostUserOwnershipShellTest extends TestCase
         $script = $this->script();
         foreach (['cmd_server_start', 'cmd_server_restart'] as $fn) {
             self::assertMatchesRegularExpression(
-                '/^' . $fn . '\(\) \{\n.*?^\s+project_ownership_reclaim$.*?^\}$/ms',
+                '/^' . $fn . '\(\) \{\n.*?^\s+project_ownership_reclaim \|\| exit 1$.*?^\}$/ms',
                 $script,
                 "{$fn} must hand root-owned files back before the stack comes up",
             );
@@ -128,19 +131,20 @@ final class HostUserOwnershipShellTest extends TestCase
         return (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
     }
 
-    private function shell(string $call, string $merged): string
+    private function shell(string $call, string $merged, bool $rootless = false): string
     {
-        preg_match_all('/^(env_export_compose_context|project_ownership_reclaim)\(\) \{\n.*?^\}$/ms', $this->script(), $m);
-        self::assertCount(2, $m[0], 'both helpers must still exist in bin/semitexa');
+        preg_match_all('/^(docker_is_rootless|env_export_compose_context|project_ownership_reclaim)\(\) \{\n.*?^\}$/ms', $this->script(), $m);
+        self::assertCount(3, $m[0], 'the three helpers must still exist in bin/semitexa');
 
-        $sh = 'warn(){ printf "WARN: %s\n" "$*"; }; info(){ printf "%s\n" "$*"; }; '
-            . 'env_merged_lines(){ [ -n "$MERGED" ] && printf "%s\n" "$MERGED"; }' . "\n"
+        $sh = 'warn(){ printf "WARN: %s\n" "$*"; }; error(){ printf "ERROR: %s\n" "$*"; }; info(){ printf "%s\n" "$*"; }; '
+            . 'env_merged_lines(){ [ -n "$MERGED" ] && printf "%b\n" "$MERGED"; }' . "\n"
             . implode("\n", $m[0]) . "\n" . $call;
 
         return trim((string) shell_exec(sprintf(
-            'env -u SEMITEXA_UID -u SEMITEXA_GID PROJECT_ROOT=%s MERGED=%s sh -c %s 2>&1',
+            'env -u SEMITEXA_UID -u SEMITEXA_GID PROJECT_ROOT=%s MERGED=%s _SEMITEXA_ROOTLESS=%d sh -c %s 2>&1',
             escapeshellarg($this->root),
             escapeshellarg($merged),
+            $rootless ? 1 : 0,
             escapeshellarg($sh),
         )));
     }

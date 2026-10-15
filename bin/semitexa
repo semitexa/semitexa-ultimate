@@ -118,32 +118,61 @@ env_val() {
     printf '%s' "$_default"
 }
 
+# Rootless Docker (or Podman) maps the container's root to the host user, so
+# there the right service user is 0:0: any other uid lands on a subordinate id
+# the developer cannot read. Asked once per process.
+docker_is_rootless() {
+    if [ -z "${_SEMITEXA_ROOTLESS:-}" ]; then
+        case "$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null)" in
+            *rootless*) _SEMITEXA_ROOTLESS=1 ;;
+            *) _SEMITEXA_ROOTLESS=0 ;;
+        esac
+        command -v docker >/dev/null 2>&1 && docker --version 2>/dev/null | grep -qi podman && _SEMITEXA_ROOTLESS=1
+    fi
+    [ "$_SEMITEXA_ROOTLESS" = 1 ]
+}
+
 env_export_compose_context() {
     # docker-compose.yml runs the app and scheduler as SEMITEXA_UID:SEMITEXA_GID,
     # so whatever the server or a CLI command (`compose exec` takes the
     # service's user) writes into the bind-mounted project belongs to the
-    # developer instead of root. A value set in .env or the caller's own
-    # environment wins; running as root keeps root.
-    export SEMITEXA_UID="${SEMITEXA_UID:-$(id -u)}"
-    export SEMITEXA_GID="${SEMITEXA_GID:-$(id -g)}"
+    # developer instead of root. Precedence: the caller's environment, then
+    # .env, then the host user (0:0 under rootless Docker, where that IS the
+    # host user). Running as root keeps root.
+    _caller_uid="${SEMITEXA_UID:-}"
+    _caller_gid="${SEMITEXA_GID:-}"
     _merged="$(env_merged_lines || true)"
-    [ -n "$_merged" ] || return 0
 
-    _old_ifs=$IFS
-    IFS='
+    if [ -n "$_merged" ]; then
+        _old_ifs=$IFS
+        IFS='
 '
-    for _line in $_merged; do
-        [ -n "$_line" ] || continue
-        _key="$(printf '%s' "$_line" | sed 's/[[:space:]]*=.*$//' | tr -d '[:space:]')"
-        _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
-        case "$_key" in
-            ''|*[!A-Za-z0-9_]*)
-                continue
-                ;;
-        esac
-        export "$_key=$_val"
-    done
-    IFS=$_old_ifs
+        for _line in $_merged; do
+            [ -n "$_line" ] || continue
+            _key="$(printf '%s' "$_line" | sed 's/[[:space:]]*=.*$//' | tr -d '[:space:]')"
+            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+            case "$_key" in
+                ''|*[!A-Za-z0-9_]*)
+                    continue
+                    ;;
+            esac
+            export "$_key=$_val"
+        done
+        IFS=$_old_ifs
+    fi
+
+    [ -z "$_caller_uid" ] || SEMITEXA_UID="$_caller_uid"
+    [ -z "$_caller_gid" ] || SEMITEXA_GID="$_caller_gid"
+    if [ -z "${SEMITEXA_UID:-}" ] || [ -z "${SEMITEXA_GID:-}" ]; then
+        if docker_is_rootless; then
+            _default_uid=0; _default_gid=0
+        else
+            _default_uid="$(id -u)"; _default_gid="$(id -g)"
+        fi
+        SEMITEXA_UID="${SEMITEXA_UID:-$_default_uid}"
+        SEMITEXA_GID="${SEMITEXA_GID:-$_default_gid}"
+    fi
+    export SEMITEXA_UID SEMITEXA_GID
 }
 
 # ── Docker Compose helpers ──────────────────────────────────────────────────
@@ -1545,16 +1574,24 @@ server_start_log_signals_port_conflict() {
 # needed. A clean project pays one host-side find; a root host has nothing to
 # reclaim. Never fatal: the stack still starts, and the warning says why.
 project_ownership_reclaim() {
-    _reclaim_uid="$(id -u)"
-    _reclaim_gid="$(id -g)"
-    [ "$_reclaim_uid" -ne 0 ] || return 0
+    # The ids the services will actually run as, not merely the caller's.
+    _reclaim_ids="$(env_export_compose_context; printf '%s:%s' "$SEMITEXA_UID" "$SEMITEXA_GID")"
+    _reclaim_uid="${_reclaim_ids%%:*}"
+    _reclaim_gid="${_reclaim_ids##*:}"
+    [ "$_reclaim_uid" != 0 ] || return 0
     _reclaim_first="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
     [ -n "$_reclaim_first" ] || return 0
-    info "Handing root-owned project files back to $(id -un 2>/dev/null || printf '%s' "$_reclaim_uid") ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
-    if ! run_compose run --rm --no-deps -T --user 0:0 app \
-        find /var/www/html -xdev -user 0 -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + ; then
-        warn "Could not hand root-owned project files back; commands may fail with 'Permission denied'."
-        warn "Fix by hand: docker run --rm -v \"$PROJECT_ROOT\":/w alpine:3 chown -R $_reclaim_uid:$_reclaim_gid /w"
+    info "Handing root-owned project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
+    # --build: the image may be gone (pruned, first start after an update);
+    # without it the handover fails and the non-root app meets root's files.
+    run_compose run --rm --build --no-deps -T --user 0:0 app \
+        find /var/www/html -xdev -user 0 -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + || true
+    _reclaim_left="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
+    if [ -n "$_reclaim_left" ]; then
+        error "Root-owned project files remain (e.g. ${_reclaim_left#"$PROJECT_ROOT"/}); the app, running as $_reclaim_uid:$_reclaim_gid, could not write them."
+        info  "Fix by hand: docker run --rm -v \"$PROJECT_ROOT\":/w alpine:3 chown -R $_reclaim_uid:$_reclaim_gid /w"
+        info  "Or keep the old root app for now: SEMITEXA_UID=0 SEMITEXA_GID=0 bin/semitexa server:start"
+        return 1
     fi
     return 0
 }
@@ -1746,7 +1783,7 @@ cmd_server_start() {
         fi
     fi
 
-    project_ownership_reclaim
+    project_ownership_reclaim || exit 1
     info "Starting containers..."
     server_start_run_with_port_conflict_fallback || exit $?
 
@@ -1847,7 +1884,7 @@ cmd_server_restart() {
     _compose="$(compose_bin)"
     stack_warn_live_agents restart "$_service"
     stack_event restart "$_service"
-    project_ownership_reclaim
+    project_ownership_reclaim || exit 1
 
     # Build BEFORE anything is taken down. `up -d --build` did both in one
     # step, so a build that could not reach Docker Hub (a DNS blip, a laptop
