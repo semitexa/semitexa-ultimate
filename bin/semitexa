@@ -1580,6 +1580,13 @@ project_ownership_reclaim() {
     _reclaim_uid="${_reclaim_ids%%:*}"
     _reclaim_gid="${_reclaim_ids##*:}"
 
+    # Under rootless Docker only container root is the host user; any other
+    # uid maps to a subordinate id that cannot write the developer's files.
+    if [ "$_reclaim_uid" != 0 ] && [ "$(id -u)" != 0 ] && docker_is_rootless; then
+        error "SEMITEXA_UID=$_reclaim_uid under rootless Docker: the app would run as a subordinate id that cannot write this project."
+        info  "Unset SEMITEXA_UID/SEMITEXA_GID (in .env or the environment); under rootless Docker the app runs as 0:0, which is you."
+        return 1
+    fi
     # Under rootless Docker no container can chown a file owned by HOST root
     # (container root is the host user), whatever service uid is configured —
     # files a rootful engine left behind need the host. Checked first.

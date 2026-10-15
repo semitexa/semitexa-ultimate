@@ -129,7 +129,7 @@ final class HostUserOwnershipShellTest extends TestCase
     {
         // Switched from rootful to rootless: the service user is 0:0 (the
         // host user), which still cannot write files owned by host root.
-        foreach (['', "SEMITEXA_UID=1000\nSEMITEXA_GID=1000"] as $configured) {
+        foreach ([''] as $configured) {
             // A non-root host whatever runs PHPUnit, and with or without an
             // explicit service uid: no container can chown host-root files.
             $out = $this->shell(
@@ -144,6 +144,23 @@ final class HostUserOwnershipShellTest extends TestCase
             self::assertStringContainsString('sudo chown -R 1000:1000', $out);
             self::assertStringEndsWith('rc=1', $out);
         }
+    }
+
+    #[Test]
+    public function a_nonzero_service_uid_under_rootless_docker_is_refused(): void
+    {
+        // Rootless: only container root is the host user; 1000 would map to a
+        // subordinate id that cannot write the project, clean project or not.
+        $out = $this->shell(
+            'id(){ case "$1" in -u|-g) echo 1000;; *) echo dev;; esac; }; '
+            . 'find(){ :; }; run_compose(){ echo COMPOSE; }; project_ownership_reclaim; echo rc=$?',
+            "SEMITEXA_UID=1000\nSEMITEXA_GID=1000",
+            rootless: true,
+        );
+
+        self::assertStringContainsString('SEMITEXA_UID=1000 under rootless Docker', $out);
+        self::assertStringNotContainsString('COMPOSE', $out);
+        self::assertStringEndsWith('rc=1', $out);
     }
 
     #[Test]
