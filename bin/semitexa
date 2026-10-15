@@ -119,6 +119,13 @@ env_val() {
 }
 
 env_export_compose_context() {
+    # docker-compose.yml runs the app and scheduler as SEMITEXA_UID:SEMITEXA_GID,
+    # so whatever the server or a CLI command (`compose exec` takes the
+    # service's user) writes into the bind-mounted project belongs to the
+    # developer instead of root. A value set in .env or the caller's own
+    # environment wins; running as root keeps root.
+    export SEMITEXA_UID="${SEMITEXA_UID:-$(id -u)}"
+    export SEMITEXA_GID="${SEMITEXA_GID:-$(id -g)}"
     _merged="$(env_merged_lines || true)"
     [ -n "$_merged" ] || return 0
 
@@ -1530,6 +1537,28 @@ server_start_log_signals_port_conflict() {
     grep -qE "(:|\.)$_port([^0-9]|\$)" "$_file"
 }
 
+# Before the app ran as the host user, the server and every `compose exec`
+# were root, and what they wrote into the project (var/, generated docs, the
+# quality baseline, caches) stayed root-owned: the developer could not edit
+# it, and the server, now no longer root, could not rewrite it. Hand every
+# root-owned file back once, through a root one-off container, so no sudo is
+# needed. A clean project pays one host-side find; a root host has nothing to
+# reclaim. Never fatal: the stack still starts, and the warning says why.
+project_ownership_reclaim() {
+    _reclaim_uid="$(id -u)"
+    _reclaim_gid="$(id -g)"
+    [ "$_reclaim_uid" -ne 0 ] || return 0
+    _reclaim_first="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
+    [ -n "$_reclaim_first" ] || return 0
+    info "Handing root-owned project files back to $(id -un 2>/dev/null || printf '%s' "$_reclaim_uid") ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
+    if ! run_compose run --rm --no-deps -T --user 0:0 app \
+        find /var/www/html -xdev -user 0 -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + ; then
+        warn "Could not hand root-owned project files back; commands may fail with 'Permission denied'."
+        warn "Fix by hand: docker run --rm -v \"$PROJECT_ROOT\":/w alpine:3 chown -R $_reclaim_uid:$_reclaim_gid /w"
+    fi
+    return 0
+}
+
 # Wraps `run_compose up -d --build`, capturing exit + log so we can offer to
 # auto-recover from a Swoole port conflict that slipped past pre-start
 # reconcile (e.g., another process bound the broker-assigned port in the gap).
@@ -1717,6 +1746,7 @@ cmd_server_start() {
         fi
     fi
 
+    project_ownership_reclaim
     info "Starting containers..."
     server_start_run_with_port_conflict_fallback || exit $?
 
@@ -1817,6 +1847,7 @@ cmd_server_restart() {
     _compose="$(compose_bin)"
     stack_warn_live_agents restart "$_service"
     stack_event restart "$_service"
+    project_ownership_reclaim
 
     # Build BEFORE anything is taken down. `up -d --build` did both in one
     # step, so a build that could not reach Docker Hub (a DNS blip, a laptop
@@ -1835,6 +1866,9 @@ cmd_server_restart() {
         $_compose $_overlays down --remove-orphans
         run_compose up -d --no-build
     fi
+    # Again after the swap: the old root container could still write a file
+    # between the first pass and its own stop.
+    project_ownership_reclaim
 
     success "Semitexa environment restarted!"
     printf "\n"
