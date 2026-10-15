@@ -151,6 +151,13 @@ final class HostUserOwnershipShellTest extends TestCase
                 "{$fn} must hand root-owned files back before containers write",
             );
         }
+        // test:run: before the PHPUnit phase, not only before E2E.
+        preg_match('/^cmd_test_run\(\) \{\n(.*?)^\}$/ms', $script, $testRun);
+        $reclaimAt = strpos($testRun[1], 'project_ownership_reclaim');
+        $phpunitAt = strpos($testRun[1], 'run --rm phpunit');
+        self::assertIsInt($reclaimAt);
+        self::assertIsInt($phpunitAt, 'test:run must still run the phpunit service');
+        self::assertLessThan($phpunitAt, $reclaimAt, 'test:run must reclaim before the PHPUnit phase writes');
 
         $compose = (string) file_get_contents(dirname(__DIR__, 3) . '/docker-compose.yml');
         foreach (['app', 'scheduler', 'cli'] as $service) {

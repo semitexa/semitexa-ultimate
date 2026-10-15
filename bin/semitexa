@@ -2311,6 +2311,11 @@ cmd_test_run() {
         exit 1
     fi
 
+    # Before any phase writes: the PHPUnit container (schema sync, the
+    # bootstrap marker) runs as a user and would die on a file an earlier
+    # root run left behind, long before the E2E-phase pass below.
+    project_ownership_reclaim || exit 1
+
     _overlays="$(compose_args)"
     if [ -z "$_overlays" ]; then
         _overlays="-f docker-compose.yml"
