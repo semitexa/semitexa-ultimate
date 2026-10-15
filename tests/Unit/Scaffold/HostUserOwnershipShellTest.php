@@ -78,6 +78,23 @@ final class HostUserOwnershipShellTest extends TestCase
     }
 
     #[Test]
+    public function the_handover_leaves_the_callers_compose_overlays_alone(): void
+    {
+        // test:run picks the test overlay into _overlays, reclaims, then runs
+        // e2e-runner with it; run_compose assigning _overlays inside the
+        // reclaim made that "no such service: e2e-runner".
+        $out = $this->shell(
+            '_overlays="-f docker-compose.test.yml"; '
+            . 'find(){ [ -f "$PROJECT_ROOT/.done" ] || echo "$PROJECT_ROOT/x"; }; '
+            . 'run_compose(){ _overlays="-f docker-compose.yml"; : > "$PROJECT_ROOT/.done"; }; '
+            . 'project_ownership_reclaim; printf "overlays=%s" "$_overlays"',
+            "SEMITEXA_UID=1000\nSEMITEXA_GID=1000",
+        );
+
+        self::assertStringEndsWith('overlays=-f docker-compose.test.yml', $out);
+    }
+
+    #[Test]
     public function a_clean_project_or_a_root_service_user_starts_no_container(): void
     {
         $clean = $this->shell('find(){ :; }; run_compose(){ echo COMPOSE; }; project_ownership_reclaim; echo rc=$?', '');

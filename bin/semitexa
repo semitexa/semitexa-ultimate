@@ -1584,8 +1584,10 @@ project_ownership_reclaim() {
     info "Handing root-owned project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
     # --build: the image may be gone (pruned, first start after an update);
     # without it the handover fails and the non-root app meets root's files.
-    run_compose run --rm --build --no-deps -T --user 0:0 app \
-        find /var/www/html -xdev -user 0 -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + || true
+    # In a subshell: run_compose assigns _compose/_overlays, and a caller
+    # (test:run, between choosing the test overlay and using it) keeps its own.
+    ( run_compose run --rm --build --no-deps -T --user 0:0 app \
+        find /var/www/html -xdev -user 0 -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + ) || true
     _reclaim_left="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
     if [ -n "$_reclaim_left" ]; then
         error "Root-owned project files remain (e.g. ${_reclaim_left#"$PROJECT_ROOT"/}); the app, running as $_reclaim_uid:$_reclaim_gid, could not write them."
@@ -2691,6 +2693,9 @@ ${_url_clean}/tests"
     # installed. Passing the discovered dirs as path filters keeps the two
     # in agreement.
     _e2e_spec_args="$(printf '%s' "$_e2e_dirs" | tr '\n' ' ')"
+    # The runner writes test-results as the host user now; a directory an
+    # earlier root run left behind would refuse it (EACCES on .last-run.json).
+    project_ownership_reclaim || exit 1
     _e2e_rc=0
     (
         env_export_compose_context
