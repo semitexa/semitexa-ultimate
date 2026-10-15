@@ -70,11 +70,28 @@ final class HostUserOwnershipShellTest extends TestCase
         );
 
         self::assertStringContainsString('e.g. var/cache/x', $out);
+        // A host user other than 1000 also gets the files of uid 1000, the
+        // image's own user, which every container ran as before.
         self::assertStringContainsString(
-            'COMPOSE run --rm --no-deps -T --user 0:0 app find /var/www/html -xdev -user 0 -exec chown -h 2000:2001 {} +',
+            'COMPOSE run --rm --no-deps -T --user 0:0 app find /var/www/html -xdev ( -user 0 -o -user 1000 ) -exec chown -h 2000:2001 {} +',
             $out,
         );
         self::assertStringEndsWith('rc=0', $out);
+    }
+
+    #[Test]
+    public function the_image_user_itself_only_takes_roots_files(): void
+    {
+        $out = $this->shell(
+            'find(){ [ -f "$PROJECT_ROOT/.done" ] || echo "$PROJECT_ROOT/var/cache/x"; }; '
+            . 'run_compose(){ echo "COMPOSE $*"; : > "$PROJECT_ROOT/.done"; }; project_ownership_reclaim; echo rc=$?',
+            "SEMITEXA_UID=1000\nSEMITEXA_GID=1000",
+        );
+
+        self::assertStringContainsString(
+            'COMPOSE run --rm --no-deps -T --user 0:0 app find /var/www/html -xdev -user 0 -exec chown -h 1000:1000 {} +',
+            $out,
+        );
     }
 
     #[Test]
@@ -130,16 +147,19 @@ final class HostUserOwnershipShellTest extends TestCase
     }
 
     #[Test]
-    public function files_still_root_owned_after_the_handover_stop_the_start(): void
+    public function files_left_after_the_handover_warn_with_the_cause_and_do_not_stop_the_start(): void
     {
+        // A container still running from before a restart can write a file
+        // between the handover and its own stop: a warning, not a refusal.
         $out = $this->shell(
-            'find(){ echo "$PROJECT_ROOT/var/install"; }; run_compose(){ return 1; }; project_ownership_reclaim; echo rc=$?',
+            'find(){ echo "$PROJECT_ROOT/var/install"; }; run_compose(){ echo "compose said no" >&2; return 1; }; project_ownership_reclaim; echo rc=$?',
             "SEMITEXA_UID=1000\nSEMITEXA_GID=1000",
         );
 
-        self::assertStringContainsString('ERROR: Root-owned project files remain (e.g. var/install)', $out);
-        self::assertStringContainsString('SEMITEXA_UID=0 SEMITEXA_GID=0 bin/semitexa server:start', $out);
-        self::assertStringEndsWith('rc=1', $out);
+        self::assertStringContainsString('compose said no', $out, 'the real cause stays on screen');
+        self::assertStringContainsString('WARN: The ownership handover container failed', $out);
+        self::assertStringContainsString('WARN: Project files the app (1000:1000) cannot write remain, e.g. var/install', $out);
+        self::assertStringEndsWith('rc=0', $out);
     }
 
     #[Test]
@@ -167,7 +187,7 @@ final class HostUserOwnershipShellTest extends TestCase
         $compose = (string) file_get_contents(dirname(__DIR__, 3) . '/docker-compose.yml');
         foreach (['app', 'scheduler', 'cli'] as $service) {
             self::assertMatchesRegularExpression(
-                '/^  ' . $service . ':\n    build: \.\n(?:    #.*\n)*    user: "\$\{SEMITEXA_UID:-0\}:\$\{SEMITEXA_GID:-0\}"$/m',
+                '/^  ' . $service . ':\n    build: \.\n(?:    #.*\n)*    user: "\$\{SEMITEXA_UID:-1000\}:\$\{SEMITEXA_GID:-1000\}"\n    environment:\n      HOME: \/var\/www\/html$/m',
                 $compose,
                 "service {$service} must run as the host user",
             );

@@ -8,9 +8,12 @@ services:
   app:
     build: .
     # The host user (exported by bin/semitexa), so files the server writes into
-    # the bind-mounted project are the developer's, not root's. A bare
-    # `docker compose up` without bin/semitexa keeps the old root default.
-    user: "${SEMITEXA_UID:-0}:${SEMITEXA_GID:-0}"
+    # the bind-mounted project are the developer's whatever their uid. A bare
+    # `docker compose up` keeps the image's own user (1000). HOME: a uid with
+    # no account in the image would otherwise get '/', which it cannot write.
+    user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
+    environment:
+      HOME: /var/www/html
     env_file:
       - path: .env.default
         required: true
@@ -44,7 +47,9 @@ services:
 
   scheduler:
     build: .
-    user: "${SEMITEXA_UID:-0}:${SEMITEXA_GID:-0}"
+    user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
+    environment:
+      HOME: /var/www/html
     env_file:
       - path: .env.default
         required: true
@@ -189,7 +194,9 @@ services:
 
   cli:
     build: .
-    user: "${SEMITEXA_UID:-0}:${SEMITEXA_GID:-0}"
+    user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
+    environment:
+      HOME: /var/www/html
     env_file:
       - path: .env.default
         required: true

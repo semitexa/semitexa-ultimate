@@ -1579,32 +1579,53 @@ project_ownership_reclaim() {
     _reclaim_ids="$(env_export_compose_context; printf '%s:%s' "$SEMITEXA_UID" "$SEMITEXA_GID")"
     _reclaim_uid="${_reclaim_ids%%:*}"
     _reclaim_gid="${_reclaim_ids##*:}"
-    _reclaim_first="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
-    [ -n "$_reclaim_first" ] || return 0
+
     # Under rootless Docker no container can chown a file owned by HOST root
     # (container root is the host user), whatever service uid is configured —
     # files a rootful engine left behind need the host. Checked first.
-    if [ "$(id -u)" != 0 ] && docker_is_rootless; then
-        error "Host-root-owned project files (e.g. ${_reclaim_first#"$PROJECT_ROOT"/}) are left from a rootful Docker; under rootless Docker the app cannot write them."
+    _reclaim_root="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
+    if [ -n "$_reclaim_root" ] && [ "$(id -u)" != 0 ] && docker_is_rootless; then
+        error "Host-root-owned project files (e.g. ${_reclaim_root#"$PROJECT_ROOT"/}) are left from a rootful Docker; under rootless Docker the app cannot write them."
         info  "Fix on the host: sudo chown -R $(id -u):$(id -g) \"$PROJECT_ROOT\""
         return 1
     fi
     # A root service user writes root files anyway.
     [ "$_reclaim_uid" != 0 ] || return 0
-    info "Handing root-owned project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
+
+    # Whose files the service user cannot write: root's (a root container or
+    # exec), and uid 1000's — the image's own user, which every container ran
+    # as before the host uid was passed — when the host user is someone else.
+    if [ "$_reclaim_uid" = 1000 ]; then
+        _reclaim_first="$_reclaim_root"
+        set -- -user 0
+    else
+        _reclaim_first="$(find "$PROJECT_ROOT" -xdev \( -user 0 -o -user 1000 \) -print 2>/dev/null | head -n 1)"
+        set -- \( -user 0 -o -user 1000 \)
+    fi
+    [ -n "$_reclaim_first" ] || return 0
+
+    info "Handing project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
     # Build first: the image may be gone (pruned, first start after an
     # update). A separate `build`, not `run --build`, which Compose v1 lacks.
-    # In a subshell: run_compose assigns _compose/_overlays, and a caller
-    # (test:run, between choosing the test overlay and using it) keeps its own.
-    ( run_compose build app >/dev/null 2>&1 || true
+    # Errors stay on screen: a hidden one left only the later "files remain"
+    # line, which names the wrong cause. In a subshell: run_compose assigns
+    # _compose/_overlays, and a caller (test:run, between choosing the test
+    # overlay and using it) keeps its own.
+    ( _reclaim_build="$(run_compose build app 2>&1)" || {
+          warn "Could not build the app image for the ownership handover; trying the existing one:"
+          printf '%s\n' "$_reclaim_build" | tail -n 5 >&2
+      }
       run_compose run --rm --no-deps -T --user 0:0 app \
-        find /var/www/html -xdev -user 0 -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + ) || true
-    _reclaim_left="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
+        find /var/www/html -xdev "$@" -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + ) \
+        || warn "The ownership handover container failed (see above)."
+
+    # A warning, not a refusal: a container still running from before the
+    # restart may write a file between the handover and its own stop, and the
+    # next start or restart hands that one over too.
+    _reclaim_left="$(find "$PROJECT_ROOT" -xdev "$@" -print 2>/dev/null | head -n 1)"
     if [ -n "$_reclaim_left" ]; then
-        error "Root-owned project files remain (e.g. ${_reclaim_left#"$PROJECT_ROOT"/}); the app, running as $_reclaim_uid:$_reclaim_gid, could not write them."
-        info  "Fix by hand: docker run --rm -v \"$PROJECT_ROOT\":/w alpine:3 chown -R $_reclaim_uid:$_reclaim_gid /w"
-        info  "Or keep the old root app for now: SEMITEXA_UID=0 SEMITEXA_GID=0 bin/semitexa server:start"
-        return 1
+        warn "Project files the app ($_reclaim_uid:$_reclaim_gid) cannot write remain, e.g. ${_reclaim_left#"$PROJECT_ROOT"/}."
+        warn "Fix by hand: docker run --rm -v \"$PROJECT_ROOT\":/w alpine:3 chown -R $_reclaim_uid:$_reclaim_gid /w"
     fi
     return 0
 }
