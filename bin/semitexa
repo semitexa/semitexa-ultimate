@@ -118,25 +118,62 @@ env_val() {
     printf '%s' "$_default"
 }
 
-env_export_compose_context() {
-    _merged="$(env_merged_lines || true)"
-    [ -n "$_merged" ] || return 0
-
-    _old_ifs=$IFS
-    IFS='
-'
-    for _line in $_merged; do
-        [ -n "$_line" ] || continue
-        _key="$(printf '%s' "$_line" | sed 's/[[:space:]]*=.*$//' | tr -d '[:space:]')"
-        _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
-        case "$_key" in
-            ''|*[!A-Za-z0-9_]*)
-                continue
-                ;;
+# Rootless Docker (or Podman) maps the container's root to the host user, so
+# there the right service user is 0:0: any other uid lands on a subordinate id
+# the developer cannot read. Asked once per process.
+docker_is_rootless() {
+    if [ -z "${_SEMITEXA_ROOTLESS:-}" ]; then
+        # The connected engine's own mode: a rootless Podman service reports
+        # it here too, and a rootful one (the client name says nothing) does not.
+        case "$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null)" in
+            *rootless*) _SEMITEXA_ROOTLESS=1 ;;
+            *) _SEMITEXA_ROOTLESS=0 ;;
         esac
-        export "$_key=$_val"
-    done
-    IFS=$_old_ifs
+    fi
+    [ "$_SEMITEXA_ROOTLESS" = 1 ]
+}
+
+env_export_compose_context() {
+    # docker-compose.yml runs the app and scheduler as SEMITEXA_UID:SEMITEXA_GID,
+    # so whatever the server or a CLI command (`compose exec` takes the
+    # service's user) writes into the bind-mounted project belongs to the
+    # developer instead of root. Precedence: the caller's environment, then
+    # .env, then the host user (0:0 under rootless Docker, where that IS the
+    # host user). Running as root keeps root.
+    _caller_uid="${SEMITEXA_UID:-}"
+    _caller_gid="${SEMITEXA_GID:-}"
+    _merged="$(env_merged_lines || true)"
+
+    if [ -n "$_merged" ]; then
+        _old_ifs=$IFS
+        IFS='
+'
+        for _line in $_merged; do
+            [ -n "$_line" ] || continue
+            _key="$(printf '%s' "$_line" | sed 's/[[:space:]]*=.*$//' | tr -d '[:space:]')"
+            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+            case "$_key" in
+                ''|*[!A-Za-z0-9_]*)
+                    continue
+                    ;;
+            esac
+            export "$_key=$_val"
+        done
+        IFS=$_old_ifs
+    fi
+
+    [ -z "$_caller_uid" ] || SEMITEXA_UID="$_caller_uid"
+    [ -z "$_caller_gid" ] || SEMITEXA_GID="$_caller_gid"
+    if [ -z "${SEMITEXA_UID:-}" ] || [ -z "${SEMITEXA_GID:-}" ]; then
+        if docker_is_rootless; then
+            _default_uid=0; _default_gid=0
+        else
+            _default_uid="$(id -u)"; _default_gid="$(id -g)"
+        fi
+        SEMITEXA_UID="${SEMITEXA_UID:-$_default_uid}"
+        SEMITEXA_GID="${SEMITEXA_GID:-$_default_gid}"
+    fi
+    export SEMITEXA_UID SEMITEXA_GID
 }
 
 # ── Docker Compose helpers ──────────────────────────────────────────────────
@@ -1530,6 +1567,76 @@ server_start_log_signals_port_conflict() {
     grep -qE "(:|\.)$_port([^0-9]|\$)" "$_file"
 }
 
+# Before the app ran as the host user, the server and every `compose exec`
+# were root, and what they wrote into the project (var/, generated docs, the
+# quality baseline, caches) stayed root-owned: the developer could not edit
+# it, and the server, now no longer root, could not rewrite it. Hand every
+# root-owned file back once, through a root one-off container, so no sudo is
+# needed. A clean project pays one host-side find; a root host has nothing to
+# reclaim. Never fatal: the stack still starts, and the warning says why.
+project_ownership_reclaim() {
+    # The ids the services will actually run as, not merely the caller's.
+    _reclaim_ids="$(env_export_compose_context; printf '%s:%s' "$SEMITEXA_UID" "$SEMITEXA_GID")"
+    _reclaim_uid="${_reclaim_ids%%:*}"
+    _reclaim_gid="${_reclaim_ids##*:}"
+
+    # Under rootless Docker only container root is the host user; any other
+    # uid maps to a subordinate id that cannot write the developer's files.
+    if [ "$_reclaim_uid" != 0 ] && [ "$(id -u)" != 0 ] && docker_is_rootless; then
+        error "SEMITEXA_UID=$_reclaim_uid under rootless Docker: the app would run as a subordinate id that cannot write this project."
+        info  "Unset SEMITEXA_UID/SEMITEXA_GID (in .env or the environment); under rootless Docker the app runs as 0:0, which is you."
+        return 1
+    fi
+    # Under rootless Docker no container can chown a file owned by HOST root
+    # (container root is the host user), whatever service uid is configured —
+    # files a rootful engine left behind need the host. Checked first.
+    _reclaim_root="$(find "$PROJECT_ROOT" -xdev -user 0 -print 2>/dev/null | head -n 1)"
+    if [ -n "$_reclaim_root" ] && [ "$(id -u)" != 0 ] && docker_is_rootless; then
+        error "Host-root-owned project files (e.g. ${_reclaim_root#"$PROJECT_ROOT"/}) are left from a rootful Docker; under rootless Docker the app cannot write them."
+        info  "Fix on the host: sudo chown -R $(id -u):$(id -g) \"$PROJECT_ROOT\""
+        return 1
+    fi
+    # A root service user writes root files anyway.
+    [ "$_reclaim_uid" != 0 ] || return 0
+
+    # Whose files the service user cannot write: root's (a root container or
+    # exec), and uid 1000's — the image's own user, which every container ran
+    # as before the host uid was passed — when the host user is someone else.
+    if [ "$_reclaim_uid" = 1000 ]; then
+        _reclaim_first="$_reclaim_root"
+        set -- -user 0
+    else
+        _reclaim_first="$(find "$PROJECT_ROOT" -xdev \( -user 0 -o -user 1000 \) -print 2>/dev/null | head -n 1)"
+        set -- \( -user 0 -o -user 1000 \)
+    fi
+    [ -n "$_reclaim_first" ] || return 0
+
+    info "Handing project files to the app user ($_reclaim_uid:$_reclaim_gid), e.g. ${_reclaim_first#"$PROJECT_ROOT"/}"
+    # Build first: the image may be gone (pruned, first start after an
+    # update). A separate `build`, not `run --build`, which Compose v1 lacks.
+    # Errors stay on screen: a hidden one left only the later "files remain"
+    # line, which names the wrong cause. In a subshell: run_compose assigns
+    # _compose/_overlays, and a caller (test:run, between choosing the test
+    # overlay and using it) keeps its own.
+    ( _reclaim_build="$(run_compose build app 2>&1)" || {
+          warn "Could not build the app image for the ownership handover; trying the existing one:"
+          printf '%s\n' "$_reclaim_build" | tail -n 5 >&2
+      }
+      run_compose run --rm --no-deps -T --user 0:0 app \
+        find /var/www/html -xdev "$@" -exec chown -h "$_reclaim_uid:$_reclaim_gid" {} + ) \
+        || warn "The ownership handover container failed (see above)."
+
+    # A warning, not a refusal: a container still running from before the
+    # restart may write a file between the handover and its own stop, and the
+    # next start or restart hands that one over too.
+    _reclaim_left="$(find "$PROJECT_ROOT" -xdev "$@" -print 2>/dev/null | head -n 1)"
+    if [ -n "$_reclaim_left" ]; then
+        warn "Project files the app ($_reclaim_uid:$_reclaim_gid) cannot write remain, e.g. ${_reclaim_left#"$PROJECT_ROOT"/}."
+        warn "Fix by hand: docker run --rm -v \"$PROJECT_ROOT\":/w alpine:3 chown -R $_reclaim_uid:$_reclaim_gid /w"
+    fi
+    return 0
+}
+
 # Wraps `run_compose up -d --build`, capturing exit + log so we can offer to
 # auto-recover from a Swoole port conflict that slipped past pre-start
 # reconcile (e.g., another process bound the broker-assigned port in the gap).
@@ -1717,6 +1824,7 @@ cmd_server_start() {
         fi
     fi
 
+    project_ownership_reclaim || exit 1
     info "Starting containers..."
     server_start_run_with_port_conflict_fallback || exit $?
 
@@ -1817,6 +1925,7 @@ cmd_server_restart() {
     _compose="$(compose_bin)"
     stack_warn_live_agents restart "$_service"
     stack_event restart "$_service"
+    project_ownership_reclaim || exit 1
 
     # Build BEFORE anything is taken down. `up -d --build` did both in one
     # step, so a build that could not reach Docker Hub (a DNS blip, a laptop
@@ -1835,6 +1944,9 @@ cmd_server_restart() {
         $_compose $_overlays down --remove-orphans
         run_compose up -d --no-build
     fi
+    # Again after the swap: the old root container could still write a file
+    # between the first pass and its own stop.
+    project_ownership_reclaim
 
     success "Semitexa environment restarted!"
     printf "\n"
@@ -2224,6 +2336,11 @@ cmd_test_run() {
         info "Set APP_ENV=dev in your .env to enable test containers."
         exit 1
     fi
+
+    # Before any phase writes: the PHPUnit container (schema sync, the
+    # bootstrap marker) runs as a user and would die on a file an earlier
+    # root run left behind, long before the E2E-phase pass below.
+    project_ownership_reclaim || exit 1
 
     _overlays="$(compose_args)"
     if [ -z "$_overlays" ]; then
@@ -2620,6 +2737,9 @@ ${_url_clean}/tests"
     # installed. Passing the discovered dirs as path filters keeps the two
     # in agreement.
     _e2e_spec_args="$(printf '%s' "$_e2e_dirs" | tr '\n' ' ')"
+    # The runner writes test-results as the host user now; a directory an
+    # earlier root run left behind would refuse it (EACCES on .last-run.json).
+    project_ownership_reclaim || exit 1
     _e2e_rc=0
     (
         env_export_compose_context
