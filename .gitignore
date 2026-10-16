@@ -37,6 +37,9 @@ var/lock/*
 var/sitemap/*
 var/storage/*
 var/uploads/*
+# Hashed SSR templates and asset bundles (semitexa-ssr) are rebuilt by the
+# server on start: runtime output, never source.
+/public/assets/ssr/
 !var/log/.gitkeep
 !var/cache/.gitkeep
 .phpunit.result.cache

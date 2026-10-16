@@ -131,22 +131,25 @@ services:
 
         rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"
 
-        log "step 1/5 create project skeleton"
+        log "step 1/6 create project skeleton"
         composer create-project "$$PACKAGE_NAME" "$$TEMP_DIR" \
           --no-install --no-dev --no-interaction --prefer-dist \
           || fail "composer create-project failed"
 
-        log "step 2/5 configure allow-plugins"
+        log "step 2/6 configure allow-plugins"
         composer config --no-plugins --working-dir="$$TEMP_DIR" \
           allow-plugins.semitexa/core true \
           || fail "composer config failed"
 
-        log "step 3/5 install dependencies"
+        # Dev dependencies included: a new project is a working copy, and
+        # ai:verify needs phpstan and phpunit from require-dev, or its first
+        # run on a fresh install can only answer "incomplete".
+        log "step 3/6 install dependencies"
         composer install --working-dir="$$TEMP_DIR" \
-          --no-dev --no-interaction --prefer-dist --optimize-autoloader \
+          --no-interaction --prefer-dist --optimize-autoloader \
           || fail "composer install failed"
 
-        log "step 4/5 sync project files"
+        log "step 4/6 sync project files"
         host_uid="$$(stat -c '%u' "$$TARGET_DIR")"
         host_gid="$$(stat -c '%g' "$$TARGET_DIR")"
         mkdir -p "$$BACKUP_DIR/bin"
@@ -180,13 +183,44 @@ services:
         chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/" 2>/dev/null || true
         chmod +x "$$TARGET_DIR/bin/semitexa" 2>/dev/null || true
 
-        log "step 5/5 write success marker"
+        log "step 5/6 write success marker"
         mkdir -p "$$TARGET_DIR/var/install"
         printf '{\n  "status": "ok",\n  "installed_package": "%s",\n  "installed_at": "%s",\n  "bootstrap_version": %s\n}\n' \
           "$$PACKAGE_NAME" \
           "$$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
           "$$BOOTSTRAP_VERSION" > "$$MARKER_PATH" \
           || fail "marker write failed"
+        # Written after step 4's chown, so hand it over too: a root-owned
+        # var/install would outlive the install until the next start.
+        chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/var/install" 2>/dev/null || true
+
+        # A fresh project is a git repository with one commit, so the first
+        # `bin/semitexa ai:verify --dirty` sees the developer's own changes
+        # instead of answering "project root not a git repository". Optional:
+        # an existing .git is left alone, and a failure here never fails the
+        # install (ai:verify still names the root it could not scan).
+        log "step 6/6 initial git commit"
+        if [ -e "$$TARGET_DIR/.git" ]; then
+          log "already a git repository, left untouched"
+        elif [ "$${SEMITEXA_GIT_INIT:-1}" = "0" ]; then
+          # install.sh sets this when the project sits inside an existing
+          # repository, which this container cannot see: a nested .git would
+          # turn the project into an embedded repo of the outer one.
+          log "SEMITEXA_GIT_INIT=0 (inside an existing repository), skipped"
+        elif ! command -v git >/dev/null 2>&1; then
+          log "git not available, skipped; run: git init && git add -A && git commit -m 'Initial Semitexa project'"
+        elif git -c safe.directory="$$TARGET_DIR" -c init.defaultBranch=main -C "$$TARGET_DIR" init -q \
+          && git -c safe.directory="$$TARGET_DIR" -C "$$TARGET_DIR" add -A \
+          && git -c safe.directory="$$TARGET_DIR" \
+               -c user.name="Semitexa installer" -c user.email="installer@semitexa.invalid" \
+               -C "$$TARGET_DIR" commit -q -m "Initial Semitexa project"
+        then
+          chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/.git" 2>/dev/null || true
+          log "initial commit created"
+        else
+          rm -rf "$$TARGET_DIR/.git"
+          log "WARN: initial git commit failed, skipped; run: git init && git add -A && git commit -m 'Initial Semitexa project'"
+        fi
 
         rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"
         log "bootstrap complete"
