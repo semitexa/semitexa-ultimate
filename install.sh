@@ -518,6 +518,15 @@ setup_env() {
 EOF
         success ".env created as a local override file"
     fi
+    # The first server:start makes the project a git repository with one
+    # commit, so ai:verify --dirty can see changes. Not inside an existing
+    # repository: the setup container cannot see parent directories, and a
+    # nested .git would make the project an embedded repo of the outer one.
+    if command -v git >/dev/null 2>&1 \
+        && git -C "$PROJECT_NAME/.." rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        printf '\n# Inside an existing git repository: no separate repository for this project.\nSEMITEXA_GIT_INIT=0\n' >> "$PROJECT_NAME/.env"
+        info "Project is inside an existing git repository; it will not get its own."
+    fi
     info "Edit $PROJECT_NAME/.env to override defaults when needed."
 }
 
