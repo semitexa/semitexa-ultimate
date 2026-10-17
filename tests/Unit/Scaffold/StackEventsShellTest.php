@@ -182,6 +182,19 @@ final class StackEventsShellTest extends TestCase
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file')), 'not a usable directory: the project store, exported');
         symlink($this->root . '/shared', $this->root . '/link');
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/link')), 'a symlink is not followed');
+
+        // A fallback that is a link (or sits under one) may lead to the machine-wide store: never opened.
+        rename($this->root . '/var/ai-work/agents', $this->root . '/var/ai-work/agents.was');
+        symlink($this->root . '/private', $this->root . '/var/ai-work/agents');
+        $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242');
+        self::assertSame('0700', substr(sprintf('%o', fileperms($this->root . '/private')), -4), 'a linked fallback is not opened to all');
+        unlink($this->root . '/var/ai-work/agents');
+        rename($this->root . '/var/ai-work', $this->root . '/ai-work-real');
+        mkdir($this->root . '/private/agents', 0o700);
+        chmod($this->root . '/private/agents', 0o700);
+        symlink($this->root . '/private', $this->root . '/var/ai-work');
+        $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242');
+        self::assertSame('0700', substr(sprintf('%o', fileperms($this->root . '/private/agents')), -4), 'nor one under a linked parent');
     }
 
     /**

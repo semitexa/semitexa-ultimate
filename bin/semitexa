@@ -208,7 +208,11 @@ env_export_compose_context() {
         # Services under a SEMITEXA_UID that is neither root nor the host user
         # could not write a host-owned store: only then is it opened to all,
         # as the presence store does itself. Otherwise its mode is left alone.
-        if [ "$SEMITEXA_UID" != "0" ] && [ "$SEMITEXA_UID" != "$(id -u)" ] && [ -O "$SEMITEXA_AGENTS_HOST_DIR" ]; then
+        # Never through a link, here or in a parent: it could lead to the
+        # machine-wide store, which must stay owner only.
+        if [ "$SEMITEXA_UID" != "0" ] && [ "$SEMITEXA_UID" != "$(id -u)" ] && [ ! -L "$SEMITEXA_AGENTS_HOST_DIR" ] \
+            && [ -O "$SEMITEXA_AGENTS_HOST_DIR" ] \
+            && [ "$(cd "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null && pwd -P)" = "$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)/var/ai-work/agents" ]; then
             chmod 777 "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null || true
         fi
     fi
