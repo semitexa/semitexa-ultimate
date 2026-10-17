@@ -148,6 +148,7 @@ final class StackEventsShellTest extends TestCase
         self::assertSame($first, $identity('CLAUDE_CODE_SESSION_ID=dac88658-d35d-4cde-8520-5f4a1db5be9f'));
         self::assertNotSame($first, $identity('CLAUDE_CODE_SESSION_ID=another-session'));
         self::assertSame('codex-abc123|', $identity('SEMITEXA_AGENT_SESSION=codex-abc123 CLAUDE_CODE_SESSION_ID=x'), 'an explicit export wins');
+        self::assertSame('|0', $identity('SEMITEXA_AGENT_IMPLICIT=0 CLAUDE_CODE_SESSION_ID=x'), 'and the agent can turn derivation off');
     }
 
     /**

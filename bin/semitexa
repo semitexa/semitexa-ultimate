@@ -184,8 +184,11 @@ env_export_compose_context() {
     # Unwritable: compose falls back to the project's own var/ai-work/agents,
     # and `ai:agent list` names the store it reads. Silent, as this runs on
     # every compose call.
+    # Owner only: it sits in the user's home, and another local user must not
+    # forge or end sessions there. A planted symlink is not followed.
     _agents_dir="${SEMITEXA_AGENTS_HOST_DIR:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
-    if mkdir -p "$_agents_dir" 2>/dev/null && [ -w "$_agents_dir" ]; then
+    if [ ! -L "$_agents_dir" ] && mkdir -p "$_agents_dir" 2>/dev/null && [ -O "$_agents_dir" ] && [ -w "$_agents_dir" ]; then
+        chmod 700 "$_agents_dir" 2>/dev/null || true
         SEMITEXA_AGENTS_HOST_DIR="$_agents_dir"
         export SEMITEXA_AGENTS_HOST_DIR
     else
@@ -3087,16 +3090,26 @@ agent_env_args() {
 # process that is a known agent CLI (its pid and start time). The same agent
 # then gets the same id on every command, and PHP registers it on first use
 # (SEMITEXA_AGENT_IMPLICIT). A human at a terminal matches neither and stays
-# anonymous; an explicit export always wins.
+# anonymous; an explicit export always wins; SEMITEXA_AGENT_IMPLICIT=0 turns
+# this off.
+#
+# Claude Code's subagents and forks carry the very same environment (session
+# id, CLAUDE_PID, socket — measured 2026-10-17), so they share their parent's
+# session: one Claude Code session is one agent here. Nothing tells them apart.
 agent_identity() {
     [ -z "${SEMITEXA_AGENT_SESSION:-}" ] || return 0
+    [ "${SEMITEXA_AGENT_IMPLICIT:-}" != "0" ] || return 0
     _ai_name=""; _ai_key=""
     if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
         _ai_name="claude"; _ai_key="$CLAUDE_CODE_SESSION_ID"
     else
+        # One ps per hop. CLIs run under node (gemini, older codex) show up as
+        # node and are not recognised; they can still export a session.
         _ai_pid="$PPID"; _ai_hops=0
         while [ -n "$_ai_pid" ] && [ "$_ai_pid" -gt 1 ] 2>/dev/null && [ "$_ai_hops" -lt 12 ]; do
-            _ai_comm="$(ps -o comm= -p "$_ai_pid" 2>/dev/null | sed 's#.*/##' | tr -d ' ')"
+            _ai_row="$(ps -o ppid= -o comm= -p "$_ai_pid" 2>/dev/null)" || break
+            _ai_parent="$(printf '%s' "$_ai_row" | awk '{print $1}')"
+            _ai_comm="$(printf '%s' "$_ai_row" | awk '{print $2}' | sed 's#.*/##')"
             case "$_ai_comm" in
                 claude|codex|gemini|aider|opencode|cursor-agent|copilot|amp|goose|qwen)
                     _ai_name="$_ai_comm"
@@ -3104,7 +3117,7 @@ agent_identity() {
                     break
                     ;;
             esac
-            _ai_pid="$(ps -o ppid= -p "$_ai_pid" 2>/dev/null | tr -d ' ')"
+            _ai_pid="$_ai_parent"
             _ai_hops=$((_ai_hops + 1))
         done
     fi
