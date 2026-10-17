@@ -181,19 +181,22 @@ env_export_compose_context() {
     # as the host user: compose would create a missing bind source as root.
     # Inside the container every project is /var/www/html, so its host path
     # travels along to tell the projects' sessions apart.
-    # Unwritable: compose falls back to the project's own var/ai-work/agents,
-    # and `ai:agent list` names the store it reads. Silent, as this runs on
-    # every compose call.
+    # Unusable: the project's own var/ai-work/agents, silently, as this runs on
+    # every compose call; `ai:agent list` names the store it reads.
     # Owner only: it sits in the user's home, and another local user must not
     # forge or end sessions there. A planted symlink is not followed.
+    # The path compose mounts is always absolute (a bare name is a volume) and
+    # always exported: unset, compose would read a rejected value from .env.
+    # The fallback is created here too, as the host user, not by Docker as root.
     _agents_dir="${SEMITEXA_AGENTS_HOST_DIR:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
-    if [ ! -L "$_agents_dir" ] && mkdir -p "$_agents_dir" 2>/dev/null && [ -O "$_agents_dir" ] && [ -w "$_agents_dir" ]; then
-        chmod 700 "$_agents_dir" 2>/dev/null || true
-        SEMITEXA_AGENTS_HOST_DIR="$_agents_dir"
-        export SEMITEXA_AGENTS_HOST_DIR
+    if [ ! -L "$_agents_dir" ] && mkdir -p "$_agents_dir" 2>/dev/null && [ -O "$_agents_dir" ] \
+        && chmod 700 "$_agents_dir" 2>/dev/null && [ -w "$_agents_dir" ]; then
+        SEMITEXA_AGENTS_HOST_DIR="$(cd "$_agents_dir" && pwd -P)"
     else
-        unset SEMITEXA_AGENTS_HOST_DIR
+        SEMITEXA_AGENTS_HOST_DIR="$PROJECT_ROOT/var/ai-work/agents"
+        mkdir -p "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null || true
     fi
+    export SEMITEXA_AGENTS_HOST_DIR
     SEMITEXA_HOST_PROJECT_ROOT="$PROJECT_ROOT"
     export SEMITEXA_HOST_PROJECT_ROOT
 }
@@ -1782,14 +1785,16 @@ stack_warn_live_agents() {
     # Read line by line, never word-split: a project path with a space in it
     # would otherwise turn each session file into two names that do not exist,
     # and the agent working there would get no warning at all.
-    _sw_found="$(for _sw_dir in "$_sw_shared" "$PROJECT_ROOT/var/ai-work/agents"; do
+    _sw_own="$PROJECT_ROOT/var/ai-work/agents"
+    _sw_found="$(for _sw_dir in "$_sw_shared" "$_sw_own"; do
+        [ "$_sw_dir" = "$_sw_shared" ] || [ "$_sw_shared" != "$_sw_own" ] || continue
         [ -d "$_sw_dir" ] && find "$_sw_dir" -name '*.json' -mmin -15 2>/dev/null
     done | while IFS= read -r _sw_file; do
         grep -q '"ended_at": null' "$_sw_file" 2>/dev/null || continue
         # A session from before sessions named their project is the store's own.
         if grep -q '"project": "' "$_sw_file" 2>/dev/null; then
             grep -F -q -e "\"project\": $_sw_mine" -e "\"task_project\": $_sw_mine" "$_sw_file" 2>/dev/null || continue
-        elif [ "$(dirname "$_sw_file")" = "$_sw_shared" ]; then
+        elif [ "$(dirname "$_sw_file")" = "$_sw_shared" ] && [ "$_sw_shared" != "$_sw_own" ]; then
             continue
         fi
         _sw_id="$(basename "$_sw_file" .json)"

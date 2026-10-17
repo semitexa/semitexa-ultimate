@@ -151,6 +151,26 @@ final class StackEventsShellTest extends TestCase
         self::assertSame('|0', $identity('SEMITEXA_AGENT_IMPLICIT=0 CLAUDE_CODE_SESSION_ID=x'), 'and the agent can turn derivation off');
     }
 
+    #[Test]
+    public function compose_always_gets_an_absolute_store_and_a_rejected_one_falls_back_to_the_project(): void
+    {
+        // Unset, compose read the rejected value from .env; a bare name is a volume.
+        $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        self::assertSame(1, preg_match('/^env_export_compose_context\(\) \{\n.*?^\}$/ms', $script, $m));
+        $store = function (string $env) use ($m): string {
+            $sh = "docker_is_rootless(){ return 1; }\nenv_merged_lines(){ :; }\n" . $m[0] . "\ncd " . escapeshellarg($this->root) . " && env_export_compose_context; printf '%s' \"\$SEMITEXA_AGENTS_HOST_DIR\"";
+
+            return (string) shell_exec(sprintf('env -i PATH=/usr/bin:/bin HOME=%s PROJECT_ROOT=%s %s sh -c %s', escapeshellarg($this->root), escapeshellarg($this->root), $env, escapeshellarg($sh)));
+        };
+
+        self::assertSame($this->root . '/.semitexa/agents', $store(''));
+        self::assertSame($this->root . '/rel', $store('SEMITEXA_AGENTS_HOST_DIR=rel'));
+        file_put_contents($this->root . '/a-file', 'x');
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file')), 'not a usable directory: the project store, exported');
+        symlink($this->root . '/shared', $this->root . '/link');
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/link')), 'a symlink is not followed');
+    }
+
     /**
      * @param array<string, string> $extra
      */
