@@ -14,6 +14,12 @@ services:
     user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
     environment:
       HOME: /var/www/html
+      # Agent presence (ai:agent, ai:orient): one store for every project on the
+      # machine, so an agent started in another project that edits this one's
+      # packages is seen here. bin/semitexa points the mount at ~/.semitexa/agents;
+      # a bare `docker compose up` keeps the project's own var/ai-work/agents.
+      SEMITEXA_AGENTS_DIR: /var/semitexa/agents
+      SEMITEXA_HOST_PROJECT_ROOT: ${SEMITEXA_HOST_PROJECT_ROOT:-}
     env_file:
       - path: .env.default
         required: true
@@ -21,6 +27,7 @@ services:
         required: false
     volumes:
       - .:/var/www/html
+      - ${SEMITEXA_AGENTS_HOST_DIR:-./var/ai-work/agents}:/var/semitexa/agents
     ports:
       - "${SWOOLE_PORT:-8080}:${SWOOLE_PORT:-8080}"
     restart: unless-stopped
@@ -231,6 +238,8 @@ services:
     user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
     environment:
       HOME: /var/www/html
+      SEMITEXA_AGENTS_DIR: /var/semitexa/agents
+      SEMITEXA_HOST_PROJECT_ROOT: ${SEMITEXA_HOST_PROJECT_ROOT:-}
     env_file:
       - path: .env.default
         required: true
@@ -238,6 +247,7 @@ services:
         required: false
     volumes:
       - .:/var/www/html
+      - ${SEMITEXA_AGENTS_HOST_DIR:-./var/ai-work/agents}:/var/semitexa/agents
     working_dir: /var/www/html
     command: ["sleep", "infinity"]
     profiles: ["cli"]

@@ -23,6 +23,7 @@ final class StackEventsShellTest extends TestCase
     {
         $this->root = sys_get_temp_dir() . '/semitexa-stack-events-' . uniqid();
         mkdir($this->root . '/var/ai-work/agents', 0o755, true);
+        mkdir($this->root . '/shared', 0o755, true);
     }
 
     protected function tearDown(): void
@@ -103,8 +104,9 @@ final class StackEventsShellTest extends TestCase
 
         $sh = 'warn(){ printf "WARN: %s\n" "$*" >&2; }' . "\n" . implode("\n", $m[0]) . "\n" . $call;
         $cmd = sprintf(
-            'PROJECT_ROOT=%s SEMITEXA_AGENT_SESSION=%s sh -c %s 2>&1',
+            'PROJECT_ROOT=%s SEMITEXA_AGENTS_HOST_DIR=%s SEMITEXA_AGENT_SESSION=%s sh -c %s 2>&1',
             escapeshellarg($this->root),
+            escapeshellarg($this->root . '/shared'),
             escapeshellarg($session),
             escapeshellarg($sh),
         );
@@ -112,14 +114,100 @@ final class StackEventsShellTest extends TestCase
         return (string) shell_exec($cmd);
     }
 
-    private function agent(string $id, string $intent, ?string $endedAt): void
+    #[Test]
+    public function the_warning_reads_the_machine_wide_store_and_names_only_who_uses_this_stack(): void
+    {
+        // One store for every project on the machine since 2026-10-17: the
+        // project's own directory alone would warn nobody.
+        $this->agent('codex-here01', 'working this project', null, ['project' => $this->root], 'shared');
+        $this->agent('claude-away1', 'working the portal', null, ['project' => '/elsewhere/portal'], 'shared');
+        $this->agent('claude-visit', 'took a task of this backlog', null, ['project' => '/elsewhere/portal', 'task_project' => $this->root], 'shared');
+        $this->agent('codex-old001', 'from before sessions named a project', null, [], 'shared');
+
+        $out = $this->shell('stack_warn_live_agents restart', 'claude-self1');
+
+        self::assertStringContainsString('codex-here01', $out);
+        self::assertStringContainsString('claude-visit', $out, 'it runs this backlog, so this stack');
+        self::assertStringNotContainsString('claude-away1', $out);
+        self::assertStringNotContainsString('codex-old001', $out, 'a project-less record in the shared store belongs to no one here');
+    }
+
+    #[Test]
+    public function an_agent_that_exported_nothing_gets_the_same_derived_session_on_every_command(): void
+    {
+        $identity = function (string $env): string {
+            $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+            self::assertSame(1, preg_match('/^agent_identity\(\) \{\n.*?^\}$/ms', $script, $m), 'agent_identity must still exist in bin/semitexa');
+            $sh = $m[0] . "\nagent_identity\nprintf '%s|%s' \"\${SEMITEXA_AGENT_SESSION:-}\" \"\${SEMITEXA_AGENT_IMPLICIT:-}\"";
+
+            return (string) shell_exec('env -i PATH=/usr/bin:/bin ' . $env . ' sh -c ' . escapeshellarg($sh));
+        };
+
+        $first = $identity('CLAUDE_CODE_SESSION_ID=dac88658-d35d-4cde-8520-5f4a1db5be9f');
+        self::assertMatchesRegularExpression('/^claude-[0-9a-f]{6}\|claude$/', $first);
+        self::assertSame($first, $identity('CLAUDE_CODE_SESSION_ID=dac88658-d35d-4cde-8520-5f4a1db5be9f'));
+        self::assertNotSame($first, $identity('CLAUDE_CODE_SESSION_ID=another-session'));
+        self::assertSame('codex-abc123|', $identity('SEMITEXA_AGENT_SESSION=codex-abc123 CLAUDE_CODE_SESSION_ID=x'), 'an explicit export wins');
+        self::assertSame('|0', $identity('SEMITEXA_AGENT_IMPLICIT=0 CLAUDE_CODE_SESSION_ID=x'), 'and the agent can turn derivation off');
+    }
+
+    #[Test]
+    public function compose_always_gets_an_absolute_store_and_a_rejected_one_falls_back_to_the_project(): void
+    {
+        // Unset, compose read the rejected value from .env; a bare name is a volume.
+        $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        self::assertSame(1, preg_match('/^env_export_compose_context\(\) \{\n.*?^\}$/ms', $script, $m));
+        $store = function (string $env) use ($m): string {
+            $sh = "docker_is_rootless(){ return 1; }\nenv_merged_lines(){ :; }\n" . $m[0] . "\ncd " . escapeshellarg($this->root) . " && env_export_compose_context; printf '%s' \"\$SEMITEXA_AGENTS_HOST_DIR\"";
+
+            return (string) shell_exec(sprintf('env -i PATH=/usr/bin:/bin HOME=%s PROJECT_ROOT=%s %s sh -c %s', escapeshellarg($this->root), escapeshellarg($this->root), $env, escapeshellarg($sh)));
+        };
+
+        self::assertSame($this->root . '/.semitexa/agents', $store(''));
+        is_dir($this->root . '/var/ai-work/agents') || mkdir($this->root . '/var/ai-work/agents', 0o700, true);
+        chmod($this->root . '/var/ai-work/agents', 0o700);
+        file_put_contents($this->root . '/a-file', 'x');
+        $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file'));
+        self::assertSame('0700', substr(sprintf('%o', fileperms($this->root . '/var/ai-work/agents')), -4), 'services under the host uid write the fallback as it is: it is not opened to all');
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242'), 'services under another uid cannot write an owner-only store');
+        self::assertSame('0777', substr(sprintf('%o', fileperms($this->root . '/var/ai-work/agents')), -4), 'and the project store they fall back to is one they can write');
+        mkdir($this->root . '/notes', 0o755);
+        chmod($this->root . '/notes', 0o755);
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/notes')), 'a directory others can read is not narrowed into a store');
+        self::assertSame('0755', substr(sprintf('%o', fileperms($this->root . '/notes')), -4), 'nor are its permissions touched');
+        mkdir($this->root . '/private', 0o700);
+        chmod($this->root . '/private', 0o700);
+        self::assertSame($this->root . '/private', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/private')), 'one that is owner only already is used');
+        self::assertSame($this->root . '/rel', $store('SEMITEXA_AGENTS_HOST_DIR=rel'));
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file')), 'not a usable directory: the project store, exported');
+        symlink($this->root . '/shared', $this->root . '/link');
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/link')), 'a symlink is not followed');
+
+        // A fallback that is a link (or sits under one) may lead to the machine-wide store: never opened.
+        rename($this->root . '/var/ai-work/agents', $this->root . '/var/ai-work/agents.was');
+        symlink($this->root . '/private', $this->root . '/var/ai-work/agents');
+        $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242');
+        self::assertSame('0700', substr(sprintf('%o', fileperms($this->root . '/private')), -4), 'a linked fallback is not opened to all');
+        unlink($this->root . '/var/ai-work/agents');
+        rename($this->root . '/var/ai-work', $this->root . '/ai-work-real');
+        mkdir($this->root . '/private/agents', 0o700);
+        chmod($this->root . '/private/agents', 0o700);
+        symlink($this->root . '/private', $this->root . '/var/ai-work');
+        $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242');
+        self::assertSame('0700', substr(sprintf('%o', fileperms($this->root . '/private/agents')), -4), 'nor one under a linked parent');
+    }
+
+    /**
+     * @param array<string, string> $extra
+     */
+    private function agent(string $id, string $intent, ?string $endedAt, array $extra = [], string $store = 'var/ai-work/agents'): void
     {
         // Pretty-printed, as AgentRegistry writes it: the shell reads it by line.
         // A fixture that failed to write would let the exclusion checks pass on nothing.
-        $written = file_put_contents($this->root . '/var/ai-work/agents/' . $id . '.json', json_encode([
+        $written = file_put_contents($this->root . '/' . $store . '/' . $id . '.json', json_encode([
             'id' => $id, 'agent' => 'x', 'intent' => $intent, 'task' => null, 'repos' => [],
             'started_at' => 'x', 'beat_at' => 'x', 'ended_at' => $endedAt,
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+        ] + $extra, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
         self::assertNotFalse($written, "fixture for {$id} must be written");
     }
 }

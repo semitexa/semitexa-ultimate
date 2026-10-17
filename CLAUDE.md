@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: overwritten by `bin/semitexa init --only-docs`.
+> Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: kept current by `bin/semitexa update` (a project that edited it gets the new version as `.new`).
 
 Before anything, find and read **`AGENTS.md`**. It is mandatory.
 
