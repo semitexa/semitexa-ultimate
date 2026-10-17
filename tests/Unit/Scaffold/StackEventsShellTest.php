@@ -164,6 +164,7 @@ final class StackEventsShellTest extends TestCase
         };
 
         self::assertSame($this->root . '/.semitexa/agents', $store(''));
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242'), 'services under another uid cannot write an owner-only store');
         self::assertSame($this->root . '/rel', $store('SEMITEXA_AGENTS_HOST_DIR=rel'));
         file_put_contents($this->root . '/a-file', 'x');
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file')), 'not a usable directory: the project store, exported');

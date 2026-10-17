@@ -189,7 +189,10 @@ env_export_compose_context() {
     # always exported: unset, compose would read a rejected value from .env.
     # The fallback is created here too, as the host user, not by Docker as root.
     _agents_dir="${SEMITEXA_AGENTS_HOST_DIR:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
-    if [ ! -L "$_agents_dir" ] && mkdir -p "$_agents_dir" 2>/dev/null && [ -O "$_agents_dir" ] \
+    # Owner only works only when the services run as that owner (or as root):
+    # a different SEMITEXA_UID could not write a 0700 store at all.
+    if { [ "$SEMITEXA_UID" = "0" ] || [ "$SEMITEXA_UID" = "$(id -u)" ]; } \
+        && [ ! -L "$_agents_dir" ] && mkdir -p "$_agents_dir" 2>/dev/null && [ -O "$_agents_dir" ] \
         && chmod 700 "$_agents_dir" 2>/dev/null && [ -w "$_agents_dir" ]; then
         SEMITEXA_AGENTS_HOST_DIR="$(cd "$_agents_dir" && pwd -P)"
     else
@@ -1779,7 +1782,13 @@ stack_event() {
 # the machine-wide store (and, from before it, the project's own); only the
 # ones of this project, or holding a task of its backlog, use this stack.
 stack_warn_live_agents() {
-    _sw_shared="${SEMITEXA_AGENTS_HOST_DIR:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
+    # The store compose mounts: the caller's, else .env's, else the default.
+    # A store env_export_compose_context rejects puts sessions in _sw_own, read below.
+    _sw_shared="${SEMITEXA_AGENTS_HOST_DIR:-}"
+    if [ -z "$_sw_shared" ] && command -v env_val >/dev/null 2>&1; then
+        _sw_shared="$(env_val SEMITEXA_AGENTS_HOST_DIR '')"
+    fi
+    _sw_shared="${_sw_shared:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
     # JSON escapes the slashes of a path only when told to; AgentRegistry does not.
     _sw_mine="\"$PROJECT_ROOT\""
     # Read line by line, never word-split: a project path with a space in it
