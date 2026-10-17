@@ -164,6 +164,11 @@ final class StackEventsShellTest extends TestCase
         };
 
         self::assertSame($this->root . '/.semitexa/agents', $store(''));
+        is_dir($this->root . '/var/ai-work/agents') || mkdir($this->root . '/var/ai-work/agents', 0o700, true);
+        chmod($this->root . '/var/ai-work/agents', 0o700);
+        file_put_contents($this->root . '/a-file', 'x');
+        $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file'));
+        self::assertSame('0700', substr(sprintf('%o', fileperms($this->root . '/var/ai-work/agents')), -4), 'services under the host uid write the fallback as it is: it is not opened to all');
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242'), 'services under another uid cannot write an owner-only store');
         self::assertSame('0777', substr(sprintf('%o', fileperms($this->root . '/var/ai-work/agents')), -4), 'and the project store they fall back to is one they can write');
         mkdir($this->root . '/notes', 0o755);
@@ -174,7 +179,6 @@ final class StackEventsShellTest extends TestCase
         chmod($this->root . '/private', 0o700);
         self::assertSame($this->root . '/private', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/private')), 'one that is owner only already is used');
         self::assertSame($this->root . '/rel', $store('SEMITEXA_AGENTS_HOST_DIR=rel'));
-        file_put_contents($this->root . '/a-file', 'x');
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file')), 'not a usable directory: the project store, exported');
         symlink($this->root . '/shared', $this->root . '/link');
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/link')), 'a symlink is not followed');

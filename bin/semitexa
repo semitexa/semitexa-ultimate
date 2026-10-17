@@ -205,9 +205,12 @@ env_export_compose_context() {
     else
         SEMITEXA_AGENTS_HOST_DIR="$PROJECT_ROOT/var/ai-work/agents"
         mkdir -p "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null || true
-        # Written by root, by the host user and by SEMITEXA_UID, which may be
-        # neither: open to all, as the presence store keeps it itself.
-        if [ -O "$SEMITEXA_AGENTS_HOST_DIR" ]; then chmod 777 "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null || true; fi
+        # Services under a SEMITEXA_UID that is neither root nor the host user
+        # could not write a host-owned store: only then is it opened to all,
+        # as the presence store does itself. Otherwise its mode is left alone.
+        if [ "$SEMITEXA_UID" != "0" ] && [ "$SEMITEXA_UID" != "$(id -u)" ] && [ -O "$SEMITEXA_AGENTS_HOST_DIR" ]; then
+            chmod 777 "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null || true
+        fi
     fi
     export SEMITEXA_AGENTS_HOST_DIR
     SEMITEXA_HOST_PROJECT_ROOT="$PROJECT_ROOT"
