@@ -1,6 +1,6 @@
 # AI_ENTRY.md — Project Reference
 
-> Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: overwritten by `bin/semitexa init --only-docs`.
+> Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: kept current by `bin/semitexa update` (a project that edited it gets the new version as `.new`).
 
 **`AGENTS.md` is the operator manual** — read it first. This file is project-specific: Golden Path, stack, module layout, generator details.
 

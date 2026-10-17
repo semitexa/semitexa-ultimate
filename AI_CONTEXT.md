@@ -1,6 +1,6 @@
 # AI_CONTEXT.md — runtime rules for this project
 
-> Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: overwritten by `bin/semitexa init --only-docs`.
+> Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: kept current by `bin/semitexa update` (a project that edited it gets the new version as `.new`).
 
 Read **`AGENTS.md`** (operator manual) and **`AI_ENTRY.md`** (stack + command surface) first. This file covers Semitexa runtime specifics that bite at edit time.
 
