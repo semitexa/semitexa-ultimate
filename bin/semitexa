@@ -174,6 +174,25 @@ env_export_compose_context() {
         SEMITEXA_GID="${SEMITEXA_GID:-$_default_gid}"
     fi
     export SEMITEXA_UID SEMITEXA_GID
+
+    # Agent presence: one store for every project on this machine, beside the
+    # router registry. A per-project store hid an agent started in one project
+    # from the project whose packages it was editing (2026-10-17). Created here,
+    # as the host user: compose would create a missing bind source as root.
+    # Inside the container every project is /var/www/html, so its host path
+    # travels along to tell the projects' sessions apart.
+    # Unwritable: compose falls back to the project's own var/ai-work/agents,
+    # and `ai:agent list` names the store it reads. Silent, as this runs on
+    # every compose call.
+    _agents_dir="${SEMITEXA_AGENTS_HOST_DIR:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
+    if mkdir -p "$_agents_dir" 2>/dev/null && [ -w "$_agents_dir" ]; then
+        SEMITEXA_AGENTS_HOST_DIR="$_agents_dir"
+        export SEMITEXA_AGENTS_HOST_DIR
+    else
+        unset SEMITEXA_AGENTS_HOST_DIR
+    fi
+    SEMITEXA_HOST_PROJECT_ROOT="$PROJECT_ROOT"
+    export SEMITEXA_HOST_PROJECT_ROOT
 }
 
 # ── Docker Compose helpers ──────────────────────────────────────────────────

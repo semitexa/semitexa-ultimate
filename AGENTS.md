@@ -38,7 +38,8 @@ The **agent** is the reasoning system (Claude, Codex, Copilot). **Semitexa** is 
       once, when it is coherent. Verifying mid-sequence reports failures you are about to fix
       anyway, and the cost is real — see §4 on not wrapping it in `server:restart`.
 11. **Say you are here.** Other agents (Claude, Codex, …) may be working in this same checkout,
-    backlog and dev stack. On cold start `ai:orient` shows who (**Working now**) and which repos
+    backlog and dev stack, or in another project on this machine that edits the same packages
+    (presence is one store, `~/.semitexa/agents`). On cold start `ai:orient` shows who (**Working now**) and which repos
     have uncommitted edits; then `ai:agent join --name=<you> --intent="<one sentence>" --repo=<repo>`
     and `export SEMITEXA_AGENT_SESSION=<id>`. Moving a task to `in_progress` claims it; a task a
     live agent holds is refused (coordinate, or `--take-over`). `ai:agent leave` when done.
