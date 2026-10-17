@@ -1769,15 +1769,26 @@ stack_event() {
 }
 
 # Live agents other than the caller: a session file touched in the last 15
-# minutes (every ai:* command touches it) that has not ended.
+# minutes (every ai:* command touches it) that has not ended. Sessions live in
+# the machine-wide store (and, from before it, the project's own); only the
+# ones of this project, or holding a task of its backlog, use this stack.
 stack_warn_live_agents() {
-    _sw_dir="$PROJECT_ROOT/var/ai-work/agents"
-    [ -d "$_sw_dir" ] || return 0
+    _sw_shared="${SEMITEXA_AGENTS_HOST_DIR:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
+    # JSON escapes the slashes of a path only when told to; AgentRegistry does not.
+    _sw_mine="\"$PROJECT_ROOT\""
     # Read line by line, never word-split: a project path with a space in it
     # would otherwise turn each session file into two names that do not exist,
     # and the agent working there would get no warning at all.
-    _sw_found="$(find "$_sw_dir" -name '*.json' -mmin -15 2>/dev/null | while IFS= read -r _sw_file; do
+    _sw_found="$(for _sw_dir in "$_sw_shared" "$PROJECT_ROOT/var/ai-work/agents"; do
+        [ -d "$_sw_dir" ] && find "$_sw_dir" -name '*.json' -mmin -15 2>/dev/null
+    done | while IFS= read -r _sw_file; do
         grep -q '"ended_at": null' "$_sw_file" 2>/dev/null || continue
+        # A session from before sessions named their project is the store's own.
+        if grep -q '"project": "' "$_sw_file" 2>/dev/null; then
+            grep -F -q -e "\"project\": $_sw_mine" -e "\"task_project\": $_sw_mine" "$_sw_file" 2>/dev/null || continue
+        elif [ "$(dirname "$_sw_file")" = "$_sw_shared" ]; then
+            continue
+        fi
         _sw_id="$(basename "$_sw_file" .json)"
         [ "$_sw_id" = "${SEMITEXA_AGENT_SESSION:-}" ] && continue
         _sw_intent="$(sed -n 's/^ *"intent": "\(.*\)",$/\1/p' "$_sw_file" | head -1)"
@@ -3059,13 +3070,50 @@ cmd_information() {
 # with no trace at all, and every auto-append silently went nowhere. Only ids
 # of a safe shape are forwarded: they are spliced into the command line.
 agent_env_args() {
-    for _agent_var in SEMITEXA_AI_TRACE_ID SEMITEXA_AGENT_SESSION; do
+    for _agent_var in SEMITEXA_AI_TRACE_ID SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT; do
         eval "_agent_val=\${${_agent_var}:-}"
         case "$_agent_val" in
             ''|*[!A-Za-z0-9_.:-]*) ;;
             *) printf ' -e %s=%s' "$_agent_var" "$_agent_val" ;;
         esac
     done
+}
+
+# An agent that never ran `ai:agent join`, or whose `export` did not survive
+# (Claude Code starts a fresh shell for every command), was invisible: the
+# others saw nobody, and the stack log said "by an agent that never joined"
+# (2026-10-17). When no session is exported, name one after something stable
+# the agent already carries: Claude Code's session id, or the nearest ancestor
+# process that is a known agent CLI (its pid and start time). The same agent
+# then gets the same id on every command, and PHP registers it on first use
+# (SEMITEXA_AGENT_IMPLICIT). A human at a terminal matches neither and stays
+# anonymous; an explicit export always wins.
+agent_identity() {
+    [ -z "${SEMITEXA_AGENT_SESSION:-}" ] || return 0
+    _ai_name=""; _ai_key=""
+    if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+        _ai_name="claude"; _ai_key="$CLAUDE_CODE_SESSION_ID"
+    else
+        _ai_pid="$PPID"; _ai_hops=0
+        while [ -n "$_ai_pid" ] && [ "$_ai_pid" -gt 1 ] 2>/dev/null && [ "$_ai_hops" -lt 12 ]; do
+            _ai_comm="$(ps -o comm= -p "$_ai_pid" 2>/dev/null | sed 's#.*/##' | tr -d ' ')"
+            case "$_ai_comm" in
+                claude|codex|gemini|aider|opencode|cursor-agent|copilot|amp|goose|qwen)
+                    _ai_name="$_ai_comm"
+                    _ai_key="$_ai_pid:$(ps -o lstart= -p "$_ai_pid" 2>/dev/null)"
+                    break
+                    ;;
+            esac
+            _ai_pid="$(ps -o ppid= -p "$_ai_pid" 2>/dev/null | tr -d ' ')"
+            _ai_hops=$((_ai_hops + 1))
+        done
+    fi
+    [ -n "$_ai_name" ] || return 0
+    _ai_name="$(printf '%s' "$_ai_name" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' | cut -c1-16)"
+    _ai_sum="$(printf '%s' "$_ai_key" | cksum | cut -d' ' -f1)"
+    SEMITEXA_AGENT_SESSION="$_ai_name-$(printf '%06x' "$_ai_sum" | cut -c1-6)"
+    SEMITEXA_AGENT_IMPLICIT="$_ai_name"
+    export SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT
 }
 
 cmd_proxy() {
@@ -3147,6 +3195,7 @@ if [ "${SEMITEXA_BIN_SOURCE_ONLY:-0}" = "1" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
+agent_identity
 COMMAND="${1:-}"
 [ -z "$COMMAND" ] && { cmd_list; exit 0; }
 shift
