@@ -191,13 +191,23 @@ env_export_compose_context() {
     _agents_dir="${SEMITEXA_AGENTS_HOST_DIR:-${SEMITEXA_HOME:-$HOME/.semitexa}/agents}"
     # Owner only works only when the services run as that owner (or as root):
     # a different SEMITEXA_UID could not write a 0700 store at all.
+    # Narrowed to owner only when this creates it; one that was already there
+    # keeps its mode and is used only if it is owner only already: a store named
+    # in .env may be a directory other people rely on.
+    _agents_new=0
+    { [ -e "$_agents_dir" ] || [ -L "$_agents_dir" ]; } || _agents_new=1
     if { [ "$SEMITEXA_UID" = "0" ] || [ "$SEMITEXA_UID" = "$(id -u)" ]; } \
         && [ ! -L "$_agents_dir" ] && mkdir -p "$_agents_dir" 2>/dev/null && [ -O "$_agents_dir" ] \
-        && chmod 700 "$_agents_dir" 2>/dev/null && [ -w "$_agents_dir" ]; then
+        && if [ "$_agents_new" = 1 ]; then chmod 700 "$_agents_dir" 2>/dev/null; else
+            case "$(ls -ld "$_agents_dir" 2>/dev/null)" in d???------*) true ;; *) false ;; esac; fi \
+        && [ -w "$_agents_dir" ]; then
         SEMITEXA_AGENTS_HOST_DIR="$(cd "$_agents_dir" && pwd -P)"
     else
         SEMITEXA_AGENTS_HOST_DIR="$PROJECT_ROOT/var/ai-work/agents"
         mkdir -p "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null || true
+        # Written by root, by the host user and by SEMITEXA_UID, which may be
+        # neither: open to all, as the presence store keeps it itself.
+        if [ -O "$SEMITEXA_AGENTS_HOST_DIR" ]; then chmod 777 "$SEMITEXA_AGENTS_HOST_DIR" 2>/dev/null || true; fi
     fi
     export SEMITEXA_AGENTS_HOST_DIR
     SEMITEXA_HOST_PROJECT_ROOT="$PROJECT_ROOT"

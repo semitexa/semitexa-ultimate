@@ -165,6 +165,14 @@ final class StackEventsShellTest extends TestCase
 
         self::assertSame($this->root . '/.semitexa/agents', $store(''));
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_UID=4242 SEMITEXA_GID=4242'), 'services under another uid cannot write an owner-only store');
+        self::assertSame('0777', substr(sprintf('%o', fileperms($this->root . '/var/ai-work/agents')), -4), 'and the project store they fall back to is one they can write');
+        mkdir($this->root . '/notes', 0o755);
+        chmod($this->root . '/notes', 0o755);
+        self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/notes')), 'a directory others can read is not narrowed into a store');
+        self::assertSame('0755', substr(sprintf('%o', fileperms($this->root . '/notes')), -4), 'nor are its permissions touched');
+        mkdir($this->root . '/private', 0o700);
+        chmod($this->root . '/private', 0o700);
+        self::assertSame($this->root . '/private', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/private')), 'one that is owner only already is used');
         self::assertSame($this->root . '/rel', $store('SEMITEXA_AGENTS_HOST_DIR=rel'));
         file_put_contents($this->root . '/a-file', 'x');
         self::assertSame($this->root . '/var/ai-work/agents', $store('SEMITEXA_AGENTS_HOST_DIR=' . escapeshellarg($this->root . '/a-file')), 'not a usable directory: the project store, exported');
