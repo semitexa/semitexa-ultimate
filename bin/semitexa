@@ -2359,6 +2359,33 @@ report_host_headroom() {
     return 0
 }
 
+# The mysql image creates only DB_DATABASE, for DB_USERNAME. A fresh install
+# therefore has no test database and no grant on one, and its first test:run
+# stopped at the schema sync with "Access denied for user ... to database
+# 'semitexa_test'". Created and granted here, as root, idempotently. A project
+# that does not run the bundled MySQL service is left alone.
+#   $1 compose binary   $2 compose -f arguments   $3 test database name
+ensure_test_database() {
+    case " $2 " in *docker-compose.mysql.yml*) ;; *) return 0 ;; esac
+    _etd_user="${DB_USERNAME:-$(env_val DB_USERNAME semitexa)}"
+    # Only plain identifiers are interpolated into the SQL below.
+    if printf '%s\n%s\n' "$3" "$_etd_user" | grep -Eq '[^A-Za-z0-9_]|^$'; then
+        warn "Test database '$3' or user '$_etd_user' is not a plain identifier; create and grant it yourself."
+        return 0
+    fi
+    if ! (
+        env_export_compose_context
+        # shellcheck disable=SC2086
+        $1 $2 up -d --wait mysql >/dev/null 2>&1
+        # shellcheck disable=SC2086
+        $1 $2 exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS $3; GRANT ALL PRIVILEGES ON $3.* TO '$_etd_user'@'%';\"" >/dev/null 2>&1
+    ); then
+        warn "Could not create the test database '$3' or grant '$_etd_user' on it; the schema sync below will say why."
+        return 0
+    fi
+    info "Test database '$3' is ready for '$_etd_user'."
+}
+
 cmd_test_run() {
     [ "${1:-}" != "--" ] || shift
     _test_information=0
@@ -2693,6 +2720,8 @@ ${_url_clean}/tests"
         error "Set DB_TEST_DATABASE to a separate name (the default is semitexa_test)."
         exit 1
     fi
+
+    ensure_test_database "$_compose" "$_overlays" "$_test_db"
 
     _sync_rc=0
     info "Test-DB schema parity: orm:sync against the test database (safe ops only)..."

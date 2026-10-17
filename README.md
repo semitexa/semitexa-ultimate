@@ -30,7 +30,7 @@ bin/semitexa orm:sync          # create the database tables (the stack runs MySQ
 
 What the installer does outside the project directory: it registers the app in `~/.semitexa/router/registry/apps/` so that several Semitexa projects on one machine get different ports. A local `.test` domain is optional and off by default. If you ask for one (`--local-domain`, or answer yes to the prompt), it starts shared router containers on host port 80 and, with sudo, changes your system DNS (systemd-resolved, `/etc/resolv.conf`) or `/etc/hosts`.
 
-To stop the stack: `bin/semitexa server:stop`. To see every command: `bin/semitexa list`.
+To stop the stack: `bin/semitexa server:stop`. To see every command: `bin/semitexa list`. The project starts in `APP_ENV=dev`; on a server, set `APP_ENV=prod` and `APP_DEBUG=0` in `.env`. Use the installer above: `composer require` and `composer create-project` are not install paths.
 
 ## What to open next
 
@@ -55,10 +55,9 @@ To stop the stack: `bin/semitexa server:stop`. To see every command: `bin/semite
 
 ## Tests
 
-Tests run inside the project's containers. The installer installs without dev dependencies, so add them once (PHPUnit is one of them):
+Tests run inside the project's containers; the installed project already has PHPUnit, and `test:run` creates the test database on its first run:
 
 ```bash
-docker compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install
 bin/semitexa test:run
 bin/semitexa test:run --filter MyTest
 ```
