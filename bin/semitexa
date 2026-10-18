@@ -110,7 +110,7 @@ env_merged_lines() {
 env_val() {
     _key="$1"
     _default="$2"
-    _val="$(env_merged_lines 2>/dev/null | grep -E "^[[:space:]]*${_key}[[:space:]]*=" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
+    _val="$(env_merged_lines 2>/dev/null | grep -E "^[[:space:]]*${_key}[[:space:]]*=" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"\(.*\)"$/\1/' -e t -e "s/^'\(.*\)'\$/\1/")"
     if [ -n "$_val" ]; then
         printf '%s' "$_val"
         return
@@ -151,7 +151,7 @@ env_export_compose_context() {
         for _line in $_merged; do
             [ -n "$_line" ] || continue
             _key="$(printf '%s' "$_line" | sed 's/[[:space:]]*=.*$//' | tr -d '[:space:]')"
-            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
+            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"\(.*\)"$/\1/' -e t -e "s/^'\(.*\)'\$/\1/")"
             case "$_key" in
                 ''|*[!A-Za-z0-9_]*)
                     continue
@@ -480,7 +480,7 @@ router_collect_project_domains() {
     env_merged_lines 2>/dev/null \
         | grep -E '^[[:space:]]*[A-Z0-9_]*DOMAIN[A-Z0-9_]*[[:space:]]*=' 2>/dev/null \
         | while IFS= read -r _line; do
-            _value="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
+            _value="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"\(.*\)"$/\1/' -e t -e "s/^'\(.*\)'\$/\1/")"
             printf '%s\n' "$_value" | tr ', ' '\n\n' | while IFS= read -r _candidate; do
                 _candidate="$(printf '%s' "$_candidate" | tr '[:upper:]' '[:lower:]')"
                 [ -n "$_candidate" ] || continue
@@ -2376,7 +2376,8 @@ report_host_headroom() {
 #   $1 compose binary   $2 compose -f arguments   $3 test database name
 ensure_test_database() {
     case " $2 " in *docker-compose.mysql.yml*) ;; *) return 0 ;; esac
-    _etd_user="${DB_USERNAME:-$(env_val DB_USERNAME semitexa)}"
+    # The user Compose runs the app as: env_export_compose_context lets .env win over the caller.
+    _etd_user="$(env_val DB_USERNAME "${DB_USERNAME:-semitexa}")"
     # Only plain identifiers are interpolated into the SQL below.
     if printf '%s\n%s\n' "$3" "$_etd_user" | grep -Eq '[^A-Za-z0-9_]|^$'; then
         warn "Test database '$3' or user '$_etd_user' is not a plain identifier; create and grant it yourself."
