@@ -153,6 +153,12 @@ already disproved, the number you already measured. Write them for yourself in a
 test of a good `next-step` is whether it would restart the work cold. Notes written for a
 reviewer are the ones that turn out empty.
 
+**A number carries its command.** Any count written into a `next-step` or an epic goal is
+followed by the command that produced it — `86 call sites (grep -rn 'X::' packages | wc -l)` —
+because a count is measured once and then rots while the code moves, and nothing in the text
+says it is a snapshot. The next reader re-measures in seconds instead of planning against it.
+`ai:backlog stats` lists the active items that state one bare (`warnings`); it is advice, not a gate.
+
 Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome; ≥ 1 `ai:work` task with `recipe` + `risk` + ≥ 1 `context-ref` + `next-step`; prerequisites first, verification last; no task > ~4k tokens.
 
 ---
