@@ -255,8 +255,9 @@ compose_args() {
         case "$_async" in 1|true|yes) _args="$_args -f docker-compose.nats.yml"; _has_overlay=1 ;; esac
     fi
     if [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
+        # Only MySQL needs the bundled container; DB_DRIVER=sqlite runs without one.
         _db="$(env_val DB_DRIVER "")"
-        if [ -n "$_db" ]; then _args="$_args -f docker-compose.mysql.yml"; _has_overlay=1; fi
+        if [ "$_db" = "mysql" ]; then _args="$_args -f docker-compose.mysql.yml"; _has_overlay=1; fi
     fi
     if [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ]; then
         _redis="$(env_val REDIS_HOST "")"
@@ -1859,6 +1860,14 @@ cmd_server_start() {
     _overlays="$(compose_args)"
     [ -n "$_overlays" ] && info "Compose files: $_overlays"
 
+    # .env.default is the dev baseline (APP_DEBUG=1): a prod .env that leaves
+    # APP_DEBUG out inherits it and shows error details to visitors.
+    if [ "$(env_val APP_ENV "")" = "prod" ]; then
+        case "$(env_val APP_DEBUG 0)" in
+            1|true|TRUE|yes|on) warn "APP_ENV=prod with APP_DEBUG on: error pages show details. Set APP_DEBUG=0 in .env." ;;
+        esac
+    fi
+
     # ── Pre-flight Checks (Proxy & DNS) ──────────────────────────────
     if project_has_shared_domains; then
         router_sync_project_domains
@@ -1919,7 +1928,7 @@ cmd_server_start() {
     esac
 
     _db="$(env_val DB_DRIVER "")"
-    if [ -n "$_db" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
+    if [ "$_db" = "mysql" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
         wait_for_service "MySQL" "mysql" "3306" 5 4 20 && verify_mysql_auth || true
     fi
 
@@ -2375,10 +2384,19 @@ ensure_test_database() {
     fi
     if ! (
         env_export_compose_context
+        # No --wait: Compose v1 has no such flag, and on a fresh volume the
+        # healthcheck can pass on the init server before MySQL restarts. The
+        # SQL is idempotent, so it is retried until the final server takes it.
         # shellcheck disable=SC2086
-        $1 $2 up -d --wait mysql >/dev/null 2>&1
-        # shellcheck disable=SC2086
-        $1 $2 exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS $3; GRANT ALL PRIVILEGES ON $3.* TO '$_etd_user'@'%';\"" >/dev/null 2>&1
+        $1 $2 up -d mysql >/dev/null 2>&1 || exit 1
+        _etd_try=1
+        while [ "$_etd_try" -le 30 ]; do
+            # shellcheck disable=SC2086
+            $1 $2 exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS $3; GRANT ALL PRIVILEGES ON $3.* TO '$_etd_user'@'%';\"" >/dev/null 2>&1 && exit 0
+            _etd_try=$((_etd_try + 1))
+            sleep 2
+        done
+        exit 1
     ); then
         warn "Could not create the test database '$3' or grant '$_etd_user' on it; the schema sync below will say why."
         return 0
