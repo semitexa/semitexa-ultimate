@@ -110,7 +110,7 @@ env_merged_lines() {
 env_val() {
     _key="$1"
     _default="$2"
-    _val="$(env_merged_lines 2>/dev/null | grep -E "^[[:space:]]*${_key}[[:space:]]*=" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+    _val="$(env_merged_lines 2>/dev/null | grep -E "^[[:space:]]*${_key}[[:space:]]*=" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
     if [ -n "$_val" ]; then
         printf '%s' "$_val"
         return
@@ -151,7 +151,7 @@ env_export_compose_context() {
         for _line in $_merged; do
             [ -n "$_line" ] || continue
             _key="$(printf '%s' "$_line" | sed 's/[[:space:]]*=.*$//' | tr -d '[:space:]')"
-            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
             case "$_key" in
                 ''|*[!A-Za-z0-9_]*)
                     continue
@@ -480,7 +480,7 @@ router_collect_project_domains() {
     env_merged_lines 2>/dev/null \
         | grep -E '^[[:space:]]*[A-Z0-9_]*DOMAIN[A-Z0-9_]*[[:space:]]*=' 2>/dev/null \
         | while IFS= read -r _line; do
-            _value="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+            _value="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
             printf '%s\n' "$_value" | tr ', ' '\n\n' | while IFS= read -r _candidate; do
                 _candidate="$(printf '%s' "$_candidate" | tr '[:upper:]' '[:lower:]')"
                 [ -n "$_candidate" ] || continue
