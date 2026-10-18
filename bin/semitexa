@@ -2433,19 +2433,7 @@ cmd_test_run() {
     # root run left behind, long before the E2E-phase pass below.
     project_ownership_reclaim || exit 1
 
-    _overlays="$(compose_args)"
-    if [ -z "$_overlays" ]; then
-        _overlays="-f docker-compose.yml"
-    fi
-    _overlays="$_overlays -f docker-compose.test.yml"
-    # Test-side counterpart of docker-compose.path-repos.yml. Mounts the
-    # operator-local ./semitexa.pl symlink into the phpunit + e2e-runner
-    # services so composer path-repo packages whose source lives outside
-    # the project tree (currently semitexa/platform-ui) can be exercised by
-    # `bin/semitexa test:run`. Gate matches compose_args (symlink present).
-    if [ -f "$PROJECT_ROOT/docker-compose.test.path-repos.yml" ] && [ -L "$PROJECT_ROOT/semitexa.pl" ]; then
-        _overlays="$_overlays -f docker-compose.test.path-repos.yml"
-    fi
+    _overlays="$(test_compose_overlays)"
 
     _compose="$(compose_bin)"
     _files_display="$(printf '%s' "$_overlays" | sed 's/-f //g' | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
@@ -3133,7 +3121,7 @@ cmd_information() {
 # with no trace at all, and every auto-append silently went nowhere. Only ids
 # of a safe shape are forwarded: they are spliced into the command line.
 agent_env_args() {
-    for _agent_var in SEMITEXA_AI_TRACE_ID SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT; do
+    for _agent_var in SEMITEXA_AI_TRACE_ID SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT SEMITEXA_VERIFY_E2E_RUN; do
         eval "_agent_val=\${${_agent_var}:-}"
         case "$_agent_val" in
             ''|*[!A-Za-z0-9_.:-]*) ;;
@@ -3187,6 +3175,112 @@ agent_identity() {
     SEMITEXA_AGENT_SESSION="$_ai_name-$(printf '%06x' "$_ai_sum" | cut -c1-6)"
     SEMITEXA_AGENT_IMPLICIT="$_ai_name"
     export SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT
+}
+
+# The compose files the test services (phpunit, e2e-runner) are defined by:
+# the runtime set plus docker-compose.test.yml. Shared by test:run and the
+# ai:verify spec pass, so the two never run a spec against different services.
+test_compose_overlays() {
+    _tco="$(compose_args)"
+    if [ -z "$_tco" ]; then
+        _tco="-f docker-compose.yml"
+    fi
+    _tco="$_tco -f docker-compose.test.yml"
+    # Test-side counterpart of docker-compose.path-repos.yml. Mounts the
+    # operator-local ./semitexa.pl symlink into the phpunit + e2e-runner
+    # services so composer path-repo packages whose source lives outside
+    # the project tree (currently semitexa/platform-ui) can be exercised by
+    # `bin/semitexa test:run`. Gate matches compose_args (symlink present).
+    if [ -f "$PROJECT_ROOT/docker-compose.test.path-repos.yml" ] && [ -L "$PROJECT_ROOT/semitexa.pl" ]; then
+        _tco="$_tco -f docker-compose.test.path-repos.yml"
+    fi
+    printf '%s' "$_tco"
+}
+
+# ai:verify runs inside the app, which has no browser and no Docker, so a
+# changed Playwright spec was read by no check. The specs the plan names
+# (ai:verify --list-e2e) run here first, on the host, in the e2e-runner — and
+# only against an app that is ALREADY running: verify never starts, recreates
+# or restarts a container (--no-deps). Each outcome is filed under this run's
+# id and the spec's content hash, which is what the e2e target inside reads
+# (E2eSpecResultCheck); a spec with no result there stays incomplete, and
+# host.txt says why when nothing ran.
+cmd_ai_verify() {
+    _vrun="$(date +%s)-$$"
+    _vdir="$PROJECT_ROOT/var/run/verify-e2e/$_vrun"
+    SEMITEXA_VERIFY_E2E_RUN="$_vrun"
+    export SEMITEXA_VERIFY_E2E_RUN
+    if ! mkdir -p "$_vdir" 2>/dev/null; then
+        warn "Could not create $_vdir; changed E2E specs will be reported as not run."
+        cmd_proxy ai:verify "$@"
+        return $?
+    fi
+    # Other agents verify in parallel: only results nobody can still be reading go.
+    find "$PROJECT_ROOT/var/run/verify-e2e" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+
+    # --diff-stdin reads the path list from stdin, and it is read twice here.
+    _vstdin=""
+    for _varg in "$@"; do
+        if [ "$_varg" = "--diff-stdin" ]; then _vstdin="$_vdir/stdin"; fi
+    done
+    [ -z "$_vstdin" ] || cat > "$_vstdin"
+
+    if ! has_compose || ! is_app_running; then
+        printf '%s\n' "the app is not running, and verify never starts it (bin/semitexa server:start, then run ai:verify again)" > "$_vdir/host.txt"
+    elif [ ! -f "$PROJECT_ROOT/docker-compose.test.yml" ]; then
+        printf '%s\n' "docker-compose.test.yml is missing, so there is no e2e-runner to run it in" > "$_vdir/host.txt"
+    else
+        _vlist_rc=0
+        if [ -n "$_vstdin" ]; then
+            _vspecs="$(run_compose exec -T $(agent_env_args) app php vendor/bin/semitexa ai:verify "$@" --list-e2e < "$_vstdin" 2>/dev/null)" || _vlist_rc=$?
+        else
+            _vspecs="$(run_compose exec -T $(agent_env_args) app php vendor/bin/semitexa ai:verify "$@" --list-e2e < /dev/null 2>/dev/null)" || _vlist_rc=$?
+        fi
+        if [ "$_vlist_rc" -ne 0 ]; then
+            printf '%s\n' "asking the app which specs changed failed (ai:verify --list-e2e exited $_vlist_rc)" > "$_vdir/host.txt"
+            _vspecs=""
+        fi
+        _vcompose="$(compose_bin)"
+        _voverlays="$(test_compose_overlays)"
+        # One path per line, taken literally: no splitting on spaces, no globbing.
+        _vifs="$IFS"
+        IFS='
+'
+        set -f
+        for _vspec in $_vspecs; do
+            case "$_vspec" in
+                */tests/E2E/*.spec.ts) ;;
+                *) continue ;;
+            esac
+            [ -f "$PROJECT_ROOT/$_vspec" ] || continue
+            # The file name the e2e target reads: sha256 of the path, a dash,
+            # sha256 of the content (E2eSpecResultCheck::key()).
+            if command -v sha256sum >/dev/null 2>&1; then
+                _vsha="$(printf '%s' "$_vspec" | sha256sum | cut -d' ' -f1)-$(sha256sum "$PROJECT_ROOT/$_vspec" | cut -d' ' -f1)"
+            else
+                _vsha="$(printf '%s' "$_vspec" | shasum -a 256 | cut -d' ' -f1)-$(shasum -a 256 "$PROJECT_ROOT/$_vspec" | cut -d' ' -f1)"
+            fi
+            info "Running changed E2E spec on the host: $_vspec" >&2
+            _vrc=0
+            (
+                # The compose command and its -f list are split on spaces.
+                IFS="$_vifs"
+                set +f
+                env_export_compose_context
+                # shellcheck disable=SC2086
+                $_vcompose $_voverlays run --rm --no-deps -T e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
+            ) > "$_vdir/$_vsha.log" 2>&1 < /dev/null || _vrc=$?
+            printf '%s\n' "$_vrc" > "$_vdir/$_vsha.exit"
+        done
+        set +f
+        IFS="$_vifs"
+    fi
+
+    if [ -n "$_vstdin" ]; then
+        cmd_proxy ai:verify "$@" < "$_vstdin"
+    else
+        cmd_proxy ai:verify "$@"
+    fi
 }
 
 cmd_proxy() {
@@ -3318,6 +3412,7 @@ case "$COMMAND" in
     install)         cmd_install "$@" ;;
     demo:install)    cmd_demo_install "$@" ;;
     test:run)        cmd_test_run "$@" ;;
+    ai:verify)       cmd_ai_verify "$@" ;;
     --help|-h)       cmd_list --shell-only ;;
     --version|-V)    cmd_information vendor/bin/semitexa --version ;;
     help)           if [ $# -eq 0 ]; then cmd_list --shell-only; else cmd_information vendor/bin/semitexa help "$@"; fi ;;
