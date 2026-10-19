@@ -2402,7 +2402,10 @@ ensure_test_database() {
 _create=''
 _hex="$(printf '%s' "${MYSQL_PASSWORD:-}" | od -An -tx1 | tr -d ' \n')"
 [ -z "$_hex" ] || _create="SET @etd = CONCAT('CREATE USER IF NOT EXISTS ''$2''@''%'' IDENTIFIED BY ', QUOTE(CONVERT(UNHEX('$_hex') USING utf8mb4))); PREPARE etd FROM @etd; EXECUTE etd; DEALLOCATE PREPARE etd;"
-mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS $1; $_create GRANT ALL PRIVILEGES ON $1.* TO '$2'@'%';"
+# In a database-level grant _ is a one-character wildcard: escaped, the grant
+# names this database and not every one its name matches.
+_pattern="$(printf '%s' "$1" | sed 's/_/\\_/g')"
+mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS $1; $_create GRANT ALL PRIVILEGES ON \`$_pattern\`.* TO '$2'@'%';"
 ETD_SQL
             _etd_try=$((_etd_try + 1))
             sleep 2
