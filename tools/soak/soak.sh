@@ -20,6 +20,10 @@
 #   --out        where the run is written (created; must not exist yet)
 #   --scale      multiplies every request rate in load.mjs
 #   --live       long-held KISS streams
+#   --host       the host name the load sends, when the app answers its pages
+#                only on a tenant domain (demo.<base>): the load container gets
+#                an /etc/hosts naming it as 127.0.0.1. Node's fetch drops a
+#                Host header, so a name is the only way to send one.
 #
 # Needs docker and curl on the host. The load runs in the semitexa/e2e-runner
 # image on the container's own network, so no port has to be published.
@@ -60,6 +64,7 @@ PORT=9502
 OUT=''
 SCALE=1
 LIVE=20
+HOST=''
 INTERVAL=30
 RUNNER_IMAGE=${SOAK_RUNNER_IMAGE:-semitexa/e2e-runner:1.59.1-axe4.13.0}
 
@@ -71,6 +76,7 @@ while [ $# -gt 0 ]; do
         --out) OUT=$2; shift 2 ;;
         --scale) SCALE=$2; shift 2 ;;
         --live) LIVE=$2; shift 2 ;;
+        --host) HOST=$2; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -87,7 +93,14 @@ mkdir -p "$OUT"
 in_app() { docker exec "$CONTAINER" sh -c "$1"; }
 
 BASE="http://127.0.0.1:$PORT"
-in_app "curl -fsS -o /dev/null $BASE/" || { echo "the stack does not answer $BASE/ inside $CONTAINER" >&2; exit 2; }
+LOAD_BASE=$BASE
+HOSTS_MOUNT=''
+if [ -n "$HOST" ]; then
+    LOAD_BASE="http://$HOST:$PORT"
+    printf '127.0.0.1 localhost %s\n' "$HOST" > "$OUT/hosts"
+    HOSTS_MOUNT="-v $OUT/hosts:/etc/hosts:ro"
+fi
+in_app "curl -fsS -o /dev/null -H 'Host: ${HOST:-127.0.0.1}' $BASE/" || { echo "the stack does not answer $LOAD_BASE/ inside $CONTAINER" >&2; exit 2; }
 
 # A setting as the server sees it: the container's environment first, then the
 # project's .env, which the framework reads but `docker exec` does not.
@@ -99,8 +112,8 @@ LOG_BASE=$(setting SWOOLE_LOG_FILE var/log/swoole.log)
 
 # What the run measured, so a report can name it exactly.
 {
-    printf '{"started_at":"%s","container":"%s","port":%s,"duration_s":%s,"interval_s":%s,"scale":%s,"live":%s,' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CONTAINER" "$PORT" "$DURATION" "$INTERVAL" "$SCALE" "$LIVE"
+    printf '{"started_at":"%s","container":"%s","port":%s,"host":"%s","duration_s":%s,"interval_s":%s,"scale":%s,"live":%s,' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CONTAINER" "$PORT" "$HOST" "$DURATION" "$INTERVAL" "$SCALE" "$LIVE"
     printf '"max_request":"%s","log_base":"%s",' "$MAX_REQUEST" "$LOG_BASE"
     printf '"image":"%s",' "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")"
     printf '"swoole":"%s",' "$(in_app "php -r 'echo phpversion(\"swoole\");'" 2>/dev/null)"
@@ -218,9 +231,10 @@ sample() {
 # Named, so a stopped run takes its load with it instead of leaving it running.
 LOAD_NAME="soak-load-$(date -u +%Y%m%d%H%M%S)-$$"
 trap 'docker stop -t 5 "$LOAD_NAME" >/dev/null 2>&1' INT TERM EXIT
+# shellcheck disable=SC2086 # HOSTS_MOUNT is empty or one -v option
 docker run --rm --name "$LOAD_NAME" --network "container:$CONTAINER" --user "$(id -u):$(id -g)" \
-    -v "$HERE":/soak:ro -v "$OUT":/out \
-    "$RUNNER_IMAGE" node /soak/load.mjs --base-url "$BASE" --duration "$DURATION" \
+    -v "$HERE":/soak:ro -v "$OUT":/out $HOSTS_MOUNT \
+    "$RUNNER_IMAGE" node /soak/load.mjs --base-url "$LOAD_BASE" --duration "$DURATION" \
     --scale "$SCALE" --live "$LIVE" --out /out > "$OUT/load.log" 2>&1 &
 load_pid=$!
 
