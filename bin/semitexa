@@ -2376,8 +2376,9 @@ report_host_headroom() {
 #   $1 compose binary   $2 compose -f arguments   $3 test database name
 ensure_test_database() {
     case " $2 " in *docker-compose.mysql.yml*) ;; *) return 0 ;; esac
-    # The user Compose runs the app as: env_export_compose_context lets .env win over the caller.
-    _etd_user="$(env_val DB_USERNAME "${DB_USERNAME:-semitexa}")"
+    # The user Compose hands MySQL, resolved as Compose resolves it: .env wins over
+    # the caller, and an empty value falls back like ${DB_USERNAME:-semitexa}.
+    _etd_user="$(env_export_compose_context >/dev/null 2>&1; printf '%s' "${DB_USERNAME:-semitexa}")"
     # Only plain identifiers are interpolated into the SQL below.
     if printf '%s\n%s\n' "$3" "$_etd_user" | grep -Eq '[^A-Za-z0-9_]|^$'; then
         warn "Test database '$3' or user '$_etd_user' is not a plain identifier; create and grant it yourself."
@@ -2392,8 +2393,17 @@ ensure_test_database() {
         $1 $2 up -d mysql >/dev/null 2>&1 || exit 1
         _etd_try=1
         while [ "$_etd_try" -le 30 ]; do
+            # MySQL creates MYSQL_USER only when the volume is first initialised, so a
+            # user renamed since has no account to grant to: it is created with the
+            # password Compose hands MySQL, passed hex-encoded so no character of it
+            # can break the SQL. An account that exists keeps its password.
             # shellcheck disable=SC2086
-            $1 $2 exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS $3; GRANT ALL PRIVILEGES ON $3.* TO '$_etd_user'@'%';\"" >/dev/null 2>&1 && exit 0
+            $1 $2 exec -T mysql sh -s "$3" "$_etd_user" >/dev/null 2>&1 <<'ETD_SQL' && exit 0
+_create=''
+_hex="$(printf '%s' "${MYSQL_PASSWORD:-}" | od -An -tx1 | tr -d ' \n')"
+[ -z "$_hex" ] || _create="SET @etd = CONCAT('CREATE USER IF NOT EXISTS ''$2''@''%'' IDENTIFIED BY ', QUOTE(CONVERT(UNHEX('$_hex') USING utf8mb4))); PREPARE etd FROM @etd; EXECUTE etd; DEALLOCATE PREPARE etd;"
+mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS $1; $_create GRANT ALL PRIVILEGES ON $1.* TO '$2'@'%';"
+ETD_SQL
             _etd_try=$((_etd_try + 1))
             sleep 2
         done
