@@ -1610,11 +1610,14 @@ cmd_lint_skin_tokens() {
         info "  This is normal for fresh installs without src/skins/ — skipping."
         exit 0
     fi
-    # `|| _status=$?`, not a bare call: under set -e a non-zero status would
-    # end the command here, before the fallback below.
-    _status=0
-    run_project_php_script "$_script" "$@" || _status=$?
-    [ "$_status" -ne 127 ] && exit "$_status"
+    # `|| _lst_status=$?`, not a bare call: under set -e a non-zero status would
+    # end the command here, before the fallback below. Its own name: sh has no
+    # locals, and run_project_php_script -> is_app_running sets _status to
+    # "running", which a passing guard never overwrote — the guard then ran a
+    # second time on the host's PHP.
+    _lst_status=0
+    run_project_php_script "$_script" "$@" || _lst_status=$?
+    [ "$_lst_status" -ne 127 ] && exit "$_lst_status"
     # The app is not running: the host's PHP is the only one left, if it has one.
     if ! command -v php >/dev/null 2>&1; then
         error "lint:skin-tokens runs on the app's PHP: start it first (bin/semitexa server:start)."
