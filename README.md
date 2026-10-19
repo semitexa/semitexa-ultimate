@@ -45,6 +45,7 @@ To stop the stack: `bin/semitexa server:stop`. To see every command: `bin/semite
 
 - **Schema and data.** `bin/semitexa orm:sync` creates and updates tables from your entities; `orm:diff`, `orm:status` and `orm:seed` sit next to it.
 - **Logs.** `bin/semitexa logs:app`.
+- **Upgrading.** `bin/semitexa update --dry-run` shows what the newest release changes, `bin/semitexa update` applies it, then `bin/semitexa server:restart`. A scaffold file you edited is never overwritten: the new version arrives beside it as `.new`. See https://semitexa.com/docs/get-started/upgrading.
 
 ## Project layout
 
