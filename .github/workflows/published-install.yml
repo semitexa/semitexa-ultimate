@@ -1,7 +1,10 @@
 # Install Semitexa the way a newcomer does — from semitexa.com/install.sh, the
 # semitexa/installer image and the ultimate release on Packagist — and fail if
-# any step of that path does not work. tools/published-install.sh is the whole
-# gate; this workflow gives it a clean Docker host.
+# any step of that path does not work (tools/published-install.sh). Next to it,
+# install the release before that one and `bin/semitexa update` it to this one,
+# with code and an edit of the project's own that must survive
+# (tools/upgrade-from-previous.sh). The scripts are the gates; this workflow
+# gives them clean Docker hosts. release-finalize reads the run's verdict.
 #
 # Why three triggers:
 #   - a release tag: every release tags this package (release-finalize), so
@@ -23,10 +26,12 @@ on:
     branches: [develop, master]
     paths:
       - tools/published-install.sh
+      - tools/upgrade-from-previous.sh
       - .github/workflows/published-install.yml
   pull_request:
     paths:
       - tools/published-install.sh
+      - tools/upgrade-from-previous.sh
       - .github/workflows/published-install.yml
   schedule:
     # Nightly, 04:41 UTC: after stack smoke (03:23), away from the hour.
@@ -81,4 +86,40 @@ jobs:
             ${{ runner.temp }}/published-install/summary.txt
             ${{ runner.temp }}/published-install/logs/
             ${{ runner.temp }}/published-install.out
+          if-no-files-found: warn
+
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the gate
+        uses: actions/checkout@v4
+
+      - name: Upgrade from the release before
+        env:
+          TO_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.expect_version || '' }}
+        run: |
+          set -o pipefail
+          tools/upgrade-from-previous.sh ${TO_VERSION:+--to "$TO_VERSION"} \
+            --workdir "$RUNNER_TEMP/upgrade" | tee "$RUNNER_TEMP/upgrade.out"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Upgrade from the release before'
+            echo '```'
+            cat "$RUNNER_TEMP/upgrade/summary.txt" 2>/dev/null || echo 'no summary: the gate did not start'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-logs
+          path: |
+            ${{ runner.temp }}/upgrade/summary.txt
+            ${{ runner.temp }}/upgrade/logs/
+            ${{ runner.temp }}/upgrade.out
           if-no-files-found: warn
