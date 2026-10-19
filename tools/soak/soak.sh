@@ -49,7 +49,10 @@
 #   log.csv      what swoole.log (the live, rotated file) and the container output gained
 #   log-incidents.txt  the forced terminations, crashes and errors themselves
 # and load.csv + errors.ndjson from load.mjs, run.json describing the run.
-# Exit status: the load generator's (non-zero when its preflight failed).
+# Exit status: 2 when a startup check failed (no container, no php, the stack
+# or its /metrics not answering), else the load generator's (non-zero when its
+# preflight failed). A /metrics without worker_pid is a WARNING, not a failure:
+# the RSS/anon leak signal does not need it, and run.json says heap_per_worker.
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
@@ -113,11 +116,39 @@ setting() {
 MAX_REQUEST=$(setting SWOOLE_MAX_REQUEST 10000)
 LOG_BASE=$(setting SWOOLE_LOG_FILE var/log/swoole.log)
 
+# /metrics, asked exactly the way sample() asks it, answered as "<status> <body>":
+# body is "pid" (the stats, naming the worker that answered), "nopid" (the
+# stats without worker_pid: a core before 4695c2b) or "nojson" (not the stats).
+# Without this check a disabled or token-guarded /metrics, or an older core,
+# records 72 hours of empty heap columns and says so only in the summary.
+metrics_probe() {
+    in_app "curl -sS -m 5 -w '\n%{http_code}' $BASE/metrics" 2>/dev/null \
+        | php -r '$all = stream_get_contents(STDIN); $at = strrpos($all, "\n"); $code = $at === false ? "" : substr($all, $at + 1); $d = $at === false ? null : json_decode(substr($all, 0, $at), true);
+            echo $code === "" ? "none" : $code, " ", !is_array($d) || !isset($d["worker_memory_usage"]) ? "nojson" : ((string) ($d["worker_pid"] ?? "") === "" ? "nopid" : "pid"), "\n";' 2>/dev/null
+}
+probe=$(metrics_probe)
+METRICS_CODE=${probe%% *}
+METRICS_BODY=${probe#* }
+case $METRICS_CODE in
+    200) ;;
+    404) echo "/metrics answers 404 inside $CONTAINER: it is disabled; run the stack with SEMITEXA_METRICS_ENABLED=1" >&2; exit 2 ;;
+    401|403) echo "/metrics answers $METRICS_CODE inside $CONTAINER: SEMITEXA_METRICS_TOKEN is set (the soak sends no token); unset it for the run" >&2; exit 2 ;;
+    ''|none|000) echo "/metrics does not answer inside $CONTAINER ($BASE/metrics: no HTTP response)" >&2; exit 2 ;;
+    *) echo "/metrics answers $METRICS_CODE inside $CONTAINER, not 200" >&2; exit 2 ;;
+esac
+case $METRICS_BODY in
+    pid) HEAP_PER_WORKER='measured' ;;
+    nopid)
+        HEAP_PER_WORKER='unmeasured: /metrics has no worker_pid (core before 4695c2b)'
+        echo "WARNING: /metrics has no worker_pid (core before 4695c2b): PHP heap per worker will not be followed; the RSS/anon leak signal still is" >&2 ;;
+    *) echo "/metrics answers 200 inside $CONTAINER but not with the server stats (is SEMITEXA_METRICS_ENABLED=1, or does a page route answer it?)" >&2; exit 2 ;;
+esac
+
 # What the run measured, so a report can name it exactly.
 {
     printf '{"started_at":"%s","container":"%s","port":%s,"host":"%s","duration_s":%s,"interval_s":%s,"scale":%s,"live":%s,' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CONTAINER" "$PORT" "$HOST" "$DURATION" "$INTERVAL" "$SCALE" "$LIVE"
-    printf '"max_request":"%s","log_base":"%s",' "$MAX_REQUEST" "$LOG_BASE"
+    printf '"max_request":"%s","log_base":"%s","heap_per_worker":"%s",' "$MAX_REQUEST" "$LOG_BASE" "$HEAP_PER_WORKER"
     printf '"image":"%s",' "$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")"
     printf '"swoole":"%s",' "$(in_app "php -r 'echo phpversion(\"swoole\");'" 2>/dev/null)"
     printf '"php":"%s",' "$(in_app "php -r 'echo PHP_VERSION;'" 2>/dev/null)"

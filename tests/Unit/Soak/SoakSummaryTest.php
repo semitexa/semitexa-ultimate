@@ -100,6 +100,11 @@ final class SoakSummaryTest extends TestCase
         self::assertSame('var/log/swoole.log.20261019', $summary['stack']['log_files']);
         self::assertSame(12, $summary['stack']['connection_num_max'], 'only answered /metrics samples count');
         self::assertSame('3 of 4', $summary['stack']['metrics_samples']);
+        self::assertSame('measured', $summary['stack']['heap_per_worker']);
+        // Followed, but worker 8 never answered: too few points is "-", not "unmeasured".
+        $text = $this->summariseText();
+        self::assertMatchesRegularExpression('/^8 +worker .* -$/m', $text);
+        self::assertMatchesRegularExpression('/^heap_per_worker +measured$/m', $text);
 
         $ssr = $summary['scenarios']['ssr'];
         self::assertSame(300, $ssr['requests']);
@@ -155,6 +160,55 @@ final class SoakSummaryTest extends TestCase
         self::assertNull($summary['stack']['forced_terminations'], 'no log found: unmeasured, not zero');
         self::assertStringStartsWith('unmeasured', $summary['stack']['log_files']);
         self::assertSame('3 of ~3', $summary['stack']['samples']);
+        self::assertSame('unmeasured: no /metrics samples', $summary['stack']['heap_per_worker']);
+    }
+
+    /**
+     * A core before 4695c2b answers /metrics without worker_pid: every answer
+     * is 200 and the heap of no worker can be followed. That is unmeasured for
+     * one reason, and must not read like workers that answered too few times.
+     */
+    #[Test]
+    public function metrics_without_worker_pid_read_as_unmeasured_not_as_too_few_points(): void
+    {
+        $this->write('run.json', '{"duration_s":7200,"interval_s":3600}');
+        $this->write('load.csv', ['ts,scenario,count,errors,dropped,p50_ms,p95_ms,p99_ms,max_ms,open']);
+        $this->write('workers.csv', [
+            'ts,pid,ppid,rss_kb,anon_kb,shmem_kb,elapsed_s,start_ticks',
+            '2026-10-19T00:00:00Z,7,1,102400,51200,51200,10,200',
+            '2026-10-19T01:00:00Z,7,1,102400,51200,51200,3610,200',
+            '2026-10-19T02:00:00Z,7,1,102400,51200,51200,7210,200',
+        ]);
+        $this->write('metrics.csv', [
+            'ts,http,worker_pid,connection_num,coroutine_num,worker_memory_usage,request_count',
+            '2026-10-19T00:00:00Z,200,,5,3,52428800,1000',
+            '2026-10-19T01:00:00Z,200,,12,5,54525952,1200',
+            '2026-10-19T02:00:00Z,200,,9,5,56623104,1350',
+        ]);
+
+        $summary = $this->summarise();
+
+        self::assertSame('unmeasured: /metrics has no worker_pid (core before 4695c2b)', $summary['stack']['heap_per_worker']);
+        self::assertSame('3 of 3', $summary['stack']['metrics_samples'], 'every answer was 200');
+        self::assertSame(0, $summary['workers'][0]['heap_samples']);
+        self::assertArrayHasKey('heap_mb_per_hour_after_first_hour', $summary['workers'][0]);
+        self::assertNull($summary['workers'][0]['heap_mb_per_hour_after_first_hour']);
+
+        $text = $this->summariseText();
+        self::assertMatchesRegularExpression('/^7 +worker .* unmeasured$/m', $text);
+        self::assertMatchesRegularExpression('/^heap_per_worker +unmeasured: \/metrics has no worker_pid \(core before 4695c2b\)$/m', $text);
+    }
+
+    #[Test]
+    public function metrics_that_never_answered_200_read_as_unmeasured(): void
+    {
+        $this->write('load.csv', ['ts,scenario,count,errors,dropped,p50_ms,p95_ms,p99_ms,max_ms,open']);
+        $this->write('metrics.csv', [
+            'ts,http,worker_pid,connection_num,coroutine_num,worker_memory_usage,request_count',
+            '2026-10-19T00:00:00Z,403,,,,,',
+        ]);
+
+        self::assertSame('unmeasured: /metrics never answered 200', $this->summarise()['stack']['heap_per_worker']);
     }
 
     /**
@@ -192,10 +246,21 @@ final class SoakSummaryTest extends TestCase
     /** @return array<string, mixed> */
     private function summarise(): array
     {
+        return json_decode($this->runSummary(' --json'), true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    /** The summary.txt a run ends with. */
+    private function summariseText(): string
+    {
+        return $this->runSummary('');
+    }
+
+    private function runSummary(string $flags): string
+    {
         exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(dirname(__DIR__, 3) . '/tools/soak/summary.php')
-            . ' ' . escapeshellarg($this->run) . ' --json 2>&1', $output, $status);
+            . ' ' . escapeshellarg($this->run) . $flags . ' 2>&1', $output, $status);
         self::assertSame(0, $status, implode("\n", $output));
 
-        return json_decode(implode("\n", $output), true, 512, JSON_THROW_ON_ERROR);
+        return implode("\n", $output);
     }
 }

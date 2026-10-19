@@ -185,6 +185,17 @@ $atStart = array_unique(array_map(
 ));
 
 // The heap PHP itself reports, by the worker that answered /metrics.
+// Followed per worker only when /metrics named the worker (worker_pid, core
+// 4695c2b): without it every worker's heap columns are empty for one reason,
+// which is not the same as a worker that answered too few times for a slope.
+$answered = array_values(array_filter($metrics, static fn ($r) => $r['http'] === '200'));
+$heapPerWorker = match (true) {
+    $metrics === [] => 'unmeasured: no /metrics samples',
+    $answered === [] => 'unmeasured: /metrics never answered 200',
+    !in_array(true, array_map(static fn ($r) => ($r['worker_pid'] ?? '') !== '', $answered), true) => 'unmeasured: /metrics has no worker_pid (core before 4695c2b)',
+    default => 'measured',
+};
+$heapMeasured = $heapPerWorker === 'measured';
 $heap = [];
 foreach ($metrics as $row) {
     if ($row['http'] === '200' && ($row['worker_pid'] ?? '') !== '' && $row['worker_memory_usage'] !== '') {
@@ -236,8 +247,9 @@ $summary['stack']['processes_seen'] = count($byProcess);
 // A worker the server replaced (max_request, the memory watchdog, a crash) is a new process.
 $summary['stack']['worker_replacements'] = max(0, count($byProcess) - count($atStart));
 
-$ok = array_values(array_filter($metrics, static fn ($r) => $r['http'] === '200'));
+$ok = $answered;
 $summary['stack']['metrics_samples'] = count($ok) . ' of ' . count($metrics);
+$summary['stack']['heap_per_worker'] = $heapPerWorker;
 $summary['stack']['connection_num_max'] = $ok === [] ? null : max(array_map(static fn ($r) => (int) $r['connection_num'], $ok));
 $summary['stack']['coroutine_num_median'] = median(array_column($ok, 'coroutine_num'));
 // What max_request alone accounts for: about one recycle per max_request
@@ -276,9 +288,11 @@ if ($summary['live'] !== null) {
     printf("\nlive streams: %d held, %d errors, median hold %s s, open at a window end: min %s, median %s\n", $l['streams'], $l['errors'], $fmt($l['held_median_s']), $fmt($l['open_min']), $fmt($l['open_median']));
 }
 // "steady" = after the first hour of each process; "-" until there is one.
-printf("\n%-7s %-7s %7s %6s %9s %9s %8s %9s %9s %9s %9s %9s\n", 'pid', 'role', 'samples', 'hours', 'rss first', 'rss last', 'rss MB/h', 'anon frst', 'anon last', 'anon MB/h', 'anon stdy', 'heap stdy');
+// The heap column says "unmeasured" when no worker could be followed at all.
+$heapCell = static fn ($v) => $heapMeasured ? $fmt($v) : 'unmeasured';
+printf("\n%-7s %-7s %7s %6s %9s %9s %8s %9s %9s %9s %9s %10s\n", 'pid', 'role', 'samples', 'hours', 'rss first', 'rss last', 'rss MB/h', 'anon frst', 'anon last', 'anon MB/h', 'anon stdy', 'heap stdy');
 foreach ($summary['workers'] as $w) {
-    printf("%-7d %-7s %7d %6s %9s %9s %8s %9s %9s %9s %9s %9s\n", $w['pid'], $w['role'], $w['samples'], $fmt($w['hours_seen']), $fmt($w['rss_first_mb']), $fmt($w['rss_last_mb']), $fmt($w['rss_mb_per_hour']), $fmt($w['anon_first_mb']), $fmt($w['anon_last_mb']), $fmt($w['anon_mb_per_hour']), $fmt($w['anon_mb_per_hour_after_first_hour']), $fmt($w['heap_mb_per_hour_after_first_hour']));
+    printf("%-7d %-7s %7d %6s %9s %9s %8s %9s %9s %9s %9s %10s\n", $w['pid'], $w['role'], $w['samples'], $fmt($w['hours_seen']), $fmt($w['rss_first_mb']), $fmt($w['rss_last_mb']), $fmt($w['rss_mb_per_hour']), $fmt($w['anon_first_mb']), $fmt($w['anon_last_mb']), $fmt($w['anon_mb_per_hour']), $fmt($w['anon_mb_per_hour_after_first_hour']), $heapCell($w['heap_mb_per_hour_after_first_hour']));
 }
 echo "\n";
 foreach ($summary['stack'] as $key => $value) {
