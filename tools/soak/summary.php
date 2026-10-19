@@ -194,7 +194,16 @@ foreach ($metrics as $row) {
 }
 
 foreach ($byProcess as $p) {
-    $h = $heap[(string) $p['pid']] ?? null;
+    // metrics.csv knows the pid, not the process: after a container restart the
+    // same pid is another worker, so only samples inside this one's span count.
+    $h = null;
+    foreach (array_keys($heap[(string) $p['pid']]['t'] ?? []) as $i) {
+        $at = $heap[(string) $p['pid']]['t'][$i];
+        if ($at >= $p['t'][0] && $at <= end($p['t'])) {
+            $h['t'][] = $at;
+            $h['mb'][] = $heap[(string) $p['pid']]['mb'][$i];
+        }
+    }
     $summary['workers'][] = [
         'pid' => $p['pid'],
         'role' => isset($parents[(string) $p['pid']]) ? 'master' : 'worker',

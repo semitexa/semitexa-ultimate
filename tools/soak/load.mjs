@@ -107,7 +107,7 @@ function percentile(sorted, p) {
 }
 
 let liveOpen = 0;
-function flush() {
+function flush(final = false) {
     const ts = new Date().toISOString();
     let rows = '';
     for (const [name, b] of stats) {
@@ -116,7 +116,8 @@ function flush() {
             ts, name, b.count, b.errors, b.dropped,
             percentile(sorted, 50), percentile(sorted, 95), percentile(sorted, 99),
             sorted.length ? sorted[sorted.length - 1].toFixed(1) : '',
-            name === 'live' ? liveOpen : '',
+            // After the load stopped every stream is closed by design: no count, or open_min would always read 0.
+            name === 'live' && !final ? liveOpen : '',
         ].join(',') + '\n';
         b.samples = [];
         b.count = 0;
@@ -350,7 +351,7 @@ await Promise.allSettled(holders);
 // Let what is in flight finish, so the last window counts it.
 await new Promise((r) => setTimeout(r, 2000));
 clearInterval(flusher);
-flush();
+flush(true);
 console.log('load: done');
 
 function parseArgs(argv) {

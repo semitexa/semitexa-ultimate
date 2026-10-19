@@ -191,12 +191,15 @@ edit_kept() {
     cd "$PROJECT" || return 1
     grep -qxF "$MARKER" CLAUDE.md || { echo 'the update overwrote the project'"'"'s edit to CLAUDE.md'; return 1; }
     local shipped
-    shipped=$(app_php -r '$f = "vendor/semitexa/update/resources/scaffold/CLAUDE.md"; echo is_file($f) ? hash_file("sha256", $f) : "";')
-    if [ -n "$shipped" ] && [ "$shipped" != "$(sha256sum "$WORKDIR/CLAUDE.md.before" | cut -d' ' -f1)" ] && [ ! -f CLAUDE.md.new ]; then
+    # An empty answer is not "nothing to compare": it is a check that did not run.
+    shipped=$(app_php -r '$f = "vendor/semitexa/update/resources/scaffold/CLAUDE.md"; echo is_file($f) ? hash_file("sha256", $f) : "";') \
+        || { echo 'could not read the shipped CLAUDE.md: the app container did not answer after the update'; return 1; }
+    [ -n "$shipped" ] || { echo "ultimate $TO ships no vendor/semitexa/update/resources/scaffold/CLAUDE.md: the .new check cannot run"; return 1; }
+    if [ "$shipped" != "$(sha256sum "$WORKDIR/CLAUDE.md.before" | cut -d' ' -f1)" ] && [ ! -f CLAUDE.md.new ]; then
         echo "ultimate $TO ships a different CLAUDE.md, but no CLAUDE.md.new was written next to the edited one"
         return 1
     fi
-    echo "the edit survived${shipped:+; .new: $( [ -f CLAUDE.md.new ] && echo written || echo 'not needed')}"
+    echo "the edit survived; .new: $( [ -f CLAUDE.md.new ] && echo written || echo 'not needed')"
 }
 
 cleanup() {

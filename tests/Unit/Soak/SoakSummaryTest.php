@@ -84,6 +84,8 @@ final class SoakSummaryTest extends TestCase
         self::assertEquals(60.0, $workers[7]['anon_last_mb']);
         self::assertEquals(2.0, $workers[7]['heap_mb_per_hour'], 'the heap /metrics reported for that pid');
         self::assertSame(3, $workers[7]['heap_samples']);
+        self::assertArrayHasKey(8, $workers, 'worker 8 is in the summary');
+        self::assertArrayHasKey('heap_mb_per_hour', $workers[8]);
         self::assertNull($workers[8]['heap_mb_per_hour'], 'no /metrics answer from this pid: unmeasured, not flat');
 
         self::assertSame(1, $summary['stack']['worker_replacements'], 'worker 8 was replaced by 9');
@@ -147,7 +149,9 @@ final class SoakSummaryTest extends TestCase
         self::assertCount(2, $summary['workers'], 'the same pid after a restart is another process');
         self::assertSame(1, $summary['stack']['worker_replacements']);
         self::assertSame(1, $summary['stack']['container_restarts']);
+        self::assertArrayHasKey('anon_mb_per_hour', $summary['workers'][0]);
         self::assertNull($summary['workers'][0]['anon_mb_per_hour'], 'no anon column: unmeasured, not flat');
+        self::assertArrayHasKey('forced_terminations', $summary['stack']);
         self::assertNull($summary['stack']['forced_terminations'], 'no log found: unmeasured, not zero');
         self::assertStringStartsWith('unmeasured', $summary['stack']['log_files']);
         self::assertSame('3 of ~3', $summary['stack']['samples']);

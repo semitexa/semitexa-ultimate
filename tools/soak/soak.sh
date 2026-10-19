@@ -25,7 +25,7 @@
 #                an /etc/hosts naming it as 127.0.0.1. Node's fetch drops a
 #                Host header, so a name is the only way to send one.
 #
-# Needs docker and curl on the host. The load runs in the semitexa/e2e-runner
+# Needs docker and php on the host (curl runs inside the app container). The load runs in the semitexa/e2e-runner
 # image on the container's own network, so no port has to be published.
 #
 # The stack under test should run as production does, plus two knobs:
@@ -88,6 +88,9 @@ ROOT=$(cd "$HERE/../.." && pwd)
 case $OUT in /*) ;; *) OUT=$PWD/$OUT ;; esac
 [ ! -e "$OUT" ] || { echo "$OUT already exists: a run never overwrites another" >&2; exit 2; }
 docker inspect "$CONTAINER" >/dev/null 2>&1 || { echo "no such container: $CONTAINER" >&2; exit 2; }
+# Host php reads every sample and writes the summary; without it the run would
+# record nothing for 72 hours and say so only at the end.
+command -v php >/dev/null 2>&1 || { echo "soak.sh needs php on the host" >&2; exit 2; }
 mkdir -p "$OUT"
 
 in_app() { docker exec "$CONTAINER" sh -c "$1"; }
@@ -156,7 +159,7 @@ read_log() { in_app "tail -c +$(($2 + 1)) '$1' 2>/dev/null | head -c $(($3 - $2)
 
 log_file=''
 log_offset=0
-last_ts=''
+last_logs=''
 
 sample() {
     local ts
@@ -208,13 +211,17 @@ sample() {
 
     # What never reaches swoole.log: a PHP fatal of a worker that is not
     # daemonized goes to the container's output.
-    local fatals=0
-    if [ -n "$last_ts" ]; then
-        fatals=$(docker logs --since "$last_ts" "$CONTAINER" 2>&1 \
+    # Each window ends where the next begins, at the moment of the call and to
+    # the nanosecond: bounded by the sample's start, a line written between it
+    # and this call was counted in two windows.
+    local fatals=0 logs_now
+    logs_now=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+    if [ -n "$last_logs" ]; then
+        fatals=$(docker logs --since "$last_logs" --until "$logs_now" "$CONTAINER" 2>&1 \
             | grep -E 'Fatal error|Allowed memory size|Segmentation fault|Out of memory|abnormal exit' \
             | tee -a "$OUT/log-incidents.txt" | grep -c . || true)
     fi
-    last_ts=$ts
+    last_logs=$logs_now
 
     # swoole.log lines are "[time *pid.worker]<TAB>LEVEL<TAB>message".
     printf '%s\n' "$new" | awk -F'\t' -v ts="$ts" -v file="${log_file:-unresolved}" -v fatals="$fatals" '
