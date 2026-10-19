@@ -43,7 +43,7 @@
 
 - **PHP** `^8.4`; Swoole; `semitexa/core` dev-main or v1.x
 - **Symfony** 7.x, **Twig** ^3.10, PSR Container + Semitexa DI (`#[SatisfiesServiceContract]`, `#[InjectAsReadonly|Mutable|Factory]`)
-- Exact pins in `composer.lock`. **No Laravel / Illuminate.**
+- Exact pins in `composer.lock`. **Only the stack above:** no other PHP framework, nor components taken from one.
 
 ## Module layout
 
