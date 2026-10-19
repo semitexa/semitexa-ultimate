@@ -94,6 +94,12 @@ docker inspect "$CONTAINER" >/dev/null 2>&1 || { echo "no such container: $CONTA
 # Host php reads every sample and writes the summary; without it the run would
 # record nothing for 72 hours and say so only at the end.
 command -v php >/dev/null 2>&1 || { echo "soak.sh needs php on the host" >&2; exit 2; }
+# The container-output windows are nanosecond timestamps. A date without %N
+# (macOS, BSD) prints it literally, docker logs refuses the value, and every
+# window would count 0 fatals that were never read.
+case $(date -u +%N) in
+    ''|*[!0-9]*) echo "soak.sh needs a date that supports %N (GNU coreutils; on macOS: brew install coreutils, then put gnubin first on PATH)" >&2; exit 2 ;;
+esac
 mkdir -p "$OUT"
 
 in_app() { docker exec "$CONTAINER" sh -c "$1"; }
