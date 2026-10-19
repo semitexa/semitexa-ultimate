@@ -1586,6 +1586,22 @@ cmd_lint_skin_legacy() {
 # Fails when any src/skins/<slug>/tokens.css drifts from a fresh TokenEmitter
 # rebuild of skin.json, or when the canonical structural markers / forbidden
 # legacy markers regress. Runs locally — does not require the app container.
+# Run one of the project's PHP scripts on the project's own PHP: the app
+# container's. The host's may be missing (an install needs none) or another
+# version, and composer's platform check then kills the script before it
+# starts. Measured on a GitHub runner with PHP 8.3: a clean project's
+# self-test reported the skin token guard FAILED. Returns 127 when the app is
+# not running, so a caller can say the check did not run instead of failing it.
+run_project_php_script() {
+    _rpps_script="$1"
+    shift
+    is_app_running || return 127
+    case "$_rpps_script" in
+        "$PROJECT_ROOT"/*) _rpps_script="${_rpps_script#"$PROJECT_ROOT"/}" ;;
+    esac
+    run_compose exec -T -w /var/www/html -e SEMITEXA_PROJECT_ROOT=/var/www/html app php "$_rpps_script" "$@"
+}
+
 cmd_lint_skin_tokens() {
     _script="$(find_theme_script lint-skin-tokens.php || true)"
     if [ -z "$_script" ]; then
@@ -1594,8 +1610,14 @@ cmd_lint_skin_tokens() {
         info "  This is normal for fresh installs without src/skins/ — skipping."
         exit 0
     fi
+    # `|| _status=$?`, not a bare call: under set -e a non-zero status would
+    # end the command here, before the fallback below.
+    _status=0
+    run_project_php_script "$_script" "$@" || _status=$?
+    [ "$_status" -ne 127 ] && exit "$_status"
+    # The app is not running: the host's PHP is the only one left, if it has one.
     if ! command -v php >/dev/null 2>&1; then
-        error "php CLI not available — cannot run lint:skin-tokens locally."
+        error "lint:skin-tokens runs on the app's PHP: start it first (bin/semitexa server:start)."
         exit 1
     fi
     SEMITEXA_PROJECT_ROOT="$PROJECT_ROOT" php "$_script" "$@"
@@ -2107,12 +2129,15 @@ cmd_self_test() {
         fi
     fi
     _skin_tokens="$(find_theme_script lint-skin-tokens.php || true)"
-    if [ -n "$_skin_tokens" ] && command -v php >/dev/null 2>&1; then
-        if ( SEMITEXA_PROJECT_ROOT="$PROJECT_ROOT" php "$_skin_tokens" >/dev/null 2>&1 ); then
-            success "Skin token canonical guard: clean"; _ok=$((_ok+1))
-        else
-            error "Skin token canonical guard: FAILED — run 'bin/semitexa lint:skin-tokens' for details"; _fail=$((_fail+1))
-        fi
+    if [ -n "$_skin_tokens" ]; then
+        # On the app's PHP only: the host's is not the project's (see run_project_php_script).
+        _skin_tokens_status=0
+        run_project_php_script "$_skin_tokens" >/dev/null 2>&1 || _skin_tokens_status=$?
+        case $_skin_tokens_status in
+            0) success "Skin token canonical guard: clean"; _ok=$((_ok+1)) ;;
+            127) info "Skin token canonical guard: not run (it runs on the app's PHP; the app is not running)" ;;
+            *) error "Skin token canonical guard: FAILED — run 'bin/semitexa lint:skin-tokens' for details"; _fail=$((_fail+1)) ;;
+        esac
     fi
     printf "\n  Results: %s%d OK%s, %s%d Warn%s, %s%d Error%s\n\n" "$C_GREEN" "$_ok" "$C_RESET" "$C_YELLOW" "$_warn" "$C_RESET" "$C_RED" "$_fail" "$C_RESET"
     [ "$_fail" -gt 0 ] && exit 1; exit 0
