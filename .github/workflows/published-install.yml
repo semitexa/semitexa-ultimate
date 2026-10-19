@@ -1,0 +1,84 @@
+# Install Semitexa the way a newcomer does — from semitexa.com/install.sh, the
+# semitexa/installer image and the ultimate release on Packagist — and fail if
+# any step of that path does not work. tools/published-install.sh is the whole
+# gate; this workflow gives it a clean Docker host.
+#
+# Why three triggers:
+#   - a release tag: every release tags this package (release-finalize), so
+#     the tag is the moment a new version reaches people. The run waits for
+#     Packagist to list it, then requires the project to have installed
+#     exactly the semitexa/* versions that release pins.
+#   - nightly: install.sh, the installer image and Packagist change without
+#     anything happening in this repository (the installer image is rebuilt on
+#     every push to the installer's master).
+#   - by hand, with or without a version.
+#   - a push or pull request that changes the gate itself, so a change to it
+#     is proven on a clean runner before it is trusted.
+
+name: Published install
+
+on:
+  push:
+    tags: ['20*']
+    branches: [develop, master]
+    paths:
+      - tools/published-install.sh
+      - .github/workflows/published-install.yml
+  pull_request:
+    paths:
+      - tools/published-install.sh
+      - .github/workflows/published-install.yml
+  schedule:
+    # Nightly, 04:41 UTC: after stack smoke (03:23), away from the hour.
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      expect_version:
+        description: 'semitexa/ultimate version to wait for and pin-check (empty: whatever Packagist serves)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-install-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Only for the script itself: the install never reads this checkout.
+      - name: Check out the gate
+        uses: actions/checkout@v4
+
+      - name: Install from public sources
+        env:
+          EXPECT_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.expect_version || '' }}
+        run: |
+          set -o pipefail
+          tools/published-install.sh ${EXPECT_VERSION:+--expect-version "$EXPECT_VERSION"} \
+            --workdir "$RUNNER_TEMP/published-install" | tee "$RUNNER_TEMP/published-install.out"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Published install'
+            echo '```'
+            cat "$RUNNER_TEMP/published-install/summary.txt" 2>/dev/null || echo 'no summary: the gate did not start'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-install-logs
+          path: |
+            ${{ runner.temp }}/published-install/summary.txt
+            ${{ runner.temp }}/published-install/logs/
+            ${{ runner.temp }}/published-install.out
+          if-no-files-found: warn
