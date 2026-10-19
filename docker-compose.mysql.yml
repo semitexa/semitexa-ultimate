@@ -25,8 +25,10 @@ services:
     # peaks out during full phpunit runs (observed Max_used_connections=152).
     command: ["mysqld", "--max-connections=500"]
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: ${DB_DATABASE:-semitexa}
+      MYSQL_USER: ${DB_USERNAME:-semitexa}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-semitexa}
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:

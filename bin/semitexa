@@ -110,7 +110,7 @@ env_merged_lines() {
 env_val() {
     _key="$1"
     _default="$2"
-    _val="$(env_merged_lines 2>/dev/null | grep -E "^[[:space:]]*${_key}[[:space:]]*=" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+    _val="$(env_merged_lines 2>/dev/null | grep -E "^[[:space:]]*${_key}[[:space:]]*=" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"\(.*\)"$/\1/' -e t -e "s/^'\(.*\)'\$/\1/")"
     if [ -n "$_val" ]; then
         printf '%s' "$_val"
         return
@@ -151,7 +151,7 @@ env_export_compose_context() {
         for _line in $_merged; do
             [ -n "$_line" ] || continue
             _key="$(printf '%s' "$_line" | sed 's/[[:space:]]*=.*$//' | tr -d '[:space:]')"
-            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+            _val="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"\(.*\)"$/\1/' -e t -e "s/^'\(.*\)'\$/\1/")"
             case "$_key" in
                 ''|*[!A-Za-z0-9_]*)
                     continue
@@ -255,8 +255,9 @@ compose_args() {
         case "$_async" in 1|true|yes) _args="$_args -f docker-compose.nats.yml"; _has_overlay=1 ;; esac
     fi
     if [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
+        # Only MySQL needs the bundled container; DB_DRIVER=sqlite runs without one.
         _db="$(env_val DB_DRIVER "")"
-        if [ -n "$_db" ]; then _args="$_args -f docker-compose.mysql.yml"; _has_overlay=1; fi
+        if [ "$_db" = "mysql" ]; then _args="$_args -f docker-compose.mysql.yml"; _has_overlay=1; fi
     fi
     if [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ]; then
         _redis="$(env_val REDIS_HOST "")"
@@ -479,7 +480,7 @@ router_collect_project_domains() {
     env_merged_lines 2>/dev/null \
         | grep -E '^[[:space:]]*[A-Z0-9_]*DOMAIN[A-Z0-9_]*[[:space:]]*=' 2>/dev/null \
         | while IFS= read -r _line; do
-            _value="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')"
+            _value="$(printf '%s' "$_line" | sed 's/^[^=]*=[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed -e 's/^"\(.*\)"$/\1/' -e t -e "s/^'\(.*\)'\$/\1/")"
             printf '%s\n' "$_value" | tr ', ' '\n\n' | while IFS= read -r _candidate; do
                 _candidate="$(printf '%s' "$_candidate" | tr '[:upper:]' '[:lower:]')"
                 [ -n "$_candidate" ] || continue
@@ -1859,6 +1860,14 @@ cmd_server_start() {
     _overlays="$(compose_args)"
     [ -n "$_overlays" ] && info "Compose files: $_overlays"
 
+    # .env.default is the dev baseline (APP_DEBUG=1): a prod .env that leaves
+    # APP_DEBUG out inherits it and shows error details to visitors.
+    if [ "$(env_val APP_ENV "")" = "prod" ]; then
+        case "$(env_val APP_DEBUG 0)" in
+            1|true|TRUE|yes|on) warn "APP_ENV=prod with APP_DEBUG on: error pages show details. Set APP_DEBUG=0 in .env." ;;
+        esac
+    fi
+
     # ── Pre-flight Checks (Proxy & DNS) ──────────────────────────────
     if project_has_shared_domains; then
         router_sync_project_domains
@@ -1919,7 +1928,7 @@ cmd_server_start() {
     esac
 
     _db="$(env_val DB_DRIVER "")"
-    if [ -n "$_db" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
+    if [ "$_db" = "mysql" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
         wait_for_service "MySQL" "mysql" "3306" 5 4 20 && verify_mysql_auth || true
     fi
 
@@ -2359,6 +2368,56 @@ report_host_headroom() {
     return 0
 }
 
+# The mysql image creates only DB_DATABASE, for DB_USERNAME. A fresh install
+# therefore has no test database and no grant on one, and its first test:run
+# stopped at the schema sync with "Access denied for user ... to database
+# 'semitexa_test'". Created and granted here, as root, idempotently. A project
+# that does not run the bundled MySQL service is left alone.
+#   $1 compose binary   $2 compose -f arguments   $3 test database name
+ensure_test_database() {
+    case " $2 " in *docker-compose.mysql.yml*) ;; *) return 0 ;; esac
+    # The user Compose hands MySQL, resolved as Compose resolves it: .env wins over
+    # the caller, and an empty value falls back like ${DB_USERNAME:-semitexa}.
+    _etd_user="$(env_export_compose_context >/dev/null 2>&1; printf '%s' "${DB_USERNAME:-semitexa}")"
+    # Only plain identifiers are interpolated into the SQL below.
+    if printf '%s\n%s\n' "$3" "$_etd_user" | grep -Eq '[^A-Za-z0-9_]|^$'; then
+        warn "Test database '$3' or user '$_etd_user' is not a plain identifier; create and grant it yourself."
+        return 0
+    fi
+    if ! (
+        env_export_compose_context
+        # No --wait: Compose v1 has no such flag, and on a fresh volume the
+        # healthcheck can pass on the init server before MySQL restarts. The
+        # SQL is idempotent, so it is retried until the final server takes it.
+        # shellcheck disable=SC2086
+        $1 $2 up -d mysql >/dev/null 2>&1 || exit 1
+        _etd_try=1
+        while [ "$_etd_try" -le 30 ]; do
+            # MySQL creates MYSQL_USER only when the volume is first initialised, so a
+            # user renamed since has no account to grant to: it is created with the
+            # password Compose hands MySQL, passed hex-encoded so no character of it
+            # can break the SQL. An account that exists keeps its password.
+            # shellcheck disable=SC2086
+            $1 $2 exec -T mysql sh -s "$3" "$_etd_user" >/dev/null 2>&1 <<'ETD_SQL' && exit 0
+_create=''
+_hex="$(printf '%s' "${MYSQL_PASSWORD:-}" | od -An -tx1 | tr -d ' \n')"
+[ -z "$_hex" ] || _create="SET @etd = CONCAT('CREATE USER IF NOT EXISTS ''$2''@''%'' IDENTIFIED BY ', QUOTE(CONVERT(UNHEX('$_hex') USING utf8mb4))); PREPARE etd FROM @etd; EXECUTE etd; DEALLOCATE PREPARE etd;"
+# In a database-level grant _ is a one-character wildcard: escaped, the grant
+# names this database and not every one its name matches.
+_pattern="$(printf '%s' "$1" | sed 's/_/\\_/g')"
+mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS $1; $_create GRANT ALL PRIVILEGES ON \`$_pattern\`.* TO '$2'@'%';"
+ETD_SQL
+            _etd_try=$((_etd_try + 1))
+            sleep 2
+        done
+        exit 1
+    ); then
+        warn "Could not create the test database '$3' or grant '$_etd_user' on it; the schema sync below will say why."
+        return 0
+    fi
+    info "Test database '$3' is ready for '$_etd_user'."
+}
+
 cmd_test_run() {
     [ "${1:-}" != "--" ] || shift
     _test_information=0
@@ -2406,19 +2465,7 @@ cmd_test_run() {
     # root run left behind, long before the E2E-phase pass below.
     project_ownership_reclaim || exit 1
 
-    _overlays="$(compose_args)"
-    if [ -z "$_overlays" ]; then
-        _overlays="-f docker-compose.yml"
-    fi
-    _overlays="$_overlays -f docker-compose.test.yml"
-    # Test-side counterpart of docker-compose.path-repos.yml. Mounts the
-    # operator-local ./semitexa.pl symlink into the phpunit + e2e-runner
-    # services so composer path-repo packages whose source lives outside
-    # the project tree (currently semitexa/platform-ui) can be exercised by
-    # `bin/semitexa test:run`. Gate matches compose_args (symlink present).
-    if [ -f "$PROJECT_ROOT/docker-compose.test.path-repos.yml" ] && [ -L "$PROJECT_ROOT/semitexa.pl" ]; then
-        _overlays="$_overlays -f docker-compose.test.path-repos.yml"
-    fi
+    _overlays="$(test_compose_overlays)"
 
     _compose="$(compose_bin)"
     _files_display="$(printf '%s' "$_overlays" | sed 's/-f //g' | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
@@ -2693,6 +2740,8 @@ ${_url_clean}/tests"
         error "Set DB_TEST_DATABASE to a separate name (the default is semitexa_test)."
         exit 1
     fi
+
+    ensure_test_database "$_compose" "$_overlays" "$_test_db"
 
     _sync_rc=0
     info "Test-DB schema parity: orm:sync against the test database (safe ops only)..."
@@ -3104,7 +3153,7 @@ cmd_information() {
 # with no trace at all, and every auto-append silently went nowhere. Only ids
 # of a safe shape are forwarded: they are spliced into the command line.
 agent_env_args() {
-    for _agent_var in SEMITEXA_AI_TRACE_ID SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT; do
+    for _agent_var in SEMITEXA_AI_TRACE_ID SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT SEMITEXA_VERIFY_E2E_RUN; do
         eval "_agent_val=\${${_agent_var}:-}"
         case "$_agent_val" in
             ''|*[!A-Za-z0-9_.:-]*) ;;
@@ -3158,6 +3207,112 @@ agent_identity() {
     SEMITEXA_AGENT_SESSION="$_ai_name-$(printf '%06x' "$_ai_sum" | cut -c1-6)"
     SEMITEXA_AGENT_IMPLICIT="$_ai_name"
     export SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT
+}
+
+# The compose files the test services (phpunit, e2e-runner) are defined by:
+# the runtime set plus docker-compose.test.yml. Shared by test:run and the
+# ai:verify spec pass, so the two never run a spec against different services.
+test_compose_overlays() {
+    _tco="$(compose_args)"
+    if [ -z "$_tco" ]; then
+        _tco="-f docker-compose.yml"
+    fi
+    _tco="$_tco -f docker-compose.test.yml"
+    # Test-side counterpart of docker-compose.path-repos.yml. Mounts the
+    # operator-local ./semitexa.pl symlink into the phpunit + e2e-runner
+    # services so composer path-repo packages whose source lives outside
+    # the project tree (currently semitexa/platform-ui) can be exercised by
+    # `bin/semitexa test:run`. Gate matches compose_args (symlink present).
+    if [ -f "$PROJECT_ROOT/docker-compose.test.path-repos.yml" ] && [ -L "$PROJECT_ROOT/semitexa.pl" ]; then
+        _tco="$_tco -f docker-compose.test.path-repos.yml"
+    fi
+    printf '%s' "$_tco"
+}
+
+# ai:verify runs inside the app, which has no browser and no Docker, so a
+# changed Playwright spec was read by no check. The specs the plan names
+# (ai:verify --list-e2e) run here first, on the host, in the e2e-runner — and
+# only against an app that is ALREADY running: verify never starts, recreates
+# or restarts a container (--no-deps). Each outcome is filed under this run's
+# id and the spec's content hash, which is what the e2e target inside reads
+# (E2eSpecResultCheck); a spec with no result there stays incomplete, and
+# host.txt says why when nothing ran.
+cmd_ai_verify() {
+    _vrun="$(date +%s)-$$"
+    _vdir="$PROJECT_ROOT/var/run/verify-e2e/$_vrun"
+    SEMITEXA_VERIFY_E2E_RUN="$_vrun"
+    export SEMITEXA_VERIFY_E2E_RUN
+    if ! mkdir -p "$_vdir" 2>/dev/null; then
+        warn "Could not create $_vdir; changed E2E specs will be reported as not run."
+        cmd_proxy ai:verify "$@"
+        return $?
+    fi
+    # Other agents verify in parallel: only results nobody can still be reading go.
+    find "$PROJECT_ROOT/var/run/verify-e2e" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+
+    # --diff-stdin reads the path list from stdin, and it is read twice here.
+    _vstdin=""
+    for _varg in "$@"; do
+        if [ "$_varg" = "--diff-stdin" ]; then _vstdin="$_vdir/stdin"; fi
+    done
+    [ -z "$_vstdin" ] || cat > "$_vstdin"
+
+    if ! has_compose || ! is_app_running; then
+        printf '%s\n' "the app is not running, and verify never starts it (bin/semitexa server:start, then run ai:verify again)" > "$_vdir/host.txt"
+    elif [ ! -f "$PROJECT_ROOT/docker-compose.test.yml" ]; then
+        printf '%s\n' "docker-compose.test.yml is missing, so there is no e2e-runner to run it in" > "$_vdir/host.txt"
+    else
+        _vlist_rc=0
+        if [ -n "$_vstdin" ]; then
+            _vspecs="$(run_compose exec -T $(agent_env_args) app php vendor/bin/semitexa ai:verify "$@" --list-e2e < "$_vstdin" 2>/dev/null)" || _vlist_rc=$?
+        else
+            _vspecs="$(run_compose exec -T $(agent_env_args) app php vendor/bin/semitexa ai:verify "$@" --list-e2e < /dev/null 2>/dev/null)" || _vlist_rc=$?
+        fi
+        if [ "$_vlist_rc" -ne 0 ]; then
+            printf '%s\n' "asking the app which specs changed failed (ai:verify --list-e2e exited $_vlist_rc)" > "$_vdir/host.txt"
+            _vspecs=""
+        fi
+        _vcompose="$(compose_bin)"
+        _voverlays="$(test_compose_overlays)"
+        # One path per line, taken literally: no splitting on spaces, no globbing.
+        _vifs="$IFS"
+        IFS='
+'
+        set -f
+        for _vspec in $_vspecs; do
+            case "$_vspec" in
+                */tests/E2E/*.spec.ts) ;;
+                *) continue ;;
+            esac
+            [ -f "$PROJECT_ROOT/$_vspec" ] || continue
+            # The file name the e2e target reads: sha256 of the path, a dash,
+            # sha256 of the content (E2eSpecResultCheck::key()).
+            if command -v sha256sum >/dev/null 2>&1; then
+                _vsha="$(printf '%s' "$_vspec" | sha256sum | cut -d' ' -f1)-$(sha256sum "$PROJECT_ROOT/$_vspec" | cut -d' ' -f1)"
+            else
+                _vsha="$(printf '%s' "$_vspec" | shasum -a 256 | cut -d' ' -f1)-$(shasum -a 256 "$PROJECT_ROOT/$_vspec" | cut -d' ' -f1)"
+            fi
+            info "Running changed E2E spec on the host: $_vspec" >&2
+            _vrc=0
+            (
+                # The compose command and its -f list are split on spaces.
+                IFS="$_vifs"
+                set +f
+                env_export_compose_context
+                # shellcheck disable=SC2086
+                $_vcompose $_voverlays run --rm --no-deps -T e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
+            ) > "$_vdir/$_vsha.log" 2>&1 < /dev/null || _vrc=$?
+            printf '%s\n' "$_vrc" > "$_vdir/$_vsha.exit"
+        done
+        set +f
+        IFS="$_vifs"
+    fi
+
+    if [ -n "$_vstdin" ]; then
+        cmd_proxy ai:verify "$@" < "$_vstdin"
+    else
+        cmd_proxy ai:verify "$@"
+    fi
 }
 
 cmd_proxy() {
@@ -3289,6 +3444,7 @@ case "$COMMAND" in
     install)         cmd_install "$@" ;;
     demo:install)    cmd_demo_install "$@" ;;
     test:run)        cmd_test_run "$@" ;;
+    ai:verify)       cmd_ai_verify "$@" ;;
     --help|-h)       cmd_list --shell-only ;;
     --version|-V)    cmd_information vendor/bin/semitexa --version ;;
     help)           if [ $# -eq 0 ]; then cmd_list --shell-only; else cmd_information vendor/bin/semitexa help "$@"; fi ;;

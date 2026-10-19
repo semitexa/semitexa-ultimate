@@ -76,20 +76,14 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         if (!is_dir($installerRoot)) {
             self::markTestSkipped('semitexa-installer is not checked out next to this repository.');
         }
-        $pathPairs = [
-            [
-                'ultimate' => $ultimateRoot . '/docker-compose.yml',
-                'installer' => $installerRoot . '/docker-compose.yml',
-            ],
-            [
-                'ultimate' => $ultimateRoot . '/docker-compose.ollama.yml',
-                'installer' => $installerRoot . '/docker-compose.ollama.yml',
-            ],
-            [
-                'ultimate' => $ultimateRoot . '/bin/semitexa',
-                'installer' => $installerRoot . '/bin/semitexa',
-            ],
-        ];
+        // Every runtime file both ship. The installer is the source: a hand
+        // edit on one side only drifted .env.default and the MySQL overlay
+        // apart for months (persistent SSE on here, off there; root vs a
+        // semitexa user the env file named but the overlay never created).
+        $pathPairs = [];
+        foreach (['docker-compose.yml', 'docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.nats.yml', 'docker-compose.ollama.yml', 'Dockerfile', '.env.default', 'bin/semitexa'] as $file) {
+            $pathPairs[] = ['ultimate' => $ultimateRoot . '/' . $file, 'installer' => $installerRoot . '/' . $file];
+        }
 
         foreach ($pathPairs as $pair) {
             self::assertFileExists($pair['ultimate']);
@@ -102,7 +96,7 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
 
             self::assertIsString($ultimateContents);
             self::assertIsString($installerContents);
-            self::assertSame($ultimateContents, $installerContents);
+            self::assertSame($installerContents, $ultimateContents, basename($pair['ultimate']) . ' drifted from the installer scaffold, its source: copy it over.');
         }
     }
 
