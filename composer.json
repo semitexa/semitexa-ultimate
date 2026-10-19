@@ -15,9 +15,9 @@
     },
     "require": {
         "php": "^8.4",
-        "semitexa/core": "2026.10.16.1744",
-        "semitexa/update": "2026.10.17.1236",
-        "semitexa/docs": "2026.10.17.1236",
+        "semitexa/core": "2026.10.19.0811",
+        "semitexa/update": "2026.10.19.0811",
+        "semitexa/docs": "2026.10.19.0811",
         "semitexa/auth": "2026.10.08.0620",
         "semitexa/authorization": "2026.10.16.0400",
         "semitexa/rbac": "2026.10.08.0620",
@@ -26,11 +26,11 @@
         "semitexa/workflow": "2026.10.08.0620",
         "semitexa/cache": "2026.10.15.2225",
         "semitexa/storage": "2026.10.08.0620",
-        "semitexa/ssr": "2026.10.17.0511",
-        "semitexa/dev": "2026.10.17.1236",
+        "semitexa/ssr": "2026.10.19.0811",
+        "semitexa/dev": "2026.10.19.0811",
         "semitexa/tenancy": "2026.10.08.0620",
         "semitexa/locale": "2026.10.08.0620",
-        "semitexa/orm": "2026.10.15.2225",
+        "semitexa/orm": "2026.10.19.0811",
         "semitexa/search": "2026.10.08.0620",
         "semitexa/mail": "2026.10.08.0620",
         "semitexa/media": "2026.10.08.0620",
@@ -39,15 +39,15 @@
         "semitexa/scheduler": "2026.10.08.0620",
         "semitexa/ledger": "2026.10.15.2225",
         "semitexa/project-graph": "2026.10.17.0511",
-        "semitexa/theme": "2026.10.14.1540",
-        "semitexa/platform-ui": "2026.10.17.1255",
+        "semitexa/theme": "2026.10.19.0811",
+        "semitexa/platform-ui": "2026.10.19.0811",
         "semitexa/platform-settings": "2026.10.08.0620",
         "semitexa/crud": "2026.10.14.0919"
     },
     "require-dev": {
         "phpstan/phpstan": "2.1.40",
         "phpunit/phpunit": "^10.5",
-        "semitexa/testing": "2026.10.17.1236"
+        "semitexa/testing": "2026.10.19.0811"
     },
     "config": {
         "allow-plugins": {
