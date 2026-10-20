@@ -115,6 +115,10 @@ services:
         MARKER_PATH="$$TARGET_DIR/var/install/bootstrap-complete.json"
         LOG_PATH="$$TARGET_DIR/var/log/install-bootstrap.log"
         PACKAGE_NAME=semitexa/ultimate
+        # Empty: the latest stable release. A version pins the install to that
+        # release (SEMITEXA_ULTIMATE_VERSION in .env) — what an upgrade check
+        # needs to begin from the release before the newest one.
+        PACKAGE_VERSION="$${SEMITEXA_ULTIMATE_VERSION:-}"
         BOOTSTRAP_VERSION=1
 
         log() {
@@ -138,8 +142,8 @@ services:
 
         rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"
 
-        log "step 1/6 create project skeleton"
-        composer create-project "$$PACKAGE_NAME" "$$TEMP_DIR" \
+        log "step 1/6 create project skeleton ($${PACKAGE_VERSION:-latest stable})"
+        composer create-project "$$PACKAGE_NAME" "$$TEMP_DIR" $${PACKAGE_VERSION:+"$$PACKAGE_VERSION"} \
           --no-install --no-dev --no-interaction --prefer-dist \
           || fail "composer create-project failed"
 
