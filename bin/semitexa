@@ -310,10 +310,15 @@ compose_all_args() {
 # name the services itself: an overlay that is not loaded has no such
 # service. The conditions are compose_args's, so the worker reaches what the
 # app reaches. Rewritten on every compose call, so nothing stale is kept.
+# Returns 1, and says why, when the file could not be written: one left from an
+# earlier start may name services this one does not load.
 compose_write_worker_env() {
     [ -f "$PROJECT_ROOT/docker-compose.worker.yml" ] || return 0
     _wenv="$PROJECT_ROOT/var/run/worker.env"
-    mkdir -p "$PROJECT_ROOT/var/run" 2>/dev/null || return 0
+    if ! mkdir -p "$PROJECT_ROOT/var/run" 2>/dev/null || [ -d "$_wenv" ]; then
+        warn "Cannot write $_wenv: the worker would start with the service addresses of an earlier start."
+        return 1
+    fi
     {
         echo "# Written by bin/semitexa: the services the overlays give the app."
         if [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ] && [ "$(env_val DB_DRIVER "")" = "mysql" ]; then
@@ -328,8 +333,10 @@ compose_write_worker_env() {
         if [ -f "$PROJECT_ROOT/docker-compose.ollama.yml" ] && [ "$(env_val LLM_PROVIDER "")" = "ollama" ]; then
             echo "LLM_BASE_URL=http://ollama:11434"
         fi
-    } > "$_wenv.tmp.$$" 2>/dev/null && mv -f "$_wenv.tmp.$$" "$_wenv" 2>/dev/null || rm -f "$_wenv.tmp.$$" 2>/dev/null
-    return 0
+    } > "$_wenv.tmp.$$" 2>/dev/null && mv -f "$_wenv.tmp.$$" "$_wenv" 2>/dev/null && return 0
+    rm -f "$_wenv.tmp.$$" 2>/dev/null
+    warn "Cannot write $_wenv: the worker would start with the service addresses of an earlier start."
+    return 1
 }
 
 run_compose() {
@@ -338,7 +345,10 @@ run_compose() {
     (
         env_export_compose_context
         # Every up and run goes through here: the worker gets the overlays' values.
-        compose_write_worker_env
+        # Starting it with stale ones is refused; stop, logs and the rest go on.
+        if ! compose_write_worker_env && [ "${1:-}" = up ]; then
+            exit 1
+        fi
         if [ -n "$_overlays" ]; then
             # shellcheck disable=SC2086
             $_compose $_overlays "$@"
