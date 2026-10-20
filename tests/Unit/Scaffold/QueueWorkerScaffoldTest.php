@@ -204,6 +204,24 @@ final class QueueWorkerScaffoldTest extends TestCase
     }
 
     /**
+     * tk-nats-consumer-name-collision: worker:processes refuses two kinds of
+     * worker on one queue, and with nothing else installed it lists nothing.
+     * The default-queue fallback is for a listing that failed: run here, it
+     * put queue:work back on the queue that was refused.
+     */
+    #[Test]
+    public function a_listing_with_nothing_to_run_starts_nothing_and_says_so(): void
+    {
+        [$started, $stderr, $alive, $aliveBefore] = $this->runWorker("echo 'worker:processes: queue events on nats is read by two kinds of worker' >&2; exit 0", 0, shellOnly: true);
+
+        self::assertSame([], $started);
+        self::assertStringContainsString('worker: worker:processes listed nothing to run; idle until server:restart', $stderr);
+        // Up, or restart: unless-stopped would run worker:processes again and again.
+        self::assertGreaterThan(0, $aliveBefore, 'the worker stays up');
+        self::assertSame(0, $alive, 'and goes with the shell on docker stop');
+    }
+
+    /**
      * docker stop sends TERM to the container's init, which passes it to the
      * shell alone: the shell has to take every queue:work down with it, or the
      * container waits out the stop timeout and is killed.
@@ -223,7 +241,7 @@ final class QueueWorkerScaffoldTest extends TestCase
      * records its arguments and stays up, as a real worker does, except
      * scheduler:plan, which exits, as the real one does.
      *
-     * @return array{list<string>, string, int} the queue:work calls (sorted), stderr, processes still alive
+     * @return array{list<string>, string, int, int} the queue:work calls (sorted), stderr, processes still alive after the TERM, and before it
      */
     private function runWorker(string $queuesBehaviour, int $expected, bool $shellOnly = false, ?\Closure $before = null): array
     {
@@ -255,6 +273,7 @@ final class QueueWorkerScaffoldTest extends TestCase
         }
         // Long enough for a second, unwanted start to show up too.
         usleep(300_000);
+        $aliveBefore = self::processesInGroup($pid);
         exec(($shellOnly ? 'kill -TERM ' : 'kill -TERM -') . $pid . ' 2>/dev/null');
         $alive = -1;
         for ($i = 0; $i < 30; $i++) {
@@ -269,7 +288,7 @@ final class QueueWorkerScaffoldTest extends TestCase
         $started = $read();
         sort($started);
 
-        return [$started, (string) @file_get_contents($this->tmp . '/stderr'), $alive];
+        return [$started, (string) @file_get_contents($this->tmp . '/stderr'), $alive, $aliveBefore];
     }
 
     /** Processes whose process group is $group, read from /proc (no ps flags to depend on). */

@@ -77,7 +77,12 @@ services:
         done <<EOF
         $$processes
         EOF
-        [ "$$started" = 1 ] || run 5 queue:work &
+        if [ "$$started" = 0 ]; then
+          # Listed, and nothing to start (worker:processes refused a shared
+          # queue, say): a queue:work here would bring back what it refused.
+          echo "worker: worker:processes listed nothing to run; idle until server:restart" >&2
+          while true; do sleep 3600; done &
+        fi
         wait
     # The app waits for the database, cache and broker it is given; the worker
     # needs the same ones, and the app is in every stack.
