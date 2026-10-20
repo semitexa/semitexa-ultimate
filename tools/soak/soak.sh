@@ -189,7 +189,10 @@ done'
 # The file Swoole is writing now. With SWOOLE_LOG_ROTATION on (the default,
 # daily) it writes to "<log_file>.<date>" and leaves <log_file> itself empty,
 # so the newest non-empty one of them is the live one, and it changes at midnight.
-ACTIVE_LOG="for f in \$(ls -t '$LOG_BASE' '$LOG_BASE'.* 2>/dev/null); do [ -s \"\$f\" ] && { printf %s \"\$f\"; break; }; done"
+# When all of them are still empty (a quiet log level writes nothing until the
+# first warning) the newest one is read: an empty log is measured as no lines,
+# not reported as no log at all.
+ACTIVE_LOG="pick=''; for f in \$(ls -t '$LOG_BASE' '$LOG_BASE'.* 2>/dev/null); do [ -z \"\$pick\" ] && pick=\$f; [ -s \"\$f\" ] && { pick=\$f; break; }; done; printf %s \"\$pick\""
 is_number() { case $1 in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 size_of() { in_app "wc -c < '$1' 2>/dev/null" | tr -d ' '; }
 read_log() { in_app "tail -c +$(($2 + 1)) '$1' 2>/dev/null | head -c $(($3 - $2))"; }
@@ -197,6 +200,7 @@ read_log() { in_app "tail -c +$(($2 + 1)) '$1' 2>/dev/null | head -c $(($3 - $2)
 log_file=''
 log_offset=0
 last_logs=''
+sampled=0
 
 sample() {
     local ts
@@ -222,8 +226,9 @@ sample() {
     if [ -n "$active" ] && [ "$active" != "$log_file" ]; then
         if [ -z "$log_file" ]; then
             # The first sample starts at the end: what was there before is not this run's.
+            # A log that appears later was written during the run, so all of it counts.
             size=$(size_of "$active")
-            is_number "$size" && log_offset=$size || log_offset=0
+            if [ "$sampled" -eq 0 ] && is_number "$size"; then log_offset=$size; else log_offset=0; fi
         else
             # The day turned: finish the previous file, then the new one from its start.
             size=$(size_of "$log_file")
@@ -270,6 +275,7 @@ sample() {
         $2 == "WARNING" { warnings++ }
         END { printf "%s,%s,%d,%d,%d,%d,%d,%d\n", ts, file, lines, forced, abnormal, errors, warnings, fatals }' >> "$OUT/log.csv"
     printf '%s\n' "$new" | awk -F'\t' '/forced termination|abnormal exit|Fatal error/ || $2 == "ERROR"' >> "$OUT/log-incidents.txt"
+    sampled=1
 }
 
 # Named, so a stopped run takes its load with it instead of leaving it running.
