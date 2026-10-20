@@ -1,13 +1,14 @@
-# The queue worker: runs what Queued listeners and async handlers put on a
-# queue, in a container of its own, so it can be given resources and scaled
-# apart from the web server: QUEUE_WORKER_REPLICAS in .env, then
-# server:restart. bin/semitexa loads this file when EVENTS_ASYNC=1;
+# The worker: the background processes queued and scheduled work needs
+# (queue consumers, the scheduler, outbox delivery), in a container of its own,
+# so it can be given resources and scaled apart from the web server:
+# QUEUE_WORKER_REPLICAS in .env, then server:restart. bin/semitexa loads this file when EVENTS_ASYNC=1;
 # server:stop stops it.
 #
-# queue:work reads one transport and one queue, so this runs one per line of
-# `queue:queues`: the default queue and every one a listener or handler names,
-# each restarted if it exits. A queue added later is picked up by
-# server:restart.
+# It runs every line of `worker:processes`: what the installed packages need
+# for their queued and scheduled work, such as queue:work for each queue,
+# mail:work, media:work, scheduler:plan and scheduler:work, webhook:work. Each
+# is started again after its pause when it exits. A queue or package added
+# later is picked up by server:restart.
 #
 # The overlays point the app at their services (DB_HOST=mysql, ...). This file
 # cannot name those services itself, because an overlay that is not loaded has
@@ -38,35 +39,43 @@ services:
       - sh
       - -c
       - |
+        # Words are split, never globbed: worker:processes prints plain words.
+        set -f
         trap 'trap - TERM INT; kill 0; exit 0' TERM INT
-        work() {
+        # run <pause> <command...>: the command, started again <pause> s after it exits.
+        run() {
+          pause=$$1; shift
           while true; do
-            php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa queue:work "$$@"
-            echo "worker: queue:work $$* exited ($$?); restarting in 5s" >&2
-            sleep 5
+            php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa "$$@"
+            echo "worker: $$* exited ($$?); again in $${pause}s" >&2
+            sleep "$$pause"
           done
         }
-        if ! queues=$$(php vendor/bin/semitexa queue:queues); then
-          # A core without queue:queues, or one that could not list the queues.
-          echo "worker: queue:queues failed; consuming the default queue only (server:restart retries)" >&2
-          queues=''
+        if ! processes=$$(php vendor/bin/semitexa worker:processes); then
+          # A core without worker:processes, or one that could not list any.
+          echo "worker: worker:processes failed; running queue:work on the default queue only (server:restart retries)" >&2
+          processes='5 queue:work'
         fi
         started=0
-        while read -r transport queue; do
-          [ -n "$$transport$$queue" ] || continue
+        while read -r line; do
+          [ -n "$$line" ] || continue
+          set -- $$line
           ok=1
-          case "$$transport" in ''|*[!A-Za-z0-9._-]*) ok=0 ;; esac
-          case "$$queue" in ''|*[!A-Za-z0-9._-]*) ok=0 ;; esac
+          case "$$1" in ''|*[!0-9]*) ok=0 ;; esac
+          [ "$$#" -ge 2 ] || ok=0
+          for word in "$$@"; do
+            case "$$word" in *[!A-Za-z0-9._:/=-]*) ok=0 ;; esac
+          done
           if [ "$$ok" = 0 ]; then
-            echo "worker: skipped, not a '<transport> <queue>' line: $$transport $$queue" >&2
+            echo "worker: skipped, not a '<pause> <command>' line: $$line" >&2
             continue
           fi
-          work "$$transport" "$$queue" &
+          run "$$@" &
           started=1
         done <<EOF
-        $$queues
+        $$processes
         EOF
-        [ "$$started" = 1 ] || work &
+        [ "$$started" = 1 ] || run 5 queue:work &
         wait
     # The app waits for the database, cache and broker it is given; the worker
     # needs the same ones, and the app is in every stack.

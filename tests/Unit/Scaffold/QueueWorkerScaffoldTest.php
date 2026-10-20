@@ -12,7 +12,8 @@ use PHPUnit\Framework\TestCase;
  * and nothing in an installed project ran queue:work: a Queued listener was
  * published to NATS and never consumed. The worker now runs in a container of
  * its own (docker-compose.worker.yml), which bin/semitexa loads exactly when
- * EVENTS_ASYNC=1, and which runs one queue:work per line of queue:queues.
+ * EVENTS_ASYNC=1, and which runs every line of worker:processes: queue:work
+ * per queue, mail:work, media:work, the scheduler and webhook delivery.
  */
 final class QueueWorkerScaffoldTest extends TestCase
 {
@@ -134,27 +135,43 @@ final class QueueWorkerScaffoldTest extends TestCase
         self::assertSame($header . "\n", file_get_contents($this->tmp . '/var/run/worker.env'), 'rewritten: no overlay loaded, nothing from the last start kept');
     }
 
+    /**
+     * REGRESSION (tk-worker-runs-mail-work). Only queue:work ran here: queued
+     * mail, media variants, scheduled jobs and webhook deliveries were never
+     * processed in an installed project. Every line is a process now.
+     */
     #[Test]
-    public function the_worker_starts_one_queue_work_per_listed_queue_and_reports_anything_else_printed(): void
+    public function the_worker_starts_every_listed_process_and_reports_anything_else_printed(): void
     {
-        [$started, $stderr] = $this->runWorker("printf 'PHP Deprecated: something in /x.php\\nnats async\\nnats events\\ndatabase ledger\\n'; exit 0", 3);
+        [$started, $stderr] = $this->runWorker("printf 'PHP Deprecated: something in /x.php\\n5 queue:work nats async\\n5 mail:work nats mail\\n60 scheduler:plan\\n5 webhook:work\\n5x queue:work\\n'; exit 0", 4);
 
-        self::assertSame(['queue:work database ledger', 'queue:work nats async', 'queue:work nats events'], $started);
-        self::assertStringContainsString("worker: skipped, not a '<transport> <queue>' line: PHP Deprecated: something in /x.php", $stderr);
+        self::assertSame(['mail:work nats mail', 'queue:work nats async', 'scheduler:plan', 'webhook:work'], $started);
+        self::assertStringContainsString("worker: skipped, not a '<pause> <command>' line: PHP Deprecated: something in /x.php", $stderr);
+        self::assertStringContainsString("worker: skipped, not a '<pause> <command>' line: 5x queue:work", $stderr);
+    }
+
+    /** scheduler:plan does its work and exits: it is started again after its pause. */
+    #[Test]
+    public function a_process_that_exits_is_started_again_after_its_pause(): void
+    {
+        [$started] = $this->runWorker("printf '0 scheduler:plan\\n'; exit 0", 3);
+
+        self::assertGreaterThanOrEqual(3, count($started));
+        self::assertSame(['scheduler:plan'], array_values(array_unique($started)));
     }
 
     /**
-     * A core from before queue:queues (or one that cannot list the queues)
+     * A core from before worker:processes (or one that cannot list any)
      * still gets the default queue consumed, instead of a container that
      * exits and restarts forever.
      */
     #[Test]
-    public function without_queue_queues_the_worker_consumes_the_default_queue(): void
+    public function without_worker_processes_the_worker_consumes_the_default_queue(): void
     {
-        [$started, $stderr] = $this->runWorker("echo 'There are no commands defined in the queue namespace.' >&2; exit 1", 1);
+        [$started, $stderr] = $this->runWorker("echo 'Command \"worker:processes\" is not defined.' >&2; exit 1", 1);
 
         self::assertSame(['queue:work'], $started);
-        self::assertStringContainsString('worker: queue:queues failed; consuming the default queue only', $stderr);
+        self::assertStringContainsString('worker: worker:processes failed; running queue:work on the default queue only', $stderr);
     }
 
     /**
@@ -165,16 +182,17 @@ final class QueueWorkerScaffoldTest extends TestCase
     #[Test]
     public function a_term_to_the_shell_alone_stops_every_queue_work(): void
     {
-        [$started, , $alive] = $this->runWorker("printf 'nats async\\nnats events\\n'; exit 0", 2, shellOnly: true);
+        [$started, , $alive] = $this->runWorker("printf '5 queue:work nats async\\n5 mail:work nats mail\\n'; exit 0", 2, shellOnly: true);
 
         self::assertCount(2, $started);
         self::assertSame(0, $alive, 'no queue:work outlives the shell');
     }
 
     /**
-     * Runs the worker service's own script with a stand-in php: queue:queues
-     * does what $queuesBehaviour says; each queue:work records its arguments
-     * and stays up, as a real worker does.
+     * Runs the worker service's own script with a stand-in php:
+     * worker:processes does what $queuesBehaviour says; every other command
+     * records its arguments and stays up, as a real worker does, except
+     * scheduler:plan, which exits, as the real one does.
      *
      * @return array{list<string>, string, int} the queue:work calls (sorted), stderr, processes still alive
      */
@@ -183,7 +201,7 @@ final class QueueWorkerScaffoldTest extends TestCase
         $this->project([]);
         $bin = $this->tmp . '/bin';
         mkdir($bin);
-        file_put_contents($bin . '/php', "#!/bin/sh\nfor a in \"\$@\"; do case \$a in queue:queues) {$queuesBehaviour} ;; esac; done\nwhile [ \"\$1\" != vendor/bin/semitexa ]; do shift; done\nshift\necho \"\$*\" >> \"\$WORK_LOG\"\nexec sleep 30\n");
+        file_put_contents($bin . '/php', "#!/bin/sh\nfor a in \"\$@\"; do case \$a in worker:processes) {$queuesBehaviour} ;; esac; done\nwhile [ \"\$1\" != vendor/bin/semitexa ]; do shift; done\nshift\necho \"\$*\" >> \"\$WORK_LOG\"\n[ \"\$1\" = scheduler:plan ] && exit 0\nexec sleep 30\n");
         chmod($bin . '/php', 0o755);
 
         $script = str_replace('$$', '$', self::section($this->service('docker-compose.worker.yml', 'worker'), 'command'));
