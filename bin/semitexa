@@ -2158,6 +2158,8 @@ cmd_list() {
     printf "  %-32s %s\n" "lint:skin-legacy"        "Regression guard for the unified frontend skin-mode contract"
     printf "  %-32s %s\n" "lint:skin-tokens"        "Regression guard for the canonical skin token format (skin.json + tokens.css)"
     printf "  %-32s %s\n" "test:run [-- phpunit-args]" "Run PHPUnit then E2E (Playwright) inside Docker (APP_ENV=dev)"
+    printf "  %-32s %s\n" "mcp"                   "MCP server on stdio for a coding agent (dev only)"
+    printf "  %-32s %s\n" "mcp:config"            "Print how to connect Claude Code, Cursor or Claude Desktop to it"
     printf "  %-32s %s\n" "self-test"             "Verify setup"
     printf "  %-32s %s\n" "list"                  "Show this help"
 
@@ -3224,6 +3226,35 @@ proxy_run_one_off_app() {
     )
 }
 
+# The MCP server for a coding agent, on stdio. stdout carries protocol
+# messages and nothing else, so this says nothing on it (info() would): it
+# runs in the app container, or a one-off one, or with local PHP, silently.
+cmd_mcp() {
+    if [ ! -f "$PROJECT_ROOT/vendor/bin/semitexa" ]; then
+        error "vendor/bin/semitexa not found. Run: bin/semitexa install"
+        exit 1
+    fi
+    if is_app_running; then
+        # shellcheck disable=SC2046
+        run_compose exec $(agent_env_args) -T app php vendor/bin/semitexa mcp:serve "$@"
+    elif has_compose && env_runtime_file_exists; then
+        proxy_run_one_off_app mcp:serve "$@"
+    else
+        php "$PROJECT_ROOT/vendor/bin/semitexa" mcp:serve "$@"
+    fi
+}
+
+# What to give an agent so it starts that server: the path is this project's
+# on the host, which the app container does not know.
+cmd_mcp_config() {
+    _mcp_bin="$PROJECT_ROOT/bin/semitexa"
+    _mcp_json="$(printf '%s' "$_mcp_bin" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    printf '%s\n' "Claude Code, in this project:"
+    printf '  claude mcp add semitexa -- "%s" mcp\n\n' "$_mcp_bin"
+    printf '%s\n' "Cursor (.cursor/mcp.json) or Claude Desktop (claude_desktop_config.json):"
+    printf '{"mcpServers": {"semitexa": {"command": "%s", "args": ["mcp"]}}}\n' "$_mcp_json"
+}
+
 # Help and listings must not auto-start a stack or a one-off container.
 # Reuse a running app's PHP, or an already installed local PHP; fail otherwise.
 cmd_information() {
@@ -3564,6 +3595,8 @@ case "$COMMAND" in
     help)           if [ $# -eq 0 ]; then cmd_list --shell-only; else cmd_information vendor/bin/semitexa help "$@"; fi ;;
     list)           cmd_list "$@" ;;
     self-test)       cmd_self_test "$@" ;;
+    mcp)             cmd_mcp "$@" ;;
+    mcp:config)      cmd_mcp_config "$@" ;;
     init)            cmd_init "$@" ;;
     *)               cmd_proxy "$COMMAND" "$@" ;;
 esac
