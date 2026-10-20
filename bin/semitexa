@@ -246,9 +246,13 @@ compose_args() {
     # The queue worker, in a container of its own: something is queued exactly
     # when EVENTS_ASYNC=1, whatever the transport (NATS or the database).
     # Before the override, so a project's docker-compose.override.yml can
-    # give it resources or more.
+    # The worker, in a container of its own: it runs what worker:processes
+    # lists. The scheduler and webhook delivery poll the database and need no
+    # broker, so it runs whatever EVENTS_ASYNC says; without async events the
+    # queue consumers simply name nothing. Before the override, so a project's
+    # docker-compose.override.yml can give it resources or more.
     if [ -f "$PROJECT_ROOT/docker-compose.worker.yml" ]; then
-        case "$(env_val EVENTS_ASYNC 0)" in 1|true|yes) _args="$_args -f docker-compose.worker.yml"; _has_overlay=1 ;; esac
+        _args="$_args -f docker-compose.worker.yml"; _has_overlay=1
     fi
 
     # Per-operator override — standard Docker Compose convention.

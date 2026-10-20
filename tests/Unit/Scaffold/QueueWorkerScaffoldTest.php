@@ -67,17 +67,21 @@ final class QueueWorkerScaffoldTest extends TestCase
         }
     }
 
+    /**
+     * The scheduler and webhook delivery poll the database and need no broker,
+     * so the worker runs whatever EVENTS_ASYNC says (review): without async
+     * events it runs those, and the queue consumers name nothing.
+     */
     #[Test]
-    public function bin_semitexa_loads_the_worker_exactly_when_events_are_async_whatever_the_transport(): void
+    public function bin_semitexa_loads_the_worker_whatever_events_async_says(): void
     {
         $this->project([...self::OVERLAYS, 'docker-compose.worker.yml']);
 
         self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.nats.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']));
-        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.nats.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => 'true']));
-        self::assertSame('', $this->shell('compose_args', ['EVENTS_ASYNC' => '0']), 'nothing is queued: the bare compose file');
+        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => '0']));
 
-        unlink($this->tmp . '/docker-compose.nats.yml');
-        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']), 'the database transport needs a worker too');
+        unlink($this->tmp . '/docker-compose.worker.yml');
+        self::assertSame('', $this->shell('compose_args', ['EVENTS_ASYNC' => '0']), 'a project without the file starts as before');
     }
 
     /**
@@ -150,6 +154,31 @@ final class QueueWorkerScaffoldTest extends TestCase
         self::assertStringContainsString("worker: skipped, not a '<pause> <command>' line: 5x queue:work", $stderr);
     }
 
+    /**
+     * A line is split into words before it is checked: without set -f a `*`
+     * would become the names of the files around it, and pass the check.
+     */
+    #[Test]
+    public function a_wildcard_in_a_line_is_not_expanded_into_file_names(): void
+    {
+        [$started, $stderr] = $this->runWorker("printf '5 queue:work *\\n5 webhook:work\\n'; exit 0", 1, before: static function (string $root): void {
+            touch($root . '/nats');
+            touch($root . '/events');
+        });
+
+        self::assertSame(['webhook:work'], $started);
+        self::assertStringContainsString("worker: skipped, not a '<pause> <command>' line: 5 queue:work *", $stderr);
+    }
+
+    /** A command that finished its work is not news; one that failed is. */
+    #[Test]
+    public function only_a_failing_exit_is_reported(): void
+    {
+        [, $stderr] = $this->runWorker("printf '0 scheduler:plan\\n'; exit 0", 3);
+
+        self::assertStringNotContainsString('scheduler:plan exited', $stderr);
+    }
+
     /** scheduler:plan does its work and exits: it is started again after its pause. */
     #[Test]
     public function a_process_that_exits_is_started_again_after_its_pause(): void
@@ -196,9 +225,12 @@ final class QueueWorkerScaffoldTest extends TestCase
      *
      * @return array{list<string>, string, int} the queue:work calls (sorted), stderr, processes still alive
      */
-    private function runWorker(string $queuesBehaviour, int $expected, bool $shellOnly = false): array
+    private function runWorker(string $queuesBehaviour, int $expected, bool $shellOnly = false, ?\Closure $before = null): array
     {
         $this->project([]);
+        if ($before !== null) {
+            $before($this->tmp);
+        }
         $bin = $this->tmp . '/bin';
         mkdir($bin);
         file_put_contents($bin . '/php', "#!/bin/sh\nfor a in \"\$@\"; do case \$a in worker:processes) {$queuesBehaviour} ;; esac; done\nwhile [ \"\$1\" != vendor/bin/semitexa ]; do shift; done\nshift\necho \"\$*\" >> \"\$WORK_LOG\"\n[ \"\$1\" = scheduler:plan ] && exit 0\nexec sleep 30\n");

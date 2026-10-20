@@ -1,8 +1,8 @@
 # The worker: the background processes queued and scheduled work needs
 # (queue consumers, the scheduler, outbox delivery), in a container of its own,
 # so it can be given resources and scaled apart from the web server:
-# QUEUE_WORKER_REPLICAS in .env, then server:restart. bin/semitexa loads this file when EVENTS_ASYNC=1;
-# server:stop stops it.
+# WORKER_REPLICAS in .env, then server:restart. bin/semitexa loads this file
+# whenever it is there; server:stop stops it.
 #
 # It runs every line of `worker:processes`: what the installed packages need
 # for their queued and scheduled work, such as queue:work for each queue,
@@ -34,7 +34,7 @@ services:
       - .:/var/www/html
     restart: unless-stopped
     deploy:
-      replicas: ${QUEUE_WORKER_REPLICAS:-1}
+      replicas: ${WORKER_REPLICAS:-1}
     command:
       - sh
       - -c
@@ -47,7 +47,9 @@ services:
           pause=$$1; shift
           while true; do
             php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa "$$@"
-            echo "worker: $$* exited ($$?); again in $${pause}s" >&2
+            # A command that finished its work (scheduler:plan) is not news.
+            rc=$$?
+            [ "$$rc" = 0 ] || echo "worker: $$* exited ($$rc); again in $${pause}s" >&2
             sleep "$$pause"
           done
         }
