@@ -1,0 +1,75 @@
+# The queue worker: runs what Queued listeners and async handlers put on a
+# queue, in a container of its own, so it can be given resources and scaled
+# apart from the web server: QUEUE_WORKER_REPLICAS in .env, then
+# server:restart. bin/semitexa loads this file when EVENTS_ASYNC=1;
+# server:stop stops it.
+#
+# queue:work reads one transport and one queue, so this runs one per line of
+# `queue:queues`: the default queue and every one a listener or handler names,
+# each restarted if it exits. A queue added later is picked up by
+# server:restart.
+#
+# The overlays point the app at their services (DB_HOST=mysql, ...). This file
+# cannot name those services itself, because an overlay that is not loaded has
+# none, so bin/semitexa writes the same values to var/run/worker.env, read
+# last. Without it (a bare `docker compose`), the worker reads what the app
+# reads from .env.default and .env, and nothing is blanked.
+services:
+  worker:
+    build: .
+    # A PID 1 that passes docker stop's TERM on, so the worker stops at once.
+    init: true
+    user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
+    environment:
+      HOME: /var/www/html
+    env_file:
+      - path: .env.default
+        required: true
+      - path: .env
+        required: false
+      - path: var/run/worker.env
+        required: false
+    volumes:
+      - .:/var/www/html
+    restart: unless-stopped
+    deploy:
+      replicas: ${QUEUE_WORKER_REPLICAS:-1}
+    command:
+      - sh
+      - -c
+      - |
+        trap 'trap - TERM INT; kill 0; exit 0' TERM INT
+        work() {
+          while true; do
+            php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa queue:work "$$@"
+            echo "worker: queue:work $$* exited ($$?); restarting in 5s" >&2
+            sleep 5
+          done
+        }
+        if ! queues=$$(php vendor/bin/semitexa queue:queues); then
+          # A core without queue:queues, or one that could not list the queues.
+          echo "worker: queue:queues failed; consuming the default queue only (server:restart retries)" >&2
+          queues=''
+        fi
+        started=0
+        while read -r transport queue; do
+          [ -n "$$transport$$queue" ] || continue
+          ok=1
+          case "$$transport" in ''|*[!A-Za-z0-9._-]*) ok=0 ;; esac
+          case "$$queue" in ''|*[!A-Za-z0-9._-]*) ok=0 ;; esac
+          if [ "$$ok" = 0 ]; then
+            echo "worker: skipped, not a '<transport> <queue>' line: $$transport $$queue" >&2
+            continue
+          fi
+          work "$$transport" "$$queue" &
+          started=1
+        done <<EOF
+        $$queues
+        EOF
+        [ "$$started" = 1 ] || work &
+        wait
+    # The app waits for the database, cache and broker it is given; the worker
+    # needs the same ones, and the app is in every stack.
+    depends_on:
+      app:
+        condition: service_started

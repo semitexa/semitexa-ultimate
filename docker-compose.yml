@@ -167,7 +167,8 @@ services:
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
-                 docker-compose.ollama.yml docker-compose.override.yml.example
+                 docker-compose.ollama.yml docker-compose.worker.yml \
+                 docker-compose.override.yml.example
         do
           if [ -e "$$TARGET_DIR/$$f" ]; then
             cp -a "$$TARGET_DIR/$$f" "$$BACKUP_DIR/$$f"
@@ -182,7 +183,8 @@ services:
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
-                 docker-compose.ollama.yml docker-compose.override.yml.example \
+                 docker-compose.ollama.yml docker-compose.worker.yml \
+                 docker-compose.override.yml.example \
                  bin/semitexa
         do
           if [ -e "$$BACKUP_DIR/$$f" ]; then

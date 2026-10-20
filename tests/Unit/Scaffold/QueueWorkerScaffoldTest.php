@@ -1,0 +1,286 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Semitexa\Ultimate\Tests\Unit\Scaffold;
+
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * REGRESSION (tk-pip-no-queue-worker). EVENTS_ASYNC=1 is the scaffold default,
+ * and nothing in an installed project ran queue:work: a Queued listener was
+ * published to NATS and never consumed. The worker now runs in a container of
+ * its own (docker-compose.worker.yml), which bin/semitexa loads exactly when
+ * EVENTS_ASYNC=1, and which runs one queue:work per line of queue:queues.
+ */
+final class QueueWorkerScaffoldTest extends TestCase
+{
+    private const OVERLAYS = ['docker-compose.nats.yml', 'docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.ollama.yml'];
+
+    private string $root;
+
+    private string $tmp = '';
+
+    protected function setUp(): void
+    {
+        $this->root = dirname(__DIR__, 3);
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->tmp !== '') {
+            exec('rm -rf ' . escapeshellarg($this->tmp));
+        }
+    }
+
+    #[Test]
+    public function the_worker_runs_from_the_apps_image_and_project_in_a_container_of_its_own(): void
+    {
+        $worker = $this->service('docker-compose.worker.yml', 'worker');
+        $app = $this->service('docker-compose.yml', 'app');
+
+        foreach (['build: .', 'user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"', '      - .:/var/www/html', 'restart: unless-stopped'] as $line) {
+            self::assertStringContainsString($line, $app, 'the app this is compared with');
+            self::assertStringContainsString($line, $worker);
+        }
+        self::assertStringContainsString(self::section($app, 'env_file') . "\n      - path: var/run/worker.env\n        required: false\n", $worker, "the app's env files, then what bin/semitexa writes for the worker");
+        self::assertSame("    environment:\n      HOME: /var/www/html", self::section($worker, 'environment'), 'nothing set here: a value missing here would blank what the env files give');
+        self::assertStringContainsString("    init: true\n", $worker, 'docker stop reaches the shell, which stops every queue:work');
+        self::assertStringContainsString("    depends_on:\n      app:\n        condition: service_started\n", $worker);
+        self::assertStringNotContainsString('ports:', $worker, 'it can be scaled: no host port to collide on');
+    }
+
+    /**
+     * REGRESSION (release review). The first version put a partial `worker:`
+     * into each overlay. `bin/semitexa update` replaces files one by one, so a
+     * project that keeps an edited docker-compose.yml got the new overlays
+     * without the base that defines the service, and every compose command
+     * failed: "service worker has neither an image nor a build context".
+     */
+    #[Test]
+    public function no_other_compose_file_names_the_worker(): void
+    {
+        foreach (['docker-compose.yml', ...self::OVERLAYS] as $file) {
+            self::assertStringNotContainsString("\n  worker:\n", (string) file_get_contents($this->root . '/' . $file), $file);
+        }
+    }
+
+    #[Test]
+    public function bin_semitexa_loads_the_worker_exactly_when_events_are_async_whatever_the_transport(): void
+    {
+        $this->project([...self::OVERLAYS, 'docker-compose.worker.yml']);
+
+        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.nats.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']));
+        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.nats.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => 'true']));
+        self::assertSame('', $this->shell('compose_args', ['EVENTS_ASYNC' => '0']), 'nothing is queued: the bare compose file');
+
+        unlink($this->tmp . '/docker-compose.nats.yml');
+        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']), 'the database transport needs a worker too');
+    }
+
+    /**
+     * REGRESSION (release review). A `--profile queue` flag replaced the
+     * profiles a user set in COMPOSE_PROFILES instead of adding to them. A
+     * file of its own needs no profile at all.
+     */
+    #[Test]
+    public function no_compose_profile_is_passed_and_stop_includes_the_worker(): void
+    {
+        $this->project([...self::OVERLAYS, 'docker-compose.worker.yml']);
+
+        self::assertStringNotContainsString('--profile', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']));
+        self::assertSame(
+            '-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.nats.yml -f docker-compose.mysql.yml -f docker-compose.redis.yml -f docker-compose.ollama.yml',
+            $this->shell('compose_all_args', ['EVENTS_ASYNC' => '0']),
+            'server:stop takes the worker down even after EVENTS_ASYNC was switched off',
+        );
+    }
+
+    /** A project's docker-compose.override.yml comes after the worker's file, so it can change the worker. */
+    #[Test]
+    public function the_projects_override_is_loaded_after_the_worker(): void
+    {
+        $this->project(['docker-compose.override.yml', 'docker-compose.worker.yml']);
+
+        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.override.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']));
+        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.override.yml', $this->shell('compose_all_args', []));
+    }
+
+    /**
+     * The worker's file cannot name an overlay's service, so bin/semitexa
+     * writes what each overlay sets on the app to var/run/worker.env. Read
+     * from the overlays themselves, so a host or port changed there cannot
+     * drift here.
+     */
+    #[Test]
+    public function the_worker_is_given_exactly_what_each_loaded_overlay_gives_the_app(): void
+    {
+        $this->project([...self::OVERLAYS, 'docker-compose.worker.yml']);
+        $expected = [];
+        foreach (['docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.nats.yml', 'docker-compose.ollama.yml'] as $overlay) {
+            preg_match_all('/^      ([A-Z_]+): "?([^"\n]+)"?$/m', self::section($this->service($overlay, 'app'), 'environment'), $m, PREG_SET_ORDER);
+            foreach ($m as [, $key, $value]) {
+                $expected[] = "{$key}={$value}";
+            }
+        }
+        self::assertCount(6, $expected, 'DB_HOST, DB_PORT, REDIS_HOST, REDIS_PORT, NATS_PRIMARY_URL, LLM_BASE_URL');
+        $header = '# Written by bin/semitexa: the services the overlays give the app.';
+
+        $this->shell('compose_write_worker_env', ['EVENTS_ASYNC' => '1', 'DB_DRIVER' => 'mysql', 'REDIS_HOST' => 'redis', 'LLM_PROVIDER' => 'ollama']);
+        self::assertSame($header . "\n" . implode("\n", $expected) . "\n", file_get_contents($this->tmp . '/var/run/worker.env'));
+
+        $this->shell('compose_write_worker_env', ['EVENTS_ASYNC' => '0', 'DB_DRIVER' => 'sqlite']);
+        self::assertSame($header . "\n", file_get_contents($this->tmp . '/var/run/worker.env'), 'rewritten: no overlay loaded, nothing from the last start kept');
+    }
+
+    #[Test]
+    public function the_worker_starts_one_queue_work_per_listed_queue_and_reports_anything_else_printed(): void
+    {
+        [$started, $stderr] = $this->runWorker("printf 'PHP Deprecated: something in /x.php\\nnats async\\nnats events\\ndatabase ledger\\n'; exit 0", 3);
+
+        self::assertSame(['queue:work database ledger', 'queue:work nats async', 'queue:work nats events'], $started);
+        self::assertStringContainsString("worker: skipped, not a '<transport> <queue>' line: PHP Deprecated: something in /x.php", $stderr);
+    }
+
+    /**
+     * A core from before queue:queues (or one that cannot list the queues)
+     * still gets the default queue consumed, instead of a container that
+     * exits and restarts forever.
+     */
+    #[Test]
+    public function without_queue_queues_the_worker_consumes_the_default_queue(): void
+    {
+        [$started, $stderr] = $this->runWorker("echo 'There are no commands defined in the queue namespace.' >&2; exit 1", 1);
+
+        self::assertSame(['queue:work'], $started);
+        self::assertStringContainsString('worker: queue:queues failed; consuming the default queue only', $stderr);
+    }
+
+    /**
+     * docker stop sends TERM to the container's init, which passes it to the
+     * shell alone: the shell has to take every queue:work down with it, or the
+     * container waits out the stop timeout and is killed.
+     */
+    #[Test]
+    public function a_term_to_the_shell_alone_stops_every_queue_work(): void
+    {
+        [$started, , $alive] = $this->runWorker("printf 'nats async\\nnats events\\n'; exit 0", 2, shellOnly: true);
+
+        self::assertCount(2, $started);
+        self::assertSame(0, $alive, 'no queue:work outlives the shell');
+    }
+
+    /**
+     * Runs the worker service's own script with a stand-in php: queue:queues
+     * does what $queuesBehaviour says; each queue:work records its arguments
+     * and stays up, as a real worker does.
+     *
+     * @return array{list<string>, string, int} the queue:work calls (sorted), stderr, processes still alive
+     */
+    private function runWorker(string $queuesBehaviour, int $expected, bool $shellOnly = false): array
+    {
+        $this->project([]);
+        $bin = $this->tmp . '/bin';
+        mkdir($bin);
+        file_put_contents($bin . '/php', "#!/bin/sh\nfor a in \"\$@\"; do case \$a in queue:queues) {$queuesBehaviour} ;; esac; done\nwhile [ \"\$1\" != vendor/bin/semitexa ]; do shift; done\nshift\necho \"\$*\" >> \"\$WORK_LOG\"\nexec sleep 30\n");
+        chmod($bin . '/php', 0o755);
+
+        $script = str_replace('$$', '$', self::section($this->service('docker-compose.worker.yml', 'worker'), 'command'));
+        self::assertSame(1, preg_match('/      - \|\n(.*)\z/s', $script, $m), 'the worker command is an inline shell script');
+        $body = (string) preg_replace('/^        /m', '', $m[1]);
+
+        $log = $this->tmp . '/work.log';
+        $pid = (int) shell_exec(sprintf(
+            'cd %s && PATH=%s:$PATH WORK_LOG=%s setsid sh -c %s > /dev/null 2> %s & echo $!',
+            escapeshellarg($this->tmp),
+            escapeshellarg($bin),
+            escapeshellarg($log),
+            escapeshellarg($body),
+            escapeshellarg($this->tmp . '/stderr'),
+        ));
+        $read = static fn (): array => is_file($log) ? (file($log, FILE_IGNORE_NEW_LINES) ?: []) : [];
+        for ($i = 0; $i < 50 && count($read()) < $expected; $i++) {
+            usleep(100_000);
+        }
+        // Long enough for a second, unwanted start to show up too.
+        usleep(300_000);
+        exec(($shellOnly ? 'kill -TERM ' : 'kill -TERM -') . $pid . ' 2>/dev/null');
+        $alive = -1;
+        for ($i = 0; $i < 30; $i++) {
+            usleep(100_000);
+            $alive = self::processesInGroup($pid);
+            if ($alive === 0) {
+                break;
+            }
+        }
+        exec('kill -KILL -' . $pid . ' 2>/dev/null');
+
+        $started = $read();
+        sort($started);
+
+        return [$started, (string) @file_get_contents($this->tmp . '/stderr'), $alive];
+    }
+
+    /** Processes whose process group is $group, read from /proc (no ps flags to depend on). */
+    private static function processesInGroup(int $group): int
+    {
+        $count = 0;
+        foreach (glob('/proc/[0-9]*/stat') ?: [] as $stat) {
+            $line = (string) @file_get_contents($stat);
+            $after = substr($line, (int) strrpos($line, ')') + 2);
+            $fields = explode(' ', $after);
+            // After "pid (comm) ": state, ppid, pgrp.
+            if (($fields[2] ?? '') === (string) $group && $fields[0] !== 'Z') {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /** One top-level service block of a compose file, from its name to the next service. */
+    private function service(string $file, string $name): string
+    {
+        $yaml = (string) file_get_contents($this->root . '/' . $file);
+        self::assertSame(1, preg_match('/\n  ' . preg_quote($name, '/') . ":\n(?:(?:    .*|)\n)*/", $yaml, $m), "{$file} defines {$name}");
+
+        return rtrim($m[0] ?? '') . "\n";
+    }
+
+    /** One key of a service block with everything indented under it. */
+    private static function section(string $service, string $key): string
+    {
+        self::assertSame(1, preg_match('/^    ' . preg_quote($key, '/') . ":\n(?:      .*\n|\n)*/m", $service, $m), "the service has {$key}");
+
+        return rtrim($m[0] ?? '');
+    }
+
+    /** @param list<string> $files A throwaway project root holding these (empty) compose files. */
+    private function project(array $files): void
+    {
+        $this->tmp = sys_get_temp_dir() . '/semitexa-queue-worker-' . uniqid();
+        mkdir($this->tmp);
+        foreach ($files as $file) {
+            touch($this->tmp . '/' . $file);
+        }
+    }
+
+    /** @param array<string, string> $env */
+    private function shell(string $call, array $env): string
+    {
+        $script = (string) file_get_contents($this->root . '/bin/semitexa');
+        $functions = '';
+        foreach (['compose_args', 'compose_all_args', 'compose_write_worker_env'] as $function) {
+            self::assertSame(1, preg_match('/^' . $function . '\(\) \{\n.*?^\}$/ms', $script, $m), "{$function} must still exist in bin/semitexa");
+            $functions .= ($m[0] ?? '') . "\n";
+        }
+        $values = '';
+        foreach ($env as $key => $value) {
+            $values .= "    {$key}) printf '%s' " . escapeshellarg($value) . " ;;\n";
+        }
+        $sh = "env_val() {\n  case \$1 in\n{$values}    *) printf '%s' \"\${2:-}\" ;;\n  esac\n}\n" . $functions . $call;
+
+        return trim((string) shell_exec(sprintf('env -i PATH=/usr/bin:/bin PROJECT_ROOT=%s sh -c %s', escapeshellarg($this->tmp), escapeshellarg($sh))));
+    }
+}

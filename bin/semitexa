@@ -243,6 +243,14 @@ compose_args() {
     _args="-f docker-compose.yml"
     _has_overlay=0
 
+    # The queue worker, in a container of its own: something is queued exactly
+    # when EVENTS_ASYNC=1, whatever the transport (NATS or the database).
+    # Before the override, so a project's docker-compose.override.yml can
+    # give it resources or more.
+    if [ -f "$PROJECT_ROOT/docker-compose.worker.yml" ]; then
+        case "$(env_val EVENTS_ASYNC 0)" in 1|true|yes) _args="$_args -f docker-compose.worker.yml"; _has_overlay=1 ;; esac
+    fi
+
     # Per-operator override — standard Docker Compose convention.
     # Explicit -f overrides compose's auto-discovery, so we must re-include it.
     if [ -f "$PROJECT_ROOT/docker-compose.override.yml" ]; then
@@ -287,10 +295,37 @@ compose_args() {
 # Returns ALL compose files regardless of .env settings (for stop/cleanup).
 compose_all_args() {
     _args="-f docker-compose.yml"
-    for _overlay in docker-compose.override.yml docker-compose.nats.yml docker-compose.mysql.yml docker-compose.redis.yml docker-compose.ollama.yml; do
+    for _overlay in docker-compose.worker.yml docker-compose.override.yml docker-compose.nats.yml docker-compose.mysql.yml docker-compose.redis.yml docker-compose.ollama.yml; do
         [ -f "$PROJECT_ROOT/$_overlay" ] && _args="$_args -f $_overlay"
     done
     echo "$_args"
+}
+
+# What the overlays set on the app, written to var/run/worker.env for the
+# worker in docker-compose.worker.yml, which reads it last. That file cannot
+# name the services itself: an overlay that is not loaded has no such
+# service. The conditions are compose_args's, so the worker reaches what the
+# app reaches. Rewritten on every compose call, so nothing stale is kept.
+compose_write_worker_env() {
+    [ -f "$PROJECT_ROOT/docker-compose.worker.yml" ] || return 0
+    _wenv="$PROJECT_ROOT/var/run/worker.env"
+    mkdir -p "$PROJECT_ROOT/var/run" 2>/dev/null || return 0
+    {
+        echo "# Written by bin/semitexa: the services the overlays give the app."
+        if [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ] && [ "$(env_val DB_DRIVER "")" = "mysql" ]; then
+            echo "DB_HOST=mysql"; echo "DB_PORT=3306"
+        fi
+        if [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ] && [ -n "$(env_val REDIS_HOST "")" ]; then
+            echo "REDIS_HOST=redis"; echo "REDIS_PORT=6379"
+        fi
+        if [ -f "$PROJECT_ROOT/docker-compose.nats.yml" ]; then
+            case "$(env_val EVENTS_ASYNC 0)" in 1|true|yes) echo "NATS_PRIMARY_URL=nats://nats:4222" ;; esac
+        fi
+        if [ -f "$PROJECT_ROOT/docker-compose.ollama.yml" ] && [ "$(env_val LLM_PROVIDER "")" = "ollama" ]; then
+            echo "LLM_BASE_URL=http://ollama:11434"
+        fi
+    } > "$_wenv.tmp.$$" 2>/dev/null && mv -f "$_wenv.tmp.$$" "$_wenv" 2>/dev/null || rm -f "$_wenv.tmp.$$" 2>/dev/null
+    return 0
 }
 
 run_compose() {
@@ -298,6 +333,8 @@ run_compose() {
     _overlays="$(compose_args)"
     (
         env_export_compose_context
+        # Every up and run goes through here: the worker gets the overlays' values.
+        compose_write_worker_env
         if [ -n "$_overlays" ]; then
             # shellcheck disable=SC2086
             $_compose $_overlays "$@"

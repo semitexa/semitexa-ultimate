@@ -14,5 +14,7 @@ var/lock/*
 var/sitemap/*
 var/storage/*
 var/uploads/*
+# Written by bin/semitexa for the queue worker container on every start.
+var/run/worker.env
 !.gitkeep
 !var/docs/README.md

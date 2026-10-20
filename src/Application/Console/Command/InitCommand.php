@@ -35,6 +35,7 @@ final class InitCommand extends Command
         'docker-compose.mysql.yml' => 'docker-compose.mysql.yml',
         'docker-compose.redis.yml' => 'docker-compose.redis.yml',
         'docker-compose.ollama.yml' => 'docker-compose.ollama.yml',
+        'docker-compose.worker.yml' => 'docker-compose.worker.yml',
         'phpunit.xml.dist' => 'phpunit.xml.dist',
         'bin/semitexa' => 'bin/semitexa',
         '.gitignore' => 'scaffold/gitignore',
@@ -145,6 +146,7 @@ final class InitCommand extends Command
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
             'docker-compose.ollama.yml',
+            'docker-compose.worker.yml',
             'phpunit.xml.dist',
             'bin/semitexa',
             '.gitignore',
@@ -239,6 +241,7 @@ final class InitCommand extends Command
             'docker-compose.mysql.yml',
             'docker-compose.redis.yml',
             'docker-compose.ollama.yml',
+            'docker-compose.worker.yml',
             'phpunit.xml.dist',
             'bin/semitexa',
             '.gitignore',
@@ -274,7 +277,7 @@ final class InitCommand extends Command
             }
         }
 
-        $io->success('Docs and scaffold (AGENTS.md, AI_ENTRY, AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays), phpunit, bin/semitexa, .gitignore, public/.htaccess, var/docs/.gitkeep, var/docs/README.md) synced from semitexa/ultimate.');
+        $io->success('Docs and scaffold (AGENTS.md, AI_ENTRY, AI_CONTEXT, README, server.php, .env.default, Dockerfile, docker-compose (+ mysql, redis, nats, ollama overlays and the queue worker), phpunit, bin/semitexa, .gitignore, public/.htaccess, var/docs/.gitkeep, var/docs/README.md) synced from semitexa/ultimate.');
         $io->text('.env.default stays committed as the baseline. Edit .env for local overrides when you need them.');
 
         return Command::SUCCESS;

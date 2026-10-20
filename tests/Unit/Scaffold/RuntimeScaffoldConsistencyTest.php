@@ -81,7 +81,7 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         // apart for months (persistent SSE on here, off there; root vs a
         // semitexa user the env file named but the overlay never created).
         $pathPairs = [];
-        foreach (['docker-compose.yml', 'docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.nats.yml', 'docker-compose.ollama.yml', 'Dockerfile', '.env.default', 'bin/semitexa'] as $file) {
+        foreach (['docker-compose.yml', 'docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.nats.yml', 'docker-compose.ollama.yml', 'docker-compose.worker.yml', 'Dockerfile', '.env.default', 'bin/semitexa'] as $file) {
             $pathPairs[] = ['ultimate' => $ultimateRoot . '/' . $file, 'installer' => $installerRoot . '/' . $file];
         }
 
