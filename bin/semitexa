@@ -1910,6 +1910,41 @@ stack_warn_live_agents() {
     [ -n "${SEMITEXA_AGENT_SESSION:-}" ] || warn "You have not joined (ai:agent join): the stack log will record this $1 as by nobody."
 }
 
+# Settings that start fine and go wrong later, said before the containers start.
+server_start_config_warnings() {
+    # Unset is prod, as the server reads it.
+    if [ "$(env_val APP_ENV prod)" = "prod" ]; then
+        # .env.default is the dev baseline (APP_DEBUG=1): a prod .env that leaves
+        # APP_DEBUG out inherits it and shows error details to visitors.
+        case "$(env_val APP_DEBUG 0)" in
+            1|true|TRUE|yes|on) warn "APP_ENV=prod with APP_DEBUG on: error pages show details. Set APP_DEBUG=0 in .env." ;;
+        esac
+        # One worker: nothing serves while it is recycled. Without a request
+        # limit too, Swoole gives it no manager and a recycle ends the server.
+        _workers="$(env_val SWOOLE_WORKER_NUM 4)"
+        case "$_workers" in ''|*[!0-9]*) _workers=0 ;; esac
+        if [ "$_workers" -eq 1 ]; then
+            _max_request="$(env_val SWOOLE_MAX_REQUEST 10000)"
+            # As the server's (int) reads it: the leading digits (a sign of +
+            # allowed), and anything but a positive count is none.
+            _max_digits="$(printf '%s' "$_max_request" | sed -n 's/^+\{0,1\}\([0-9][0-9]*\).*/\1/p')"
+            _has_manager=0
+            [ -n "$_max_digits" ] && [ "$_max_digits" -gt 0 ] && _has_manager=1
+            if [ "$_has_manager" = 1 ]; then
+                warn "APP_ENV=prod with SWOOLE_WORKER_NUM=1: while the worker is recycled (SWOOLE_MAX_REQUEST, the memory watchdog, a fatal error) nothing serves and every open connection is cut. Set SWOOLE_WORKER_NUM=2 or more in .env."
+            else
+                warn "APP_ENV=prod with SWOOLE_WORKER_NUM=1 and SWOOLE_MAX_REQUEST=$_max_request: the worker runs without a manager, so a memory-watchdog recycle or a fatal error ends the whole server until the container is started again. Set SWOOLE_WORKER_NUM=2 or more in .env."
+            fi
+        fi
+    fi
+    # The mysql image creates DB_USERNAME as a user and refuses root, but only
+    # on a new volume: an existing one has been set up and hides it.
+    if [ "$(env_val DB_DRIVER "")" = "mysql" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ] \
+        && [ "$(env_val DB_USERNAME semitexa)" = "root" ]; then
+        warn "DB_USERNAME=root: the mysql service creates DB_USERNAME as its user and refuses root, so on a new database volume it never starts. Set another DB_USERNAME in .env (the scaffold uses semitexa); root's password is DB_ROOT_PASSWORD."
+    fi
+}
+
 cmd_server_start() {
     printf "\n%s%s Semitexa — Starting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
 
@@ -1928,13 +1963,7 @@ cmd_server_start() {
     _overlays="$(compose_args)"
     [ -n "$_overlays" ] && info "Compose files: $_overlays"
 
-    # .env.default is the dev baseline (APP_DEBUG=1): a prod .env that leaves
-    # APP_DEBUG out inherits it and shows error details to visitors.
-    if [ "$(env_val APP_ENV "")" = "prod" ]; then
-        case "$(env_val APP_DEBUG 0)" in
-            1|true|TRUE|yes|on) warn "APP_ENV=prod with APP_DEBUG on: error pages show details. Set APP_DEBUG=0 in .env." ;;
-        esac
-    fi
+    server_start_config_warnings
 
     # ── Pre-flight Checks (Proxy & DNS) ──────────────────────────────
     if project_has_shared_domains; then
