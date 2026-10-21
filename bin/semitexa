@@ -3234,6 +3234,23 @@ cmd_mcp() {
         error "vendor/bin/semitexa not found. Run: bin/semitexa install"
         exit 1
     fi
+    # server:restart recreates the app container and the server with it, and
+    # an agent does not restart a stdio server by itself. With PHP on the host,
+    # a relay holds the agent's connection and reconnects to the new server
+    # (semitexa/mcp bin/mcp-relay.php); it starts this command again with
+    # SEMITEXA_MCP_DIRECT set, which runs the server itself.
+    _mcp_relay="$PROJECT_ROOT/vendor/semitexa/mcp/bin/mcp-relay.php"
+    if [ -z "${SEMITEXA_MCP_DIRECT:-}" ] && [ -f "$_mcp_relay" ] && command -v php >/dev/null 2>&1 \
+        && case "$(uname -s 2>/dev/null)" in Linux|Darwin) true ;; *) false ;; esac \
+        && php -r 'exit(PHP_VERSION_ID >= 80100 && function_exists("proc_open") ? 0 : 1);' >/dev/null 2>&1; then
+        exec php "$_mcp_relay" "$PROJECT_ROOT/bin/semitexa" mcp "$@"
+    fi
+    # Started by the relay while the stack is down (a restart in progress):
+    # say so and let the relay try again. A one-off container here would be
+    # started with the app's dependencies mid-restart and outlive server:stop.
+    if [ -n "${SEMITEXA_MCP_DIRECT:-}" ] && ! is_app_running; then
+        exit 75
+    fi
     if is_app_running; then
         # shellcheck disable=SC2046
         run_compose exec $(agent_env_args) -T app php vendor/bin/semitexa mcp:serve "$@"
