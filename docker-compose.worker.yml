@@ -20,8 +20,9 @@ services:
     build: .
     # A PID 1 that passes docker stop's TERM on to the shell below.
     init: true
-    # docker stop's TERM reaches every process; a queue worker finishes the job
-    # in hand first (QueueStopSignals), and is killed if it takes longer than this.
+    # docker stop's TERM reaches every worker; queue, mail, media, scheduler and
+    # webhook workers finish the work in hand first (StopSignals), and are
+    # killed if it takes longer than this.
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-90s}
     user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
     environment:
