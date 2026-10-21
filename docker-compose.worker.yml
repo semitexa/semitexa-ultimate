@@ -18,8 +18,11 @@
 services:
   worker:
     build: .
-    # A PID 1 that passes docker stop's TERM on, so the worker stops at once.
+    # A PID 1 that passes docker stop's TERM on to the shell below.
     init: true
+    # docker stop's TERM reaches every process; a queue worker finishes the job
+    # in hand first (QueueStopSignals), and is killed if it takes longer than this.
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-90s}
     user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
     environment:
       HOME: /var/www/html
@@ -41,16 +44,41 @@ services:
       - |
         # Words are split, never globbed: worker:processes prints plain words.
         set -f
-        trap 'trap - TERM INT; kill 0; exit 0' TERM INT
-        # run <pause> <command...>: the command, started again <pause> s after it exits.
+        # On TERM: pass it to every run loop below, then wait for them. Each
+        # hands it to its own php, which finishes the job in hand and exits.
+        trap 'trap "" TERM INT; kill -TERM 0; wait; exit 0' TERM INT
+        # run <pause> <command...>: the command, started again <pause> s after
+        # it exits, until a TERM says stop. php runs in a session of its own
+        # (setsid), so the TERM sent to this group does not reach what a job
+        # started (a converter, a renderer) and cut it off: the loop hands
+        # the TERM to php alone.
         run() {
           pause=$$1; shift
-          while true; do
-            php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa "$$@"
-            # A command that finished its work (scheduler:plan) is not news.
+          stopping=
+          pid=
+          trap 'stopping=1; [ -z "$$pid" ] || kill -TERM "$$pid" 2>/dev/null' TERM INT
+          while [ -z "$$stopping" ]; do
+            setsid php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa "$$@" &
+            pid=$$!
+            # A TERM between the start and the line above found no pid.
+            [ -z "$$stopping" ] || kill -TERM "$$pid" 2>/dev/null
+            # A trapped TERM ends wait early: wait again until php is gone.
+            wait "$$pid"
             rc=$$?
+            while kill -0 "$$pid" 2>/dev/null; do
+              wait "$$pid"
+              rc=$$?
+            done
+            pid=
+            [ -z "$$stopping" ] || break
+            # A command that finished its work (scheduler:plan) is not news.
             [ "$$rc" = 0 ] || echo "worker: $$* exited ($$rc); again in $${pause}s" >&2
-            sleep "$$pause"
+            # In the background, so a TERM cuts the pause short.
+            sleep "$$pause" &
+            pid=$$!
+            [ -z "$$stopping" ] || kill -TERM "$$pid" 2>/dev/null
+            wait "$$pid"
+            pid=
           done
         }
         if ! processes=$$(php vendor/bin/semitexa worker:processes); then

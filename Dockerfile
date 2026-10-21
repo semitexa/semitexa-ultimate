@@ -76,6 +76,11 @@ RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git 
     && addgroup -g 1000 -S semitexa \
     && adduser -u 1000 -S -G semitexa -h /var/www/html semitexa
 
+# pcntl, as a layer of its own so the Swoole build above stays cached: the
+# queue workers catch docker stop's SIGTERM with it and finish the job in hand
+# (QueueStopSignals) instead of dying in the middle of it.
+RUN docker-php-ext-install pcntl
+
 # Node, as a SEPARATE layer on purpose: it lands after the Swoole build above, so
 # adding or changing it re-uses that cached layer instead of recompiling Swoole.
 #
