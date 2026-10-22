@@ -84,6 +84,10 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
         foreach (['docker-compose.yml', 'docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.nats.yml', 'docker-compose.ollama.yml', 'docker-compose.worker.yml', 'Dockerfile', '.env.default', 'bin/semitexa'] as $file) {
             $pathPairs[] = ['ultimate' => $ultimateRoot . '/' . $file, 'installer' => $installerRoot . '/' . $file];
         }
+        // init writes scaffold/gitignore as the project's .gitignore: behind the
+        // installer's, it did not ignore .ssh/, where the deploy docs tell
+        // users to keep the deploy key.
+        $pathPairs[] = ['ultimate' => $ultimateRoot . '/scaffold/gitignore', 'installer' => $installerRoot . '/.gitignore'];
 
         foreach ($pathPairs as $pair) {
             self::assertFileExists($pair['ultimate']);
