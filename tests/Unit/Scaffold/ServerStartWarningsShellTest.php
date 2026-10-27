@@ -113,13 +113,17 @@ final class ServerStartWarningsShellTest extends TestCase
 
         $sh = 'warn(){ printf "WARN: %s\n" "$*"; }' . "\n"
             . 'env_merged_lines(){ cat "$PROJECT_ROOT/.env"; }' . "\n"
-            . implode("\n", $m[0]) . "\nserver_start_config_warnings";
+            . implode("\n", $m[0]) . "\nserver_start_config_warnings; echo \"status=\$?\"";
         $out = (string) shell_exec(sprintf(
             'env -i PATH=/usr/bin:/bin PROJECT_ROOT=%s sh -c %s 2>&1',
             escapeshellarg($this->root),
             escapeshellarg($sh),
         ));
 
-        return array_values(array_filter(explode("\n", $out), static fn (string $line): bool => $line !== ''));
+        $lines = array_values(array_filter(explode("\n", $out), static fn (string $line): bool => $line !== ''));
+        // Asserted first: a check that failed and printed nothing read as "no warnings".
+        self::assertSame('status=0', array_pop($lines), $out);
+
+        return $lines;
     }
 }

@@ -63,7 +63,9 @@ final class QueueWorkerScaffoldTest extends TestCase
     public function no_other_compose_file_names_the_worker(): void
     {
         foreach (['docker-compose.yml', ...self::OVERLAYS] as $file) {
-            self::assertStringNotContainsString("\n  worker:\n", (string) file_get_contents($this->root . '/' . $file), $file);
+            $contents = (string) file_get_contents($this->root . '/' . $file);
+            self::assertStringContainsString("services:\n", $contents, "{$file} is still there to be checked");
+            self::assertStringNotContainsString("\n  worker:\n", $contents, $file);
         }
     }
 
@@ -94,7 +96,7 @@ final class QueueWorkerScaffoldTest extends TestCase
     {
         $this->project([...self::OVERLAYS, 'docker-compose.worker.yml']);
 
-        self::assertStringNotContainsString('--profile', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']));
+        self::assertSame('-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.nats.yml', $this->shell('compose_args', ['EVENTS_ASYNC' => '1']), 'files only, no --profile');
         self::assertSame(
             '-f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.nats.yml -f docker-compose.mysql.yml -f docker-compose.redis.yml -f docker-compose.ollama.yml',
             $this->shell('compose_all_args', ['EVENTS_ASYNC' => '0']),
@@ -174,8 +176,11 @@ final class QueueWorkerScaffoldTest extends TestCase
     #[Test]
     public function only_a_failing_exit_is_reported(): void
     {
-        [, $stderr] = $this->runWorker("printf '0 scheduler:plan\\n'; exit 0", 3);
+        [$started, $stderr] = $this->runWorker("printf '0 scheduler:plan\\n1 broken:job\\n'; exit 0", 3);
 
+        self::assertContains('broken:job', $started);
+        self::assertGreaterThanOrEqual(2, count(array_keys($started, 'scheduler:plan', true)), 'scheduler:plan exited and was started again');
+        self::assertStringContainsString("worker: broken:job exited (3); again in 1s\n", $stderr);
         self::assertStringNotContainsString('scheduler:plan exited', $stderr);
     }
 
@@ -239,7 +244,8 @@ final class QueueWorkerScaffoldTest extends TestCase
      * Runs the worker service's own script with a stand-in php:
      * worker:processes does what $queuesBehaviour says; every other command
      * records its arguments and stays up, as a real worker does, except
-     * scheduler:plan, which exits, as the real one does.
+     * scheduler:plan, which exits, as the real one does, and broken:job,
+     * which fails (exit 3).
      *
      * @return array{list<string>, string, int, int} the queue:work calls (sorted), stderr, processes still alive after the TERM, and before it
      */
@@ -251,7 +257,7 @@ final class QueueWorkerScaffoldTest extends TestCase
         }
         $bin = $this->tmp . '/bin';
         mkdir($bin);
-        file_put_contents($bin . '/php', "#!/bin/sh\nfor a in \"\$@\"; do case \$a in worker:processes) {$queuesBehaviour} ;; esac; done\nwhile [ \"\$1\" != vendor/bin/semitexa ]; do shift; done\nshift\necho \"\$*\" >> \"\$WORK_LOG\"\n[ \"\$1\" = scheduler:plan ] && exit 0\nexec sleep 30\n");
+        file_put_contents($bin . '/php', "#!/bin/sh\nfor a in \"\$@\"; do case \$a in worker:processes) {$queuesBehaviour} ;; esac; done\nwhile [ \"\$1\" != vendor/bin/semitexa ]; do shift; done\nshift\necho \"\$*\" >> \"\$WORK_LOG\"\n[ \"\$1\" = scheduler:plan ] && exit 0\n[ \"\$1\" = broken:job ] && exit 3\nexec sleep 30\n");
         chmod($bin . '/php', 0o755);
 
         $script = str_replace('$$', '$', self::section($this->service('docker-compose.worker.yml', 'worker'), 'command'));

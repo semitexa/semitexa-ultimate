@@ -2118,6 +2118,12 @@ cmd_server_restart() {
         run_compose up -d --no-build --force-recreate --no-deps "$_service"
     else
         info "Recreating all containers..."
+        # Before down: run_compose refuses the up when var/run/worker.env
+        # cannot be written, and after down that left no stack at all.
+        if ! compose_write_worker_env; then
+            error "Not restarting: the running containers are left as they are. Make var/run writable, then run server:restart again."
+            exit 1
+        fi
         server_restart_build_or_warn
         _overlays="$(compose_all_args)"
         # shellcheck disable=SC2086
@@ -3248,7 +3254,9 @@ cmd_mcp() {
     # Started by the relay while the stack is down (a restart in progress):
     # say so and let the relay try again. A one-off container here would be
     # started with the app's dependencies mid-restart and outlive server:stop.
-    if [ -n "${SEMITEXA_MCP_DIRECT:-}" ] && ! is_app_running; then
+    # Only where that one-off would be the way: a host without Compose runs
+    # the server with its own PHP below, and was told to try again forever.
+    if [ -n "${SEMITEXA_MCP_DIRECT:-}" ] && has_compose && env_runtime_file_exists && ! is_app_running; then
         exit 75
     fi
     if is_app_running; then

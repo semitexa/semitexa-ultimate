@@ -53,11 +53,12 @@ ARG IMAGICK_VERSION=3.8.1
 # Semitexa does not use ext/session. Off anyway, so a project that ever runs
 # this image's PHP under another SAPI does not carry that surface.
 #
-# /etc/passwd writable: the container runs as the host user's uid, which has
-# no account here unless it is 1000, and ssh refuses to run for a uid with no
-# account. The bootstrap adds one when it is missing. The image has no setuid
-# program, so the file grants nothing beyond naming the uid.
-RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic bash openssh-client \
+# nss_wrapper: the container runs as the host user's uid, which has no
+# account here unless it is 1000, and ssh refuses to run for a uid with no
+# account. bootstrap-remote names it in a passwd file of its own, read through
+# nss_wrapper; /etc/passwd stays read-only, as a writable one turns any file
+# write in the app into a new account.
+RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic bash openssh-client nss_wrapper \
     && docker-php-ext-install pdo pdo_mysql sockets \
     && pecl install --nobuild swoole \
     && cd "$(pecl config-get temp_dir)/swoole" \
@@ -72,7 +73,6 @@ RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git 
     && docker-php-ext-enable pcov \
     && printf 'pcov.enabled=0\npcov.directory=/var/www/html\npcov.exclude="~(vendor|/tests/)~"\npcov.initial.files=20000\n' > /usr/local/etc/php/conf.d/zz-pcov.ini \
     && printf 'session.upload_progress.enabled=0\n' > /usr/local/etc/php/conf.d/zz-semitexa-session.ini \
-    && chmod 0666 /etc/passwd \
     && addgroup -g 1000 -S semitexa \
     && adduser -u 1000 -S -G semitexa -h /var/www/html semitexa
 
