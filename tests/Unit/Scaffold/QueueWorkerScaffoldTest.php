@@ -178,7 +178,9 @@ final class QueueWorkerScaffoldTest extends TestCase
     {
         [$started, $stderr] = $this->runWorker("printf '0 scheduler:plan\\n1 broken:job\\n'; exit 0", 3);
 
-        self::assertContains('broken:job', $started);
+        $unique = array_values(array_unique($started));
+        sort($unique);
+        self::assertSame(['broken:job', 'scheduler:plan'], $unique, 'the two listed processes and nothing else');
         self::assertGreaterThanOrEqual(2, count(array_keys($started, 'scheduler:plan', true)), 'scheduler:plan exited and was started again');
         self::assertStringContainsString("worker: broken:job exited (3); again in 1s\n", $stderr);
         self::assertStringNotContainsString('scheduler:plan exited', $stderr);
