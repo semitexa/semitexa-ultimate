@@ -110,7 +110,7 @@ RUN printf '%s\n' \
     '  <policy domain="filter" rights="none" pattern="*"/>' \
     '  <policy domain="path" rights="none" pattern="@*"/>' \
     '  <policy domain="coder" rights="none" pattern="*"/>' \
-    '  <policy domain="coder" rights="read|write" pattern="{JPEG,JPG,PNG,WEBP,GIF,HEIC,HEIF,AVIF}"/>' \
+    '  <policy domain="coder" rights="read|write" pattern="{JPEG,JPG,PNG,WEBP,GIF,HEIC,HEIF,AVIF,BMP}"/>' \
     '</policymap>' \
     > /etc/ImageMagick-7/policy.xml
 
