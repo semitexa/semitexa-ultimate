@@ -91,6 +91,29 @@ RUN docker-php-ext-install pcntl
 # release gate would go green having never checked parity at all.
 RUN apk add --no-cache nodejs
 
+# A restrictive ImageMagick policy, as a layer of its own. The package ships
+# the "open" one: every coder, delegate and path, no resource limits. An
+# uploaded file decides its own format by its bytes, so an "image" can be an
+# SVG, MVG or PostScript that reads local files, fetches URLs or runs a
+# delegate (Ghostscript), or a huge one that eats the worker's memory.
+# Only the raster formats media reads and writes are allowed.
+RUN printf '%s\n' \
+    '<policymap>' \
+    '  <policy domain="resource" name="memory" value="256MiB"/>' \
+    '  <policy domain="resource" name="map" value="512MiB"/>' \
+    '  <policy domain="resource" name="disk" value="1GiB"/>' \
+    '  <policy domain="resource" name="width" value="16KP"/>' \
+    '  <policy domain="resource" name="height" value="16KP"/>' \
+    '  <policy domain="resource" name="area" value="128MP"/>' \
+    '  <policy domain="resource" name="time" value="60"/>' \
+    '  <policy domain="delegate" rights="none" pattern="*"/>' \
+    '  <policy domain="filter" rights="none" pattern="*"/>' \
+    '  <policy domain="path" rights="none" pattern="@*"/>' \
+    '  <policy domain="coder" rights="none" pattern="*"/>' \
+    '  <policy domain="coder" rights="read|write" pattern="{JPEG,JPG,PNG,WEBP,GIF,HEIC,HEIF,AVIF}"/>' \
+    '</policymap>' \
+    > /etc/ImageMagick-7/policy.xml
+
 WORKDIR /var/www/html
 
 USER semitexa
