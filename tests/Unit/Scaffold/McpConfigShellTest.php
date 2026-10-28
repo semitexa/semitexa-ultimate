@@ -19,7 +19,7 @@ final class McpConfigShellTest extends TestCase
     {
         self::assertSame([
             'Claude Code, in this project:',
-            '  claude mcp add semitexa -- "/srv/my app/bin/semitexa" mcp',
+            "  claude mcp add semitexa -- '/srv/my app/bin/semitexa' mcp",
             '',
             'Cursor (.cursor/mcp.json) or Claude Desktop (claude_desktop_config.json):',
             '{"mcpServers": {"semitexa": {"command": "/srv/my app/bin/semitexa", "args": ["mcp"]}}}',
@@ -33,6 +33,20 @@ final class McpConfigShellTest extends TestCase
         $json = $this->config('/srv/a"b\\c')[4];
 
         self::assertSame(['mcpServers' => ['semitexa' => ['command' => '/srv/a"b\\c/bin/semitexa', 'args' => ['mcp']]]], json_decode($json, true));
+    }
+
+    /** In double quotes `"`, `\`, `$` and a backtick changed the path the pasted command gave claude. */
+    #[Test]
+    public function the_claude_code_command_gives_the_shell_the_path_as_it_is(): void
+    {
+        $root = '/srv/a"b\\c $HOME `id` it\'s';
+        $line = $this->config($root)[1];
+        self::assertStringStartsWith('  claude mcp add semitexa -- ', $line);
+
+        // Run as pasted, with claude replaced by something that prints its arguments.
+        $args = (string) shell_exec('env -i PATH=/usr/bin:/bin HOME=/home/x sh -c ' . escapeshellarg("claude() { printf '%s\\n' \"\$@\"; }\n" . $line));
+
+        self::assertSame(['mcp', 'add', 'semitexa', '--', $root . '/bin/semitexa', 'mcp'], explode("\n", rtrim($args, "\n")));
     }
 
     /**
@@ -56,6 +70,29 @@ final class McpConfigShellTest extends TestCase
         self::assertSame([75, []], $this->mcp(hasCompose: true));
     }
 
+    /** An agent's own call, with PHP on the host, is held by the relay. */
+    #[Test]
+    public function an_agents_call_starts_the_relay(): void
+    {
+        $ran = $this->mcp(hasCompose: true, env: [], relay: true);
+
+        self::assertSame([0, ['php ' . $this->root . '/vendor/semitexa/mcp/bin/mcp-relay.php ' . $this->root . '/bin/semitexa mcp --x']], $ran);
+    }
+
+    /**
+     * REGRESSION. The relay's first start has no SEMITEXA_MCP_DIRECT (it
+     * keeps the fallbacks); checked on that alone, it started another relay,
+     * and that one another — a fork bomb that took the host to a load of a
+     * thousand. SEMITEXA_MCP_RELAYED runs the server.
+     */
+    #[Test]
+    public function the_relays_first_start_runs_the_server_not_another_relay(): void
+    {
+        $ran = $this->mcp(hasCompose: true, env: ['SEMITEXA_MCP_RELAYED' => '1'], relay: true);
+
+        self::assertSame([0, ['one-off mcp:serve --x']], $ran);
+    }
+
     private string $root = '';
 
     protected function tearDown(): void
@@ -65,8 +102,11 @@ final class McpConfigShellTest extends TestCase
         }
     }
 
-    /** @return array{int, list<string>} the exit status and what ran, one line each */
-    private function mcp(bool $hasCompose): array
+    /**
+     * @param array<string, string> $env what the caller sets; by default the relay's restart
+     * @return array{int, list<string>} the exit status and what ran, one line each
+     */
+    private function mcp(bool $hasCompose, array $env = ['SEMITEXA_MCP_RELAYED' => '1', 'SEMITEXA_MCP_DIRECT' => '1'], bool $relay = false): array
     {
         $this->root = sys_get_temp_dir() . '/semitexa-mcp-' . uniqid();
         mkdir($this->root . '/vendor/bin', 0o755, true);
@@ -75,6 +115,14 @@ final class McpConfigShellTest extends TestCase
         touch($this->root . '/.env.default');
         file_put_contents($this->root . '/bin/php', "#!/bin/sh\necho \"php \$*\"\n");
         chmod($this->root . '/bin/php', 0o755);
+        if ($relay) {
+            mkdir($this->root . '/vendor/semitexa/mcp/bin', 0o755, true);
+            touch($this->root . '/vendor/semitexa/mcp/bin/mcp-relay.php');
+        }
+        $vars = '';
+        foreach ($env as $name => $value) {
+            $vars .= ' ' . $name . '=' . escapeshellarg($value);
+        }
 
         $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
         preg_match_all('/^(env_runtime_file_exists|cmd_mcp)\(\) \{\n.*?^\}$/ms', $script, $m);
@@ -85,9 +133,10 @@ final class McpConfigShellTest extends TestCase
             . 'proxy_run_one_off_app(){ echo "one-off $*"; }; run_compose(){ echo "compose $*"; }' . "\n"
             . implode("\n", $m[0]) . "\n(cmd_mcp --x); echo \"status=\$?\"";
         $out = (string) shell_exec(sprintf(
-            'env -i PATH=%s:/usr/bin:/bin PROJECT_ROOT=%s SEMITEXA_MCP_DIRECT=1 HAS_COMPOSE=%s sh -c %s 2>&1',
+            'env -i PATH=%s:/usr/bin:/bin PROJECT_ROOT=%s%s HAS_COMPOSE=%s sh -c %s 2>&1',
             escapeshellarg($this->root . '/bin'),
             escapeshellarg($this->root),
+            $vars,
             $hasCompose ? '1' : '0',
             escapeshellarg($sh),
         ));

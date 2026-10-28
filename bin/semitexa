@@ -3244,9 +3244,11 @@ cmd_mcp() {
     # an agent does not restart a stdio server by itself. With PHP on the host,
     # a relay holds the agent's connection and reconnects to the new server
     # (semitexa/mcp bin/mcp-relay.php); it starts this command again with
-    # SEMITEXA_MCP_DIRECT set, which runs the server itself.
+    # SEMITEXA_MCP_RELAYED set, which runs the server itself: checked on
+    # SEMITEXA_MCP_DIRECT alone, the relay's first start (which has no
+    # DIRECT) started another relay, and that one another, without end.
     _mcp_relay="$PROJECT_ROOT/vendor/semitexa/mcp/bin/mcp-relay.php"
-    if [ -z "${SEMITEXA_MCP_DIRECT:-}" ] && [ -f "$_mcp_relay" ] && command -v php >/dev/null 2>&1 \
+    if [ -z "${SEMITEXA_MCP_RELAYED:-}" ] && [ -z "${SEMITEXA_MCP_DIRECT:-}" ] && [ -f "$_mcp_relay" ] && command -v php >/dev/null 2>&1 \
         && case "$(uname -s 2>/dev/null)" in Linux|Darwin) true ;; *) false ;; esac \
         && php -r 'exit(PHP_VERSION_ID >= 80100 && function_exists("proc_open") ? 0 : 1);' >/dev/null 2>&1; then
         exec php "$_mcp_relay" "$PROJECT_ROOT/bin/semitexa" mcp "$@"
@@ -3274,8 +3276,11 @@ cmd_mcp() {
 cmd_mcp_config() {
     _mcp_bin="$PROJECT_ROOT/bin/semitexa"
     _mcp_json="$(printf '%s' "$_mcp_bin" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    # Single quotes, each ' as '\'': in double quotes a ", \, $ or backtick in
+    # the path changed what the pasted command gave claude.
+    _mcp_sh="'$(printf '%s' "$_mcp_bin" | sed "s/'/'\\\\''/g")'"
     printf '%s\n' "Claude Code, in this project:"
-    printf '  claude mcp add semitexa -- "%s" mcp\n\n' "$_mcp_bin"
+    printf '  claude mcp add semitexa -- %s mcp\n\n' "$_mcp_sh"
     printf '%s\n' "Cursor (.cursor/mcp.json) or Claude Desktop (claude_desktop_config.json):"
     printf '{"mcpServers": {"semitexa": {"command": "%s", "args": ["mcp"]}}}\n' "$_mcp_json"
 }
