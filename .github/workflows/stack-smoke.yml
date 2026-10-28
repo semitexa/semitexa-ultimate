@@ -126,7 +126,7 @@ jobs:
       - name: Check out the installer scaffold
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (2026-07-16)
         with:
-          repository: semitexa/semitexa-installer
+          repository: ${{ endsWith(inputs.override_repo, 'semitexa-installer') && contains(inputs.override_repo, '/') && inputs.override_repo || 'semitexa/semitexa-installer' }}
           ref: ${{ endsWith(inputs.override_repo, 'semitexa-installer') && inputs.override_ref || (github.event.repository.name == 'semitexa-ultimate' && (github.base_ref || github.ref_name) || 'develop') }}
           path: semitexa-installer
           persist-credentials: false
