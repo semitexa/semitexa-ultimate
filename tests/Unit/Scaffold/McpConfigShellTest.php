@@ -70,13 +70,17 @@ final class McpConfigShellTest extends TestCase
         self::assertSame([75, []], $this->mcp(hasCompose: true));
     }
 
-    /** An agent's own call, with PHP on the host, is held by the relay. */
+    /**
+     * An agent's own call, with PHP on the host, is held by the relay, started
+     * with the marker set: a released relay that does not set it itself
+     * started bin/semitexa without it, and that started another relay.
+     */
     #[Test]
     public function an_agents_call_starts_the_relay(): void
     {
         $ran = $this->mcp(hasCompose: true, env: [], relay: true);
 
-        self::assertSame([0, ['php ' . $this->root . '/vendor/semitexa/mcp/bin/mcp-relay.php ' . $this->root . '/bin/semitexa mcp --x']], $ran);
+        self::assertSame([0, ['php ' . $this->root . '/vendor/semitexa/mcp/bin/mcp-relay.php ' . $this->root . '/bin/semitexa mcp --x RELAYED=1']], $ran);
     }
 
     /**
@@ -113,7 +117,8 @@ final class McpConfigShellTest extends TestCase
         mkdir($this->root . '/bin');
         touch($this->root . '/vendor/bin/semitexa');
         touch($this->root . '/.env.default');
-        file_put_contents($this->root . '/bin/php', "#!/bin/sh\necho \"php \$*\"\n");
+        // The relay is shown with the marker it was started with: its children inherit it.
+        file_put_contents($this->root . '/bin/php', "#!/bin/sh\ncase \"\$1\" in *mcp-relay.php) echo \"php \$* RELAYED=\${SEMITEXA_MCP_RELAYED:-}\"; exit 0 ;; esac\necho \"php \$*\"\n");
         chmod($this->root . '/bin/php', 0o755);
         if ($relay) {
             mkdir($this->root . '/vendor/semitexa/mcp/bin', 0o755, true);

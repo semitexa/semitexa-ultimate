@@ -3247,10 +3247,13 @@ cmd_mcp() {
     # SEMITEXA_MCP_RELAYED set, which runs the server itself: checked on
     # SEMITEXA_MCP_DIRECT alone, the relay's first start (which has no
     # DIRECT) started another relay, and that one another, without end.
+    # Exported here, not left to the relay: a released relay that does not
+    # set it passes it on to its children all the same.
     _mcp_relay="$PROJECT_ROOT/vendor/semitexa/mcp/bin/mcp-relay.php"
     if [ -z "${SEMITEXA_MCP_RELAYED:-}" ] && [ -z "${SEMITEXA_MCP_DIRECT:-}" ] && [ -f "$_mcp_relay" ] && command -v php >/dev/null 2>&1 \
         && case "$(uname -s 2>/dev/null)" in Linux|Darwin) true ;; *) false ;; esac \
         && php -r 'exit(PHP_VERSION_ID >= 80100 && function_exists("proc_open") ? 0 : 1);' >/dev/null 2>&1; then
+        export SEMITEXA_MCP_RELAYED=1
         exec php "$_mcp_relay" "$PROJECT_ROOT/bin/semitexa" mcp "$@"
     fi
     # Started by the relay while the stack is down (a restart in progress):
