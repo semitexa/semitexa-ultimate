@@ -71,11 +71,14 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
     {
         $ultimateRoot = dirname(__DIR__, 3);
         $installerRoot = dirname($ultimateRoot) . '/semitexa-installer/scaffold';
-        // The installer is a sibling checkout only in the framework workspace; a
-        // standalone clone (CI, a consumer) has nothing to compare against.
-        if (!is_dir($installerRoot)) {
-            self::markTestSkipped('semitexa-installer is not checked out next to this repository.');
-        }
+        // The installer is a sibling checkout: the framework workspace has one,
+        // and the stack smoke checks one out beside the app. Without it this
+        // gate compares nothing, so it fails instead of skipping: a skip read
+        // as a pass while a file drifted.
+        self::assertDirectoryExists(
+            $installerRoot,
+            'semitexa-installer must be checked out next to this repository: the scaffold parity gate has nothing to compare against.',
+        );
         // Every runtime file both ship. The installer is the source: a hand
         // edit on one side only drifted .env.default and the MySQL overlay
         // apart for months (persistent SSE on here, off there; root vs a
