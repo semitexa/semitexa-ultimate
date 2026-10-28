@@ -43,7 +43,7 @@ final class StackSmokeInstallerOverrideTest extends TestCase
     public function the_installer_under_test_is_checked_out_as_given_and_the_default_by_branch(): void
     {
         $workflow = (string) file_get_contents(dirname(__DIR__, 3) . '/.github/workflows/stack-smoke.yml');
-        $isInstaller = "(endsWith(inputs.override_repo, 'semitexa-installer') || endsWith(inputs.override_repo, 'semitexa-installer.git'))";
+        $isInstaller = "(endsWith(inputs.override_repo, 'semitexa-installer'))";
 
         self::assertSame([
             'Check out the installer scaffold' => [
@@ -64,10 +64,26 @@ final class StackSmokeInstallerOverrideTest extends TestCase
         ]);
     }
 
+    /**
+     * actions/checkout takes a repository name: 'owner/name.git' failed in
+     * the default-branch lookup, after half the steps had run. It is refused
+     * first, with what to pass instead.
+     */
+    #[Test]
+    public function an_override_spelled_with_git_is_refused_before_anything_runs(): void
+    {
+        $workflow = (string) file_get_contents(dirname(__DIR__, 3) . '/.github/workflows/stack-smoke.yml');
+        preg_match_all('/^      - name: (.+)$/m', $workflow, $names);
+
+        self::assertSame('Refuse an override_repo spelled with .git', $names[1][0] ?? null);
+        self::assertSame(['if' => '${{ endsWith(inputs.override_repo, \'.git\') }}'], $this->step($workflow, 'Refuse an override_repo spelled with .git'));
+        self::assertStringContainsString("override_repo is a repository name (owner/name or name), not a clone URL: drop the .git", $workflow);
+    }
+
     /** @return array<string, string> the step's if, repository, ref and path */
     private function step(string $workflow, string $name): array
     {
-        preg_match('/^      - name: ' . preg_quote($name, '/') . '\n(.*?)(?=^      - name: |\z)/ms', $workflow, $m);
+        preg_match('/^      - name: ' . preg_quote($name, '/') . '\n(.*?)(?=^      - |\z)/ms', $workflow, $m);
         self::assertNotEmpty($m, "step '{$name}' must exist");
         $found = [];
         foreach (['if', 'repository', 'ref', 'path'] as $key) {
