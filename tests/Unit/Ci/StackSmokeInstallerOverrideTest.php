@@ -34,6 +34,51 @@ final class StackSmokeInstallerOverrideTest extends TestCase
         self::assertMatchesRegularExpression('/\[ "\$matched" = 0 \] && ! override_is_installer; then\n\s*record install FAIL/', $script);
     }
 
+    /**
+     * One expression served both cases: an owner/semitexa-installer.git override
+     * was checked out from upstream, and an empty override_ref fell back to a
+     * branch the fork need not have. Each case now has a checkout of its own.
+     */
+    #[Test]
+    public function the_installer_under_test_is_checked_out_as_given_and_the_default_by_branch(): void
+    {
+        $workflow = (string) file_get_contents(dirname(__DIR__, 3) . '/.github/workflows/stack-smoke.yml');
+        $isInstaller = "(endsWith(inputs.override_repo, 'semitexa-installer') || endsWith(inputs.override_repo, 'semitexa-installer.git'))";
+
+        self::assertSame([
+            'Check out the installer scaffold' => [
+                'if' => '${{ !' . $isInstaller . ' }}',
+                'repository' => 'semitexa/semitexa-installer',
+                'ref' => "\${{ github.event.repository.name == 'semitexa-ultimate' && (github.base_ref || github.ref_name) || 'develop' }}",
+                'path' => 'semitexa-installer',
+            ],
+            'Check out the installer under test' => [
+                'if' => '${{ ' . substr($isInstaller, 1, -1) . ' }}',
+                'repository' => "\${{ contains(inputs.override_repo, '/') && inputs.override_repo || format('semitexa/{0}', inputs.override_repo) }}",
+                'ref' => '${{ inputs.override_ref }}',
+                'path' => 'semitexa-installer',
+            ],
+        ], [
+            'Check out the installer scaffold' => $this->step($workflow, 'Check out the installer scaffold'),
+            'Check out the installer under test' => $this->step($workflow, 'Check out the installer under test'),
+        ]);
+    }
+
+    /** @return array<string, string> the step's if, repository, ref and path */
+    private function step(string $workflow, string $name): array
+    {
+        preg_match('/^      - name: ' . preg_quote($name, '/') . '\n(.*?)(?=^      - name: |\z)/ms', $workflow, $m);
+        self::assertNotEmpty($m, "step '{$name}' must exist");
+        $found = [];
+        foreach (['if', 'repository', 'ref', 'path'] as $key) {
+            if (preg_match('/^\s+' . $key . ': (.+)$/m', $m[1], $v) === 1) {
+                $found[$key] = $v[1];
+            }
+        }
+
+        return $found;
+    }
+
     /** The exit status of override_is_installer, run as the script runs it. */
     private function isInstaller(string $repo): int
     {

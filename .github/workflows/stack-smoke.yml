@@ -121,13 +121,25 @@ jobs:
       # The installer scaffold, beside the app: the app's scaffold parity test
       # compares its runtime files with it and fails without it. The same line
       # as the app (develop for develop, master for master): a pull request's
-      # target branch, never its head, which the installer need not have. Or
-      # the ref under test when the installer is the package being tested.
+      # target branch, never its head, which the installer need not have.
       - name: Check out the installer scaffold
+        if: ${{ !(endsWith(inputs.override_repo, 'semitexa-installer') || endsWith(inputs.override_repo, 'semitexa-installer.git')) }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (2026-07-16)
         with:
-          repository: ${{ endsWith(inputs.override_repo, 'semitexa-installer') && contains(inputs.override_repo, '/') && inputs.override_repo || 'semitexa/semitexa-installer' }}
-          ref: ${{ endsWith(inputs.override_repo, 'semitexa-installer') && inputs.override_ref || (github.event.repository.name == 'semitexa-ultimate' && (github.base_ref || github.ref_name) || 'develop') }}
+          repository: semitexa/semitexa-installer
+          ref: ${{ github.event.repository.name == 'semitexa-ultimate' && (github.base_ref || github.ref_name) || 'develop' }}
+          path: semitexa-installer
+          persist-credentials: false
+
+      # The installer as the package under test: its repository (a fork too)
+      # and ref exactly as given, as for any other package; an empty ref is
+      # that repository's default branch, never a branch it need not have.
+      - name: Check out the installer under test
+        if: ${{ endsWith(inputs.override_repo, 'semitexa-installer') || endsWith(inputs.override_repo, 'semitexa-installer.git') }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (2026-07-16)
+        with:
+          repository: ${{ contains(inputs.override_repo, '/') && inputs.override_repo || format('semitexa/{0}', inputs.override_repo) }}
+          ref: ${{ inputs.override_ref }}
           path: semitexa-installer
           persist-credentials: false
 
