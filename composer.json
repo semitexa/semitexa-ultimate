@@ -41,6 +41,7 @@
         "semitexa/project-graph": "2026.10.17.0511",
         "semitexa/theme": "2026.10.19.0811",
         "semitexa/platform-ui": "2026.10.19.0811",
+        "semitexa/platform-user": "2026.10.20.0340",
         "semitexa/platform-settings": "2026.10.08.0620",
         "semitexa/crud": "2026.10.14.0919"
     },

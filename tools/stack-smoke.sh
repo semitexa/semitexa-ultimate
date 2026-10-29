@@ -185,6 +185,15 @@ override_matches() { # <pkg dir name>
     [ "$o" = "$1" ] || [ "$o" = "semitexa-$1" ] || [ "${2:-}" = "$o" ]
 }
 
+# The installer under test is checked out beside the app (the workflow does
+# it), not into vendor/: no installed package matches it, and none should.
+override_is_installer() {
+    local o=${SEMITEXA_OVERRIDE_REPO##*/}
+    o=${o%.git}
+    # Case-insensitive, as the workflow's own comparison is.
+    [ "${o,,}" = "semitexa-installer" ]
+}
+
 checkout_package() { # <pkg> <url> <ref> <dest>
     local tmp=$4.smoke-tmp
     rm -rf "$tmp"; git init -q "$tmp" || return 1
@@ -246,7 +255,7 @@ stage_install() {
     [ "$bad" = 0 ] || { record install FAIL "package checkout failed"; return 1; }
     # An override that matched nothing would leave the caller's own change
     # untested behind a green run.
-    if [ -n "${SEMITEXA_OVERRIDE_REPO:-}" ] && [ "$matched" = 0 ]; then
+    if [ -n "${SEMITEXA_OVERRIDE_REPO:-}" ] && [ "$matched" = 0 ] && ! override_is_installer; then
         record install FAIL "override $SEMITEXA_OVERRIDE_REPO matches no installed semitexa package"; return 1
     fi
 

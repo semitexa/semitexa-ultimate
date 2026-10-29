@@ -1,8 +1,11 @@
 /vendor/
+# Composer's cache when it runs in the app container as your user (HOME is the project).
+/.composer/
 .env
 var/cache/*
 var/log/*
 var/docs/*
+var/test-results/
 
 # Runtime var/ dirs the framework writes on its own: the update lock
 # (semitexa-update), generated sitemaps (semitexa-ssr), the project-graph
@@ -14,5 +17,60 @@ var/lock/*
 var/sitemap/*
 var/storage/*
 var/uploads/*
+# Written by bin/semitexa for the queue worker container on every start.
+var/run/worker.env
+# Hashed SSR templates and asset bundles (semitexa-ssr) are rebuilt by the
+# server on start: runtime output, never source.
+/public/assets/ssr/
+
+# Test and report output: PHPUnit's result cache and ai:report drafts.
+.phpunit.result.cache
+var/ai-report/
+
+# Editor and OS files: a folder opened in Finder or an IDE before the first
+# start would otherwise put them into the initial commit.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+# Graph exports (ai:review-graph:show --format=html): a map of the codebase,
+# never source and never meant for a public commit.
+var/review-graph/
+# Review evidence (ai:evidence): private screenshots, traces and exports with
+# a passport and an expiry. Published one at a time, never by a commit.
+var/evidence/
+# Request traces (7 days) and scratch space: runtime output, never source.
+var/trace/
+var/tmp/
+# The Observatory's process journal and coroutine snapshots, and run-time
+# state (var/run holds the dev session cookie): written by the server.
+var/observatory/
+var/run/
+# Agent presence: who is working now and who restarted the stack. The rest of
+# var/ai-work (epics, tasks) is the backlog and stays committable.
+var/ai-work/agents/
+var/ai-work/stack-events.ndjson
 !.gitkeep
 !var/docs/README.md
+
+# E2E (Playwright) artifacts — runner-generated, not source.
+/node_modules/
+/test-results/
+/playwright-report/
+
+# Per-user Claude Code state — each contributor generates their own.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+docker-compose.override.yml
+
+# Operator-local symlinks to sibling Semitexa repositories that are wired in
+# as composer path repositories (currently semitexa.pl, which hosts
+# semitexa/platform-ui). Each operator runs once:
+#   ln -s /absolute/path/to/semitexa.pl ./semitexa.pl
+# bin/semitexa autoloads docker-compose.path-repos.yml when this symlink
+# exists, mounting it consistently into every container.
+/semitexa.pl
+
+# SSH state of update:packages:bootstrap-remote, and keys put in the project
+.ssh/
+var/ssh/

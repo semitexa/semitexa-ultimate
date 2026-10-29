@@ -43,7 +43,22 @@ ARG IMAGICK_VERSION=3.8.1
 # bytes with no Content-Encoding however the client asked, against 52655 with it.
 # Nothing reported a problem, because there was nothing to report — the setting
 # was accepted and the code was not there.
-RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic bash \
+#
+# openssh-client: `update:packages:bootstrap-remote` runs here (bin/semitexa
+# passes commands into this container) and needs ssh and scp; without them it
+# stopped at "Missing local prerequisites: ssh, scp" in every installed project.
+#
+# session.upload_progress off: the server is Swoole (the cli SAPI), which
+# parses uploads itself and never reaches PHP's upload-progress hook, and
+# Semitexa does not use ext/session. Off anyway, so a project that ever runs
+# this image's PHP under another SAPI does not carry that surface.
+#
+# nss_wrapper: the container runs as the host user's uid, which has no
+# account here unless it is 1000, and ssh refuses to run for a uid with no
+# account. bootstrap-remote names it in a passwd file of its own, read through
+# nss_wrapper; /etc/passwd stays read-only, as a writable one turns any file
+# write in the app into a new account.
+RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic bash openssh-client nss_wrapper \
     && docker-php-ext-install pdo pdo_mysql sockets \
     && pecl install --nobuild swoole \
     && cd "$(pecl config-get temp_dir)/swoole" \
@@ -57,8 +72,14 @@ RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git 
     && pecl install pcov \
     && docker-php-ext-enable pcov \
     && printf 'pcov.enabled=0\npcov.directory=/var/www/html\npcov.exclude="~(vendor|/tests/)~"\npcov.initial.files=20000\n' > /usr/local/etc/php/conf.d/zz-pcov.ini \
+    && printf 'session.upload_progress.enabled=0\n' > /usr/local/etc/php/conf.d/zz-semitexa-session.ini \
     && addgroup -g 1000 -S semitexa \
     && adduser -u 1000 -S -G semitexa -h /var/www/html semitexa
+
+# pcntl, as a layer of its own so the Swoole build above stays cached: the
+# queue workers catch docker stop's SIGTERM with it and finish the job in hand
+# (QueueStopSignals) instead of dying in the middle of it.
+RUN docker-php-ext-install pcntl
 
 # Node, as a SEPARATE layer on purpose: it lands after the Swoole build above, so
 # adding or changing it re-uses that cached layer instead of recompiling Swoole.
@@ -69,6 +90,29 @@ RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git 
 # both on the same input. Without node the test SKIPS rather than fails, so a
 # release gate would go green having never checked parity at all.
 RUN apk add --no-cache nodejs
+
+# A restrictive ImageMagick policy, as a layer of its own. The package ships
+# the "open" one: every coder, delegate and path, no resource limits. An
+# uploaded file decides its own format by its bytes, so an "image" can be an
+# SVG, MVG or PostScript that reads local files, fetches URLs or runs a
+# delegate (Ghostscript), or a huge one that eats the worker's memory.
+# Only the raster formats media reads and writes are allowed.
+RUN printf '%s\n' \
+    '<policymap>' \
+    '  <policy domain="resource" name="memory" value="256MiB"/>' \
+    '  <policy domain="resource" name="map" value="512MiB"/>' \
+    '  <policy domain="resource" name="disk" value="1GiB"/>' \
+    '  <policy domain="resource" name="width" value="16KP"/>' \
+    '  <policy domain="resource" name="height" value="16KP"/>' \
+    '  <policy domain="resource" name="area" value="128MP"/>' \
+    '  <policy domain="resource" name="time" value="60"/>' \
+    '  <policy domain="delegate" rights="none" pattern="*"/>' \
+    '  <policy domain="filter" rights="none" pattern="*"/>' \
+    '  <policy domain="path" rights="none" pattern="@*"/>' \
+    '  <policy domain="coder" rights="none" pattern="*"/>' \
+    '  <policy domain="coder" rights="read|write" pattern="{JPEG,JPG,PNG,WEBP,GIF,HEIC,HEIF,AVIF,BMP}"/>' \
+    '</policymap>' \
+    > /etc/ImageMagick-7/policy.xml
 
 WORKDIR /var/www/html
 

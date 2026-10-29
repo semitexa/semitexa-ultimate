@@ -1,0 +1,120 @@
+# The worker: the background processes queued and scheduled work needs
+# (queue consumers, the scheduler, outbox delivery), in a container of its own,
+# so it can be given resources and scaled apart from the web server:
+# WORKER_REPLICAS in .env, then server:restart. bin/semitexa loads this file
+# whenever it is there; server:stop stops it.
+#
+# It runs every line of `worker:processes`: what the installed packages need
+# for their queued and scheduled work, such as queue:work for each queue,
+# mail:work, media:work, scheduler:plan and scheduler:work, webhook:work. Each
+# is started again after its pause when it exits. A queue or package added
+# later is picked up by server:restart.
+#
+# The overlays point the app at their services (DB_HOST=mysql, ...). This file
+# cannot name those services itself, because an overlay that is not loaded has
+# none, so bin/semitexa writes the same values to var/run/worker.env, read
+# last. Without it (a bare `docker compose`), the worker reads what the app
+# reads from .env.default and .env, and nothing is blanked.
+services:
+  worker:
+    build: .
+    # A PID 1 that passes docker stop's TERM on to the shell below.
+    init: true
+    # docker stop's TERM reaches every worker; queue, mail, media, scheduler and
+    # webhook workers finish the work in hand first (StopSignals), and are
+    # killed if it takes longer than this.
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-90s}
+    user: "${SEMITEXA_UID:-1000}:${SEMITEXA_GID:-1000}"
+    environment:
+      HOME: /var/www/html
+    env_file:
+      - path: .env.default
+        required: true
+      - path: .env
+        required: false
+      - path: var/run/worker.env
+        required: false
+    volumes:
+      - .:/var/www/html
+    restart: unless-stopped
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+    command:
+      - sh
+      - -c
+      - |
+        # Words are split, never globbed: worker:processes prints plain words.
+        set -f
+        # On TERM: pass it to every run loop below, then wait for them. Each
+        # hands it to its own php, which finishes the job in hand and exits.
+        trap 'trap "" TERM INT; kill -TERM 0; wait; exit 0' TERM INT
+        # run <pause> <command...>: the command, started again <pause> s after
+        # it exits, until a TERM says stop. php runs in a session of its own
+        # (setsid), so the TERM sent to this group does not reach what a job
+        # started (a converter, a renderer) and cut it off: the loop hands
+        # the TERM to php alone.
+        run() {
+          pause=$$1; shift
+          stopping=
+          pid=
+          trap 'stopping=1; [ -z "$$pid" ] || kill -TERM "$$pid" 2>/dev/null' TERM INT
+          while [ -z "$$stopping" ]; do
+            setsid php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa "$$@" &
+            pid=$$!
+            # A TERM between the start and the line above found no pid.
+            [ -z "$$stopping" ] || kill -TERM "$$pid" 2>/dev/null
+            # A trapped TERM ends wait early: wait again until php is gone.
+            wait "$$pid"
+            rc=$$?
+            while kill -0 "$$pid" 2>/dev/null; do
+              wait "$$pid"
+              rc=$$?
+            done
+            pid=
+            [ -z "$$stopping" ] || break
+            # A command that finished its work (scheduler:plan) is not news.
+            [ "$$rc" = 0 ] || echo "worker: $$* exited ($$rc); again in $${pause}s" >&2
+            # In the background, so a TERM cuts the pause short.
+            sleep "$$pause" &
+            pid=$$!
+            [ -z "$$stopping" ] || kill -TERM "$$pid" 2>/dev/null
+            wait "$$pid"
+            pid=
+          done
+        }
+        if ! processes=$$(php vendor/bin/semitexa worker:processes); then
+          # A core without worker:processes, or one that could not list any.
+          echo "worker: worker:processes failed; running queue:work on the default queue only (server:restart retries)" >&2
+          processes='5 queue:work'
+        fi
+        started=0
+        while read -r line; do
+          [ -n "$$line" ] || continue
+          set -- $$line
+          ok=1
+          case "$$1" in ''|*[!0-9]*) ok=0 ;; esac
+          [ "$$#" -ge 2 ] || ok=0
+          for word in "$$@"; do
+            case "$$word" in *[!A-Za-z0-9._:/=-]*) ok=0 ;; esac
+          done
+          if [ "$$ok" = 0 ]; then
+            echo "worker: skipped, not a '<pause> <command>' line: $$line" >&2
+            continue
+          fi
+          run "$$@" &
+          started=1
+        done <<EOF
+        $$processes
+        EOF
+        if [ "$$started" = 0 ]; then
+          # Listed, and nothing to start (worker:processes refused a shared
+          # queue, say): a queue:work here would bring back what it refused.
+          echo "worker: worker:processes listed nothing to run; idle until server:restart" >&2
+          while true; do sleep 3600; done &
+        fi
+        wait
+    # The app waits for the database, cache and broker it is given; the worker
+    # needs the same ones, and the app is in every stack.
+    depends_on:
+      app:
+        condition: service_started

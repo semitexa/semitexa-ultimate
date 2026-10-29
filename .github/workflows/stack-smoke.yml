@@ -101,6 +101,15 @@ jobs:
       SEMITEXA_SMOKE_SKIP_SUITES: 'dev'
 
     steps:
+      # actions/checkout takes a repository name, not a clone URL: with
+      # 'owner/name.git' it failed in its default-branch lookup, after the
+      # app was already checked out. Said first, with what to pass instead.
+      - name: Refuse an override_repo spelled with .git
+        if: ${{ endsWith(inputs.override_repo, '.git') }}
+        run: |
+          echo "::error::override_repo is a repository name (owner/name or name), not a clone URL: drop the .git (got '${{ inputs.override_repo }}')."
+          exit 1
+
       # Pinned to commit SHAs, not tags: a tag is mutable, and the action it
       # names runs with this workflow's token. The comment carries the version
       # the SHA was, because a bare SHA tells a later reader nothing about what
@@ -116,6 +125,31 @@ jobs:
           path: app
           # Nothing after this step needs git credentials, and the app, its
           # tests and every package's tests run below with access to .git.
+          persist-credentials: false
+
+      # The installer scaffold, beside the app: the app's scaffold parity test
+      # compares its runtime files with it and fails without it. The same line
+      # as the app (develop for develop, master for master): a pull request's
+      # target branch, never its head, which the installer need not have.
+      - name: Check out the installer scaffold
+        if: ${{ !(inputs.override_repo == 'semitexa-installer' || endsWith(inputs.override_repo, '/semitexa-installer')) }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (2026-07-16)
+        with:
+          repository: semitexa/semitexa-installer
+          ref: ${{ github.event.repository.name == 'semitexa-ultimate' && (github.base_ref || github.ref_name) || 'develop' }}
+          path: semitexa-installer
+          persist-credentials: false
+
+      # The installer as the package under test: its repository (a fork too)
+      # and ref exactly as given, as for any other package; an empty ref is
+      # that repository's default branch, never a branch it need not have.
+      - name: Check out the installer under test
+        if: ${{ inputs.override_repo == 'semitexa-installer' || endsWith(inputs.override_repo, '/semitexa-installer') }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (2026-07-16)
+        with:
+          repository: ${{ contains(inputs.override_repo, '/') && inputs.override_repo || format('semitexa/{0}', inputs.override_repo) }}
+          ref: ${{ inputs.override_ref }}
+          path: semitexa-installer
           persist-credentials: false
 
       - name: Check out the package under test

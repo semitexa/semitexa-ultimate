@@ -31,6 +31,11 @@ services:
     ports:
       - "${SWOOLE_PORT:-8080}:${SWOOLE_PORT:-8080}"
     restart: unless-stopped
+    # Docker kills the container 10 s after asking it to stop, which is as long
+    # as a stopping worker waits for its requests (SWOOLE_MAX_WAIT_TIME, 10):
+    # the kill landed on the master's shutdown and the last log lines and
+    # shutdown hooks were lost. Raise both together.
+    stop_grace_period: 30s
     # Blocking-I/O detection (Swoole >= 6.2 tracer): Off by default; opt in
     # per-environment via .env. When On, any internal call that blocks a
     # coroutine longer than the threshold (µs) prints a backtrace to stdout.
@@ -167,7 +172,8 @@ services:
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
-                 docker-compose.ollama.yml docker-compose.override.yml.example
+                 docker-compose.ollama.yml docker-compose.worker.yml \
+                 docker-compose.override.yml.example
         do
           if [ -e "$$TARGET_DIR/$$f" ]; then
             cp -a "$$TARGET_DIR/$$f" "$$BACKUP_DIR/$$f"
@@ -182,7 +188,8 @@ services:
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
-                 docker-compose.ollama.yml docker-compose.override.yml.example \
+                 docker-compose.ollama.yml docker-compose.worker.yml \
+                 docker-compose.override.yml.example \
                  bin/semitexa
         do
           if [ -e "$$BACKUP_DIR/$$f" ]; then
