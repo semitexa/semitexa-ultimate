@@ -104,10 +104,13 @@ jobs:
       # actions/checkout takes a repository name, not a clone URL: with
       # 'owner/name.git' it failed in its default-branch lookup, after the
       # app was already checked out. Said first, with what to pass instead.
+      # The input itself is never echoed: a ${{ }} in run: is pasted into the
+      # shell before it runs (template injection), and printed through env it
+      # could still carry ::workflow commands:: into the log.
       - name: Refuse an override_repo spelled with .git
         if: ${{ endsWith(inputs.override_repo, '.git') }}
         run: |
-          echo "::error::override_repo is a repository name (owner/name or name), not a clone URL: drop the .git (got '${{ inputs.override_repo }}')."
+          echo "::error::override_repo is a repository name (owner/name or name), not a clone URL: drop the .git."
           exit 1
 
       # Pinned to commit SHAs, not tags: a tag is mutable, and the action it
