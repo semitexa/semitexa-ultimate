@@ -190,7 +190,8 @@ override_matches() { # <pkg dir name>
 override_is_installer() {
     local o=${SEMITEXA_OVERRIDE_REPO##*/}
     o=${o%.git}
-    [ "$o" = "semitexa-installer" ]
+    # Case-insensitive, as the workflow's own comparison is.
+    [ "${o,,}" = "semitexa-installer" ]
 }
 
 checkout_package() { # <pkg> <url> <ref> <dest>

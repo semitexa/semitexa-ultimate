@@ -18,10 +18,10 @@ final class StackSmokeInstallerOverrideTest extends TestCase
     public function the_installer_is_told_apart_from_the_vendor_packages(): void
     {
         self::assertSame(
-            ['semitexa-installer' => 0, 'alice/semitexa-installer' => 0, 'semitexa/semitexa-installer.git' => 0, 'semitexa-core' => 1, 'installer-tools' => 1, '' => 1],
+            ['semitexa-installer' => 0, 'alice/semitexa-installer' => 0, 'Alice/SEMITEXA-INSTALLER' => 0, 'semitexa/semitexa-installer.git' => 0, 'semitexa-core' => 1, 'installer-tools' => 1, '' => 1],
             array_combine(
-                ['semitexa-installer', 'alice/semitexa-installer', 'semitexa/semitexa-installer.git', 'semitexa-core', 'installer-tools', ''],
-                array_map($this->isInstaller(...), ['semitexa-installer', 'alice/semitexa-installer', 'semitexa/semitexa-installer.git', 'semitexa-core', 'installer-tools', '']),
+                ['semitexa-installer', 'alice/semitexa-installer', 'Alice/SEMITEXA-INSTALLER', 'semitexa/semitexa-installer.git', 'semitexa-core', 'installer-tools', ''],
+                array_map($this->isInstaller(...), ['semitexa-installer', 'alice/semitexa-installer', 'Alice/SEMITEXA-INSTALLER', 'semitexa/semitexa-installer.git', 'semitexa-core', 'installer-tools', '']),
             ),
         );
     }
