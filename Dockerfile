@@ -26,6 +26,13 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
 ARG IMAGICK_VERSION=3.8.1
 
+# Swoole at the version the HTTP client was tested on. Unpinned, a rebuild on
+# 2026-10-29 took 6.2.4, whose curl hook inflates a gzip answer in memory
+# before the client's write callback sees it: the decompression-bomb cap
+# stopped nothing. Raise it only with CurlHttpClientCoroutineTest green on the
+# new version (ultimate's SwoolePinnedTest holds the number).
+ARG SWOOLE_VERSION=6.2.3
+
 # bash, on an image whose default shell is BusyBox ash: semitexa/update ships
 # its deploy tooling as bash scripts (tools/run-auto-deploy-systemd.sh and its
 # installer both declare `#!/usr/bin/env bash`), and the suite that covers them
@@ -60,7 +67,7 @@ ARG IMAGICK_VERSION=3.8.1
 # write in the app into a new account.
 RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic bash openssh-client nss_wrapper \
     && docker-php-ext-install pdo pdo_mysql sockets \
-    && pecl install --nobuild swoole \
+    && pecl install --nobuild swoole-"${SWOOLE_VERSION}" \
     && cd "$(pecl config-get temp_dir)/swoole" \
     && phpize && ./configure --enable-openssl --disable-brotli --disable-zstd \
     && make -j$(nproc) && make install \
