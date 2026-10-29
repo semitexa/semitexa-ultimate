@@ -103,7 +103,9 @@ RUN apk add --no-cache nodejs
 # uploaded file decides its own format by its bytes, so an "image" can be an
 # SVG, MVG or PostScript that reads local files, fetches URLs or runs a
 # delegate (Ghostscript), or a huge one that eats the worker's memory.
-# Only the raster formats media reads and writes are allowed.
+# Only the raster formats media reads and writes are allowed. BMP2 and BMP3
+# are coders of their own: ImageMagick reads the BMP most tools write as BMP3,
+# and with BMP alone allowed such an upload was refused (preflight 2026-10-29).
 RUN printf '%s\n' \
     '<policymap>' \
     '  <policy domain="resource" name="memory" value="256MiB"/>' \
@@ -117,7 +119,7 @@ RUN printf '%s\n' \
     '  <policy domain="filter" rights="none" pattern="*"/>' \
     '  <policy domain="path" rights="none" pattern="@*"/>' \
     '  <policy domain="coder" rights="none" pattern="*"/>' \
-    '  <policy domain="coder" rights="read|write" pattern="{JPEG,JPG,PNG,WEBP,GIF,HEIC,HEIF,AVIF,BMP}"/>' \
+    '  <policy domain="coder" rights="read|write" pattern="{JPEG,JPG,PNG,WEBP,GIF,HEIC,HEIF,AVIF,BMP,BMP2,BMP3}"/>' \
     '</policymap>' \
     > /etc/ImageMagick-7/policy.xml
 
