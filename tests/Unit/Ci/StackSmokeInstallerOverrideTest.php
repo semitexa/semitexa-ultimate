@@ -43,7 +43,9 @@ final class StackSmokeInstallerOverrideTest extends TestCase
     public function the_installer_under_test_is_checked_out_as_given_and_the_default_by_branch(): void
     {
         $workflow = (string) file_get_contents(dirname(__DIR__, 3) . '/.github/workflows/stack-smoke.yml');
-        $isInstaller = "(endsWith(inputs.override_repo, 'semitexa-installer'))";
+        // The same rule as override_is_installer: the name itself, not a suffix
+        // ('not-semitexa-installer' is another repository).
+        $isInstaller = "(inputs.override_repo == 'semitexa-installer' || endsWith(inputs.override_repo, '/semitexa-installer'))";
 
         self::assertSame([
             'Check out the installer scaffold' => [
