@@ -22,11 +22,14 @@ final class ImageMagickPolicyTest extends TestCase
     {
         $dockerfile = (string) file_get_contents(dirname(__DIR__, 3) . '/Dockerfile');
 
-        self::assertSame(1, preg_match('/<policy domain="coder" rights="read\|write" pattern="\{([^}]+)\}"\/>/', $dockerfile, $m), 'the coder allow-list must stay one pattern');
-        $allowed = explode(',', $m[1]);
-        sort($allowed);
+        // Every coder rule, in order: ImageMagick applies the last one that
+        // matches, so a second read|write rule appended after these would open
+        // every coder while a check for "one allow-list exists" still passed.
+        preg_match_all('/<policy domain="coder"[^>]*>/', $dockerfile, $rules);
 
-        self::assertSame(['AVIF', 'BMP', 'BMP2', 'BMP3', 'GIF', 'HEIC', 'HEIF', 'JPEG', 'JPG', 'PNG', 'WEBP'], $allowed);
-        self::assertStringContainsString('<policy domain="coder" rights="none" pattern="*"/>', $dockerfile, 'everything else stays denied');
+        self::assertSame([
+            '<policy domain="coder" rights="none" pattern="*"/>',
+            '<policy domain="coder" rights="read|write" pattern="{JPEG,JPG,PNG,WEBP,GIF,HEIC,HEIF,AVIF,BMP,BMP2,BMP3}"/>',
+        ], $rules[0]);
     }
 }
