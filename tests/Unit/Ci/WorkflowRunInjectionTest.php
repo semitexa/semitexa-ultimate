@@ -21,9 +21,14 @@ final class WorkflowRunInjectionTest extends TestCase
     #[Test]
     public function no_run_script_pastes_an_untrusted_value(): void
     {
+        // No file, or one unread, would scan nothing and pass.
+        $files = glob(dirname(__DIR__, 3) . '/.github/workflows/*.y*ml') ?: [];
+        self::assertContains('stack-smoke.yml', array_map('basename', $files));
         $found = [];
-        foreach (glob(dirname(__DIR__, 3) . '/.github/workflows/*.y*ml') ?: [] as $file) {
-            foreach ($this->runScripts((string) file_get_contents($file)) as [$line, $script]) {
+        foreach ($files as $file) {
+            $yaml = file_get_contents($file);
+            self::assertIsString($yaml, "cannot read {$file}");
+            foreach ($this->runScripts($yaml) as [$line, $script]) {
                 if (preg_match_all(self::UNTRUSTED, $script, $m) > 0) {
                     $found[] = basename($file) . ':' . $line . ' ' . implode(', ', $m[0]);
                 }
@@ -41,6 +46,17 @@ final class WorkflowRunInjectionTest extends TestCase
         $scripts = array_column($this->runScripts($yaml), 1);
 
         self::assertSame(["echo \${{ github.event.issue.title }}", "echo ok\necho \"\${{ inputs.repo }}\"", 'echo "$REPO"'], $scripts);
+    }
+
+    /** A pattern that matched nothing would leave the gate silent while the suite stays green. */
+    #[Test]
+    public function the_pattern_tells_an_untrusted_value_from_a_safe_one(): void
+    {
+        $script = 'echo ${{ inputs.repo }} ${{ github.event.pull_request.title }} ${{ secrets.TOKEN }} ${{ steps.x.outputs.y }}';
+
+        preg_match_all(self::UNTRUSTED, $script, $m);
+
+        self::assertSame(['${{ inputs.repo }}', '${{ github.event.pull_request.title }}'], $m[0]);
     }
 
     /** @return list<array{int, string}> [first line, script] of every run: in a workflow */
