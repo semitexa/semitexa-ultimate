@@ -88,6 +88,17 @@ RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git 
 # (QueueStopSignals) instead of dying in the middle of it.
 RUN docker-php-ext-install pcntl
 
+# bcmath and intl, a layer of their own for the same reason. The release's
+# backward-compatibility gate (roave/backward-compatibility-check) will not
+# install without both, and applications reach for them often enough — money
+# arithmetic, locale-aware formatting and collation — that the image carries
+# them (operator decision 2026-10-30). icu-data-full: Alpine's default ICU data
+# holds English only, and intl then formats every other locale as English.
+RUN apk add --no-cache icu-libs icu-data-full \
+    && apk add --no-cache --virtual .intl-build icu-dev \
+    && docker-php-ext-install bcmath intl \
+    && apk del .intl-build
+
 # Node, as a SEPARATE layer on purpose: it lands after the Swoole build above, so
 # adding or changing it re-uses that cached layer instead of recompiling Swoole.
 #
