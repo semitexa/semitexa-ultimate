@@ -521,7 +521,7 @@ print_runtime() {
                 static fn (string $l): bool => preg_match("/^(Version|curl-native|openssl|c-ares|io_uring)\b/", $l) === 1));
         }
         printf("    PHP %s; swoole %s\n", PHP_VERSION, $swoole !== "" ? $swoole : "missing");
-        printf("    curl %s; OpenSSL %s\n", function_exists("curl_version") ? curl_version()["version"] : "missing", OPENSSL_VERSION_TEXT);
+        printf("    curl %s; OpenSSL %s\n", function_exists("curl_version") ? curl_version()["version"] : "missing", defined("OPENSSL_VERSION_TEXT") ? OPENSSL_VERSION_TEXT : "missing");
         try {
             $pdo = PDO::connect("sqlite::memory:");
             printf("    SQLite %s; PDO::connect(sqlite) gives %s\n", (string) $pdo->query("select sqlite_version()")->fetchColumn(), get_class($pdo));
