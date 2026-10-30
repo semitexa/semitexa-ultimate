@@ -22,6 +22,11 @@ final class IntlAndBcmathTest extends TestCase
         $dockerfile = (string) file_get_contents(dirname(__DIR__, 3) . '/Dockerfile');
 
         self::assertSame(1, preg_match('/^RUN apk add --no-cache icu-libs icu-data-full \\\\\n\s+&& apk add --no-cache --virtual \.intl-build icu-dev \\\\\n\s+&& docker-php-ext-install bcmath intl \\\\\n\s+&& apk del \.intl-build$/m', $dockerfile), 'one layer: runtime ICU with full data, headers only for the build');
-        self::assertGreaterThan(strpos($dockerfile, 'RUN docker-php-ext-install pcntl'), strpos($dockerfile, 'docker-php-ext-install bcmath intl'), 'after the Swoole build, so adding it re-uses that cached layer');
+        // Both found first: strpos() gives false for a missing line, and any position is greater than false.
+        $pcntl = strpos($dockerfile, 'RUN docker-php-ext-install pcntl');
+        $intl = strpos($dockerfile, 'docker-php-ext-install bcmath intl');
+        self::assertIsInt($pcntl, 'the pcntl layer the Swoole build sits under');
+        self::assertIsInt($intl);
+        self::assertGreaterThan($pcntl, $intl, 'after the Swoole build, so adding it re-uses that cached layer');
     }
 }
