@@ -35,7 +35,7 @@ final class StackSmokeRuntimeTest extends TestCase
         self::assertSame('==> runtime', $out[1] ?? null);
         self::assertStringStartsWith('    PHP ' . PHP_VERSION . '; swoole ' . (extension_loaded('swoole') ? 'Version => ' . SWOOLE_VERSION : 'missing'), $out[2] ?? '');
         $curl = function_exists('curl_version') ? curl_version() : false;
-        self::assertSame('    curl ' . (is_array($curl) && is_string($curl['version'] ?? null) ? $curl['version'] : 'missing') . '; OpenSSL ' . OPENSSL_VERSION_TEXT, $out[3] ?? null);
+        self::assertSame('    curl ' . (is_array($curl) && is_string($curl['version'] ?? null) ? $curl['version'] : 'missing') . '; OpenSSL ' . (defined('OPENSSL_VERSION_TEXT') ? OPENSSL_VERSION_TEXT : 'missing'), $out[3] ?? null);
         self::assertMatchesRegularExpression('/^    SQLite (3\.\d+\.\d+; PDO::connect\(sqlite\) gives [\w\\\\]+|: .+)$/', $out[4] ?? '');
     }
 }
