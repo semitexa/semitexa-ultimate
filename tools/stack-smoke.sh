@@ -506,10 +506,11 @@ PHP
     done
 }
 
-# The runtime under test, printed first: the runner's PHP comes from setup-php,
-# not from the image users run, and a suite that is green in the image and red
-# here (CurlHttpClientTlsTest, SqliteAdapterUnhexTest, 27-30.10) was read from
-# a log that never said which Swoole, curl, SQLite or OpenSSL it ran on.
+# The runtime under test, printed first. The CI gate runs in the app image
+# (stack-smoke.yml), but this script also runs wherever someone calls it, and
+# a suite that was green in the image and red on setup-php (CurlHttpClientTlsTest,
+# SqliteAdapterUnhexTest, 27-30.10) was read from a log that never said which
+# Swoole, curl, SQLite or OpenSSL it ran on.
 print_runtime() {
     log "runtime"
     $PHP -r '

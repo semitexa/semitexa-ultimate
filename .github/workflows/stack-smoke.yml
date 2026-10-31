@@ -6,8 +6,15 @@
 # package, starts the server and asks it for a page. A fresh install that could
 # not boot went unnoticed for exactly that reason. tools/stack-smoke.sh is the
 # whole gate (install, first request, every route, linters, doctor, every
-# package's test suite inside the app); this workflow only gives it PHP, MySQL
-# and Redis, so no route and no doctor check is excused for a missing service.
+# package's test suite inside the app); this workflow only gives it the app
+# image, MySQL and Redis, so no route and no doctor check is excused for a
+# missing service.
+#
+# The gate runs INSIDE the image this skeleton's Dockerfile builds, the one an
+# install runs: users never get any other PHP. On setup-php it tested a world
+# nobody ships (Swoole with native curl, another OpenSSL and SQLite, a PDO
+# without the driver methods), and three reds of 2026-10-27 were that world,
+# not a bug a user could meet.
 #
 # Other repositories reuse it through workflow_call, passing their own checkout
 # in place of the develop line of that one package:
@@ -164,21 +171,32 @@ jobs:
           path: override
           persist-credentials: false
 
-      - name: Set up PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2 (2026-06-08)
-        with:
-          php-version: '8.4'
-          extensions: swoole, redis, pdo_mysql, zlib, imagick
-          tools: composer:v2
-          coverage: none
+      # The image an install builds: this checkout's own Dockerfile, so a
+      # change to it is tested by the same run that ships it.
+      - name: Build the app image
+        run: docker build --tag semitexa-app:smoke app
 
+      # In the image, with the runner's uid so the workspace stays its own,
+      # and the host network so MySQL and Redis answer on 127.0.0.1 as the
+      # job env says. The workspace is mounted at its own path, so the
+      # override checkout and the logs below are where the steps expect them.
       - name: Stack smoke
-        working-directory: app
         env:
           SMOKE_GITHUB_TOKEN: ${{ github.token }}
           SEMITEXA_OVERRIDE_REPO: ${{ inputs.override_repo }}
           SEMITEXA_OVERRIDE_PATH: ${{ inputs.override_repo != '' && format('{0}/override', github.workspace) || '' }}
-        run: tools/stack-smoke.sh
+        run: |
+          docker run --rm --network host \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp/smoke-home \
+            --env DB_DRIVER --env DB_HOST --env DB_PORT --env DB_DATABASE --env DB_USERNAME --env DB_PASSWORD \
+            --env REDIS_HOST --env REDIS_PORT --env SWOOLE_PORT \
+            --env SEMITEXA_SMOKE_SERVICES --env SEMITEXA_SMOKE_SKIP_SUITES \
+            --env SMOKE_GITHUB_TOKEN --env SEMITEXA_OVERRIDE_REPO --env SEMITEXA_OVERRIDE_PATH \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE/app" \
+            semitexa-app:smoke \
+            bash -c 'mkdir -p "$HOME" && exec tools/stack-smoke.sh'
 
       - name: Keep the logs
         if: always()
