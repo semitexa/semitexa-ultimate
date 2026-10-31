@@ -506,7 +506,33 @@ PHP
     done
 }
 
+# The runtime under test, printed first: the runner's PHP comes from setup-php,
+# not from the image users run, and a suite that is green in the image and red
+# here (CurlHttpClientTlsTest, SqliteAdapterUnhexTest, 27-30.10) was read from
+# a log that never said which Swoole, curl, SQLite or OpenSSL it ran on.
+print_runtime() {
+    log "runtime"
+    $PHP -r '
+        $swoole = "";
+        if (extension_loaded("swoole")) {
+            ob_start();
+            (new ReflectionExtension("swoole"))->info();
+            $swoole = implode(", ", array_filter(array_map("trim", explode("\n", (string) ob_get_clean())),
+                static fn (string $l): bool => preg_match("/^(Version|curl-native|openssl|c-ares|io_uring)\b/", $l) === 1));
+        }
+        printf("    PHP %s; swoole %s\n", PHP_VERSION, $swoole !== "" ? $swoole : "missing");
+        printf("    curl %s; OpenSSL %s\n", function_exists("curl_version") ? curl_version()["version"] : "missing", defined("OPENSSL_VERSION_TEXT") ? OPENSSL_VERSION_TEXT : "missing");
+        try {
+            $pdo = PDO::connect("sqlite::memory:");
+            printf("    SQLite %s; PDO::connect(sqlite) gives %s\n", (string) $pdo->query("select sqlite_version()")->fetchColumn(), get_class($pdo));
+        } catch (Throwable $e) {
+            printf("    SQLite: %s\n", $e->getMessage());
+        }
+    ' || note "runtime: could not be read"
+}
+
 # ── Run ──────────────────────────────────────────────────────────────────────
+print_runtime
 want install && { stage_install || { printf '\ninstall failed; later stages skipped\n'; STAGES=; }; }
 want server && stage_server
 want lint && stage_lint
