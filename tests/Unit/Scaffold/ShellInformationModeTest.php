@@ -106,6 +106,31 @@ SH);
         }
     }
 
+    /**
+     * Discovered paths replace the XML suites, so the project's own tests/
+     * (the phpunit.xml.dist suite) is discovered with them; a value-taking
+     * option's value, any of them, is no path; and a suite named from the XML
+     * gets no paths at all, or PHPUnit would build the run from the paths.
+     */
+    public function testDiscoveryKeepsTheProjectsTestsAndANamedSuite(): void
+    {
+        mkdir($this->root . '/src/modules/Shop/tests', 0755, true);
+        file_put_contents($this->root . '/src/modules/Shop/tests/OrderTest.php', '<?php');
+        mkdir($this->root . '/tests', 0755, true);
+        file_put_contents($this->root . '/tests/FooTest.php', '<?php');
+
+        [$exit, $output, $calls] = $this->runShell(['test:run', '--filter', 'Foo', '--default-time-limit', '60', '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
+        self::assertSame(0, $exit, $output);
+        self::assertStringContainsString('vendor/bin/phpunit --filter Foo --default-time-limit 60 --list-tests src/modules/Shop/tests tests', $calls);
+
+        foreach ([['--testsuite', 'default'], ['--testsuite=default'], ['--exclude-testsuite', 'default']] as $suite) {
+            [$exit, $output, $calls] = $this->runShell(['test:run', ...$suite, '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
+            self::assertSame(0, $exit, $output);
+            self::assertStringContainsString('vendor/bin/phpunit ' . implode(' ', $suite) . ' --list-tests', $calls);
+            self::assertStringNotContainsString('src/modules/Shop/tests', $calls, implode(' ', $suite) . ' selects from the XML');
+        }
+    }
+
     /** @param list<string> $args @param array<string, string> $overrides @return array{int, string, string} */
     /**
      * `--filter X`: X is the option's value, not a test path. Counted as one,

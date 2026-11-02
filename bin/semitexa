@@ -2551,7 +2551,8 @@ phpunit_option_takes_value() {
         --order-by|--random-order-seed|--log-junit|--log-teamcity|--log-events-text|\
         --log-events-verbose-text|--testdox-html|--testdox-text|--coverage-clover|\
         --coverage-cobertura|--coverage-crap4j|--coverage-html|--coverage-php|--coverage-xml|\
-        --coverage-filter|--include-path|-d|--extension|--columns|--generate-baseline|--use-baseline)
+        --coverage-filter|--include-path|-d|--extension|--columns|--generate-baseline|--use-baseline|\
+        --default-time-limit|--list-tests-xml|--coverage-cache|--cache-result-file)
             return 0 ;;
     esac
     return 1
@@ -2625,11 +2626,18 @@ cmd_test_run() {
     _has_positional=0
     _broad_packages_run=0
     _option_value=0
+    # A suite named from phpunit.xml.dist (--testsuite / --exclude-testsuite)
+    # is the selection: positional paths would replace the XML suites, so
+    # nothing is discovered for it.
+    _suite_selected=0
     for _arg in "$@"; do
         if [ "$_option_value" -eq 1 ]; then
             _option_value=0
             continue
         fi
+        case "$_arg" in
+            --testsuite|--testsuite=*|--exclude-testsuite|--exclude-testsuite=*) _suite_selected=1 ;;
+        esac
         if phpunit_option_takes_value "$_arg"; then
             _option_value=1
             continue
@@ -2783,8 +2791,16 @@ $_url_clean"
     fi
 
     _test_paths=""
-    if [ "$_has_positional" -eq 0 ] || [ "$_broad_packages_run" -eq 1 ]; then
+    if [ "$_suite_selected" -eq 0 ] && { [ "$_has_positional" -eq 0 ] || [ "$_broad_packages_run" -eq 1 ]; }; then
         _discovered=""
+        # The project's own tests/ first: discovered paths replace the XML
+        # suites, so a run that also found module or package tests dropped it
+        # (the phpunit.xml.dist suite is `tests`). Pure discovery only, as for
+        # src/modules: an explicit `packages` target means the packages.
+        if [ "$_has_positional" -eq 0 ] && [ -d "$PROJECT_ROOT/tests" ] \
+            && find "$PROJECT_ROOT/tests" -mindepth 1 -name '*Test.php' -print -quit 2>/dev/null | grep -q .; then
+            _discovered="tests"
+        fi
         if [ -d "$PROJECT_ROOT/packages" ]; then
             for _dir in "$PROJECT_ROOT"/packages/*/tests; do
                 [ -d "$_dir" ] || continue
