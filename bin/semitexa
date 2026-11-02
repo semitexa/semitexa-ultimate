@@ -402,6 +402,14 @@ wait_for_service() {
     return 1
 }
 
+# MySQL answers within seconds on a warm volume and in up to ~40 s on a first
+# init. Polled from the start, every 2 s for 40 s: it used to sleep 20 s before
+# the first look, so every server:start waited 20 s on a database that had been
+# up all along (bench-server-start-sleeps-20s). The ceiling is the same.
+wait_for_mysql() {
+    wait_for_service "MySQL" "mysql" "3306" 20 2 0 && verify_mysql_auth
+}
+
 # A TCP-reachable MySQL is NOT proof the app can use it. `mysql_data` is a
 # project-scoped Docker named volume that SURVIVES deleting/recreating the
 # project dir, so a "fresh" re-install of the same dir name silently inherits a
@@ -2036,7 +2044,7 @@ cmd_server_start() {
 
     _db="$(env_val DB_DRIVER "")"
     if [ "$_db" = "mysql" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
-        wait_for_service "MySQL" "mysql" "3306" 5 4 20 && verify_mysql_auth || true
+        wait_for_mysql || true
     fi
 
     _redis="$(env_val REDIS_HOST "")"
