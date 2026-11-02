@@ -402,6 +402,14 @@ wait_for_service() {
     return 1
 }
 
+# MySQL answers within seconds on a warm volume and in up to ~40 s on a first
+# init. Polled from the start, every 2 s for 40 s: it used to sleep 20 s before
+# the first look, so every server:start waited 20 s on a database that had been
+# up all along (bench-server-start-sleeps-20s). The ceiling is the same.
+wait_for_mysql() {
+    wait_for_service "MySQL" "mysql" "3306" 20 2 0 && verify_mysql_auth
+}
+
 # A TCP-reachable MySQL is NOT proof the app can use it. `mysql_data` is a
 # project-scoped Docker named volume that SURVIVES deleting/recreating the
 # project dir, so a "fresh" re-install of the same dir name silently inherits a
@@ -2036,7 +2044,7 @@ cmd_server_start() {
 
     _db="$(env_val DB_DRIVER "")"
     if [ "$_db" = "mysql" ] && [ -f "$PROJECT_ROOT/docker-compose.mysql.yml" ]; then
-        wait_for_service "MySQL" "mysql" "3306" 5 4 20 && verify_mysql_auth || true
+        wait_for_mysql || true
     fi
 
     _redis="$(env_val REDIS_HOST "")"
@@ -2630,13 +2638,19 @@ cmd_test_run() {
     # is the selection: positional paths would replace the XML suites, so
     # nothing is discovered for it.
     _suite_selected=0
+    # A run that picks tests (--filter, --group, a suite...) is as focused as
+    # one that names paths: neither runs the E2E phase after it. Its value no
+    # longer counts as a path, so this is tracked on its own.
+    _focused=0
     for _arg in "$@"; do
         if [ "$_option_value" -eq 1 ]; then
             _option_value=0
             continue
         fi
         case "$_arg" in
-            --testsuite|--testsuite=*|--exclude-testsuite|--exclude-testsuite=*) _suite_selected=1 ;;
+            --testsuite|--testsuite=*|--exclude-testsuite|--exclude-testsuite=*) _suite_selected=1; _focused=1 ;;
+            --filter|--filter=*|--exclude-filter|--exclude-filter=*|--group|--group=*|--exclude-group|--exclude-group=*|\
+            --covers|--covers=*|--uses|--uses=*|--test-suffix|--test-suffix=*) _focused=1 ;;
         esac
         if phpunit_option_takes_value "$_arg"; then
             _option_value=1
@@ -2986,8 +3000,8 @@ ${_url_clean}/tests"
     # ── Phase 2: E2E (Playwright) ───────────────────────────────────────
     # When the operator passed positional PHPUnit targets, this is a
     # focused PHPUnit run; do NOT auto-run the full E2E suite.
-    if [ "$_has_positional" -eq 1 ]; then
-        info "Positional PHPUnit targets supplied — E2E phase skipped."
+    if [ "$_has_positional" -eq 1 ] || [ "$_focused" -eq 1 ]; then
+        info "Focused PHPUnit run (named targets or a test selection) — E2E phase skipped."
         exit 0
     fi
 

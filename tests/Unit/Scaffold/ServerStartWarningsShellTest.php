@@ -103,6 +103,81 @@ final class ServerStartWarningsShellTest extends TestCase
         self::assertSame([], $this->warnings("APP_ENV=dev\nDB_DRIVER=mysql\nDB_USERNAME=root\n"));
     }
 
+    /**
+     * server:start looks for MySQL at once and every 2 s after: it slept 20 s
+     * before the first look, on a database that was up all along
+     * (bench-server-start-sleeps-20s).
+     */
+    #[Test]
+    public function mysql_is_polled_from_the_start_and_found_without_a_fixed_wait(): void
+    {
+        $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        preg_match_all('/^(wait_for_service|wait_for_mysql)\(\) \{\n.*?^\}$/ms', $script, $m);
+        self::assertCount(2, $m[0], 'both functions must still exist in bin/semitexa');
+
+        // MySQL answers on the third probe.
+        $sh = 'log(){ printf "%s\n" "$*" >> "$PROJECT_ROOT/log"; }' . "\n"
+            . 'info(){ :; }; success(){ :; }; warn(){ :; }' . "\n"
+            . 'sleep(){ log "sleep $1"; }' . "\n"
+            . 'run_compose(){ n=$(( $(cat "$PROJECT_ROOT/n" 2>/dev/null || echo 0) + 1 )); echo $n > "$PROJECT_ROOT/n"; log probe; [ "$n" -ge 3 ]; }' . "\n"
+            . 'verify_mysql_auth(){ log auth; }' . "\n"
+            . implode("\n", $m[0]) . "\nwait_for_mysql; echo \"status=\$?\"";
+        $out = (string) shell_exec(sprintf('env -i PATH=/usr/bin:/bin PROJECT_ROOT=%s sh -c %s 2>&1', escapeshellarg($this->root), escapeshellarg($sh)));
+
+        self::assertSame('status=0', trim($out));
+        self::assertSame(['probe', 'sleep 2', 'probe', 'sleep 2', 'probe', 'auth'], file($this->root . '/log', FILE_IGNORE_NEW_LINES));
+    }
+
+    /** A MySQL that never answers is given 20 probes, 2 s apart, and no auth check. */
+    #[Test]
+    public function the_mysql_wait_gives_up_after_twenty_probes(): void
+    {
+        [$status, $log] = $this->waitForMysql('run_compose(){ log probe; return 1; }', 'verify_mysql_auth(){ log auth; }');
+
+        self::assertSame('status=1', $status);
+        $expected = ['probe'];
+        for ($i = 1; $i < 20; $i++) {
+            array_push($expected, 'sleep 2', 'probe');
+        }
+        self::assertSame($expected, $log);
+    }
+
+    /** A reachable MySQL that refuses the app's credentials fails the wait (a stale volume). */
+    #[Test]
+    public function the_mysql_wait_fails_when_the_credentials_are_refused(): void
+    {
+        [$status, $log] = $this->waitForMysql('run_compose(){ log probe; }', 'verify_mysql_auth(){ log auth; return 1; }');
+
+        self::assertSame('status=1', $status);
+        self::assertSame(['probe', 'auth'], $log);
+    }
+
+    /** server:start is what calls it: a wait nothing calls would pass the tests above. */
+    #[Test]
+    public function server_start_waits_for_mysql_through_it(): void
+    {
+        $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        self::assertSame(1, preg_match('/^cmd_server_start\(\) \{\n(.*?)^\}$/ms', $script, $m));
+        self::assertStringContainsString('wait_for_mysql || true', $m[1]);
+        self::assertStringNotContainsString('wait_for_service "MySQL"', $m[1], 'no second, older wait beside it');
+    }
+
+    /** @return array{string, list<string>} the status line and the log */
+    private function waitForMysql(string $runCompose, string $verifyAuth): array
+    {
+        $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        preg_match_all('/^(wait_for_service|wait_for_mysql)\(\) \{\n.*?^\}$/ms', $script, $m);
+        self::assertCount(2, $m[0], 'both functions must still exist in bin/semitexa');
+        $sh = 'log(){ printf "%s\n" "$*" >> "$PROJECT_ROOT/log"; }' . "\n"
+            . 'info(){ :; }; success(){ :; }; warn(){ :; }' . "\n"
+            . 'sleep(){ log "sleep $1"; }' . "\n"
+            . $runCompose . "\n" . $verifyAuth . "\n"
+            . implode("\n", $m[0]) . "\nwait_for_mysql; echo \"status=\$?\"";
+        $out = (string) shell_exec(sprintf('env -i PATH=/usr/bin:/bin PROJECT_ROOT=%s sh -c %s 2>&1', escapeshellarg($this->root), escapeshellarg($sh)));
+
+        return [trim($out), file($this->root . '/log', FILE_IGNORE_NEW_LINES) ?: []];
+    }
+
     /** @return list<string> the warnings, one a line */
     private function warnings(string $env): array
     {
