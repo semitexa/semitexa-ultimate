@@ -2540,6 +2540,23 @@ ETD_SQL
     info "Test database '$3' is ready for '$_etd_user'."
 }
 
+# A PHPUnit option whose value is the NEXT argument (`--filter X`, `-c file`).
+# The value is no test path: counted as one, `test:run -- --filter X` stopped
+# discovering the test paths and PHPUnit ran nothing in a fresh install, whose
+# module tests sit outside phpunit.xml.dist (bench-test-run-filter-noop).
+phpunit_option_takes_value() {
+    case "$1" in
+        --filter|--exclude-filter|--group|--exclude-group|--testsuite|--exclude-testsuite|\
+        --covers|--uses|--test-suffix|-c|--configuration|--bootstrap|--cache-directory|\
+        --order-by|--random-order-seed|--log-junit|--log-teamcity|--log-events-text|\
+        --log-events-verbose-text|--testdox-html|--testdox-text|--coverage-clover|\
+        --coverage-cobertura|--coverage-crap4j|--coverage-html|--coverage-php|--coverage-xml|\
+        --coverage-filter|--include-path|-d|--extension|--columns|--generate-baseline|--use-baseline)
+            return 0 ;;
+    esac
+    return 1
+}
+
 cmd_test_run() {
     [ "${1:-}" != "--" ] || shift
     _test_information=0
@@ -2607,7 +2624,16 @@ cmd_test_run() {
     # (phpunit.xml.dist stays minimal and environment-agnostic).
     _has_positional=0
     _broad_packages_run=0
+    _option_value=0
     for _arg in "$@"; do
+        if [ "$_option_value" -eq 1 ]; then
+            _option_value=0
+            continue
+        fi
+        if phpunit_option_takes_value "$_arg"; then
+            _option_value=1
+            continue
+        fi
         case "$_arg" in
             -*) ;;
             packages|packages/|./packages|./packages/) _has_positional=1; _broad_packages_run=1 ;;
@@ -2651,7 +2677,16 @@ cmd_test_run() {
     # (a) explicit positional path validation. If the user named an external
     #     path-repo path, refuse to proceed when the source isn't there.
     if [ "$_has_positional" -eq 1 ]; then
+        _option_value=0
         for _arg in "$@"; do
+            if [ "$_option_value" -eq 1 ]; then
+                _option_value=0
+                continue
+            fi
+            if phpunit_option_takes_value "$_arg"; then
+                _option_value=1
+                continue
+            fi
             case "$_arg" in
                 -*) continue ;;
             esac

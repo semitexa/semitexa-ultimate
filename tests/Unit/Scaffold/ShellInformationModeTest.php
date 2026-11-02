@@ -107,6 +107,27 @@ SH);
     }
 
     /** @param list<string> $args @param array<string, string> $overrides @return array{int, string, string} */
+    /**
+     * `--filter X`: X is the option's value, not a test path. Counted as one,
+     * discovery stopped and a fresh install's module tests were never handed
+     * to PHPUnit (bench-test-run-filter-noop). A real path still replaces
+     * discovery.
+     */
+    public function testAnOptionValueIsNoTestPathAndDiscoveryStillRuns(): void
+    {
+        mkdir($this->root . '/src/modules/Shop/tests', 0755, true);
+        file_put_contents($this->root . '/src/modules/Shop/tests/OrderTest.php', '<?php');
+
+        [$exit, $output, $calls] = $this->runShell(['test:run', '--', '--filter', 'OrderTest', '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
+        self::assertSame(0, $exit, $output);
+        self::assertStringContainsString('vendor/bin/phpunit --filter OrderTest --list-tests src/modules/Shop/tests', $calls);
+
+        [$exit, $output, $calls] = $this->runShell(['test:run', '--filter', 'OrderTest', 'src/modules/Shop/tests/OrderTest.php', '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
+        self::assertSame(0, $exit, $output);
+        self::assertStringContainsString('vendor/bin/phpunit --filter OrderTest src/modules/Shop/tests/OrderTest.php --list-tests', $calls);
+        self::assertStringNotContainsString('--list-tests src/modules/Shop/tests', $calls, 'a named path is the whole target');
+    }
+
     private function runShell(array $args, array $overrides = []): array
     {
         $log = $this->root . '/calls';
