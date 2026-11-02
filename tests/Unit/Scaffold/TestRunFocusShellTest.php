@@ -43,7 +43,7 @@ final class TestRunFocusShellTest extends TestCase
     #[Test]
     public function a_test_selection_skips_the_e2e_phase_and_a_bare_run_does_not(): void
     {
-        foreach ([['--filter', 'OrderTest'], ['--filter=OrderTest'], ['--group', 'slow'], ['--testsuite', 'default']] as $selection) {
+        foreach ([['--filter', 'OrderTest'], ['--filter=OrderTest'], ['--group', 'slow'], ['--group=slow'], ['--testsuite', 'default'], ['--testsuite=default']] as $selection) {
             @unlink($this->root . '/docker.log');
             $output = $this->testRun(...$selection);
             $calls = (string) @file_get_contents($this->root . '/docker.log');
