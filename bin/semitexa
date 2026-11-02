@@ -2648,8 +2648,10 @@ cmd_test_run() {
             *) _has_positional=1 ;;
         esac
     done
-    # Auto-discovery (no positional args) is also a broad packages run.
-    if [ "$_has_positional" -eq 0 ]; then
+    # Auto-discovery (no positional args) is also a broad packages run. A
+    # named suite is not: it needs no path repository, so neither the audit
+    # nor discovery below applies to it.
+    if [ "$_has_positional" -eq 0 ] && [ "$_suite_selected" -eq 0 ]; then
         _broad_packages_run=1
     fi
 

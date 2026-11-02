@@ -126,9 +126,17 @@ SH);
         foreach ([['--testsuite', 'default'], ['--testsuite=default'], ['--exclude-testsuite', 'default']] as $suite) {
             [$exit, $output, $calls] = $this->runShell(['test:run', ...$suite, '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
             self::assertSame(0, $exit, $output);
-            self::assertStringContainsString('vendor/bin/phpunit ' . implode(' ', $suite) . ' --list-tests', $calls);
+            // The line ends there: no discovered path, root tests/ included, follows.
+            self::assertStringContainsString('vendor/bin/phpunit ' . implode(' ', $suite) . " --list-tests\n", $calls);
             self::assertStringNotContainsString('src/modules/Shop/tests', $calls, implode(' ', $suite) . ' selects from the XML');
         }
+
+        // A suite needs no path repository: a missing one fails a broad run, not this.
+        file_put_contents($this->root . '/composer.json', json_encode(['repositories' => [['type' => 'path', 'url' => 'vendor-src/semitexa-gone']]], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        [$exit, $output] = $this->runShell(['test:run', '--testsuite', 'default', '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
+        self::assertSame(0, $exit, $output);
+        [$exit] = $this->runShell(['test:run', '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
+        self::assertSame(1, $exit, 'the broad run still refuses the missing path repository');
     }
 
     /** @param list<string> $args @param array<string, string> $overrides @return array{int, string, string} */
