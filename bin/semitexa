@@ -2638,13 +2638,19 @@ cmd_test_run() {
     # is the selection: positional paths would replace the XML suites, so
     # nothing is discovered for it.
     _suite_selected=0
+    # A run that picks tests (--filter, --group, a suite...) is as focused as
+    # one that names paths: neither runs the E2E phase after it. Its value no
+    # longer counts as a path, so this is tracked on its own.
+    _focused=0
     for _arg in "$@"; do
         if [ "$_option_value" -eq 1 ]; then
             _option_value=0
             continue
         fi
         case "$_arg" in
-            --testsuite|--testsuite=*|--exclude-testsuite|--exclude-testsuite=*) _suite_selected=1 ;;
+            --testsuite|--testsuite=*|--exclude-testsuite|--exclude-testsuite=*) _suite_selected=1; _focused=1 ;;
+            --filter|--filter=*|--exclude-filter|--exclude-filter=*|--group|--group=*|--exclude-group|--exclude-group=*|\
+            --covers|--covers=*|--uses|--uses=*|--test-suffix|--test-suffix=*) _focused=1 ;;
         esac
         if phpunit_option_takes_value "$_arg"; then
             _option_value=1
@@ -2994,8 +3000,8 @@ ${_url_clean}/tests"
     # ── Phase 2: E2E (Playwright) ───────────────────────────────────────
     # When the operator passed positional PHPUnit targets, this is a
     # focused PHPUnit run; do NOT auto-run the full E2E suite.
-    if [ "$_has_positional" -eq 1 ]; then
-        info "Positional PHPUnit targets supplied — E2E phase skipped."
+    if [ "$_has_positional" -eq 1 ] || [ "$_focused" -eq 1 ]; then
+        info "Focused PHPUnit run (named targets or a test selection) — E2E phase skipped."
         exit 0
     fi
 
