@@ -31,7 +31,7 @@ final class TestRunFocusShellTest extends TestCase
             file_put_contents($this->root . '/' . $file, 'fixture');
         }
         file_put_contents($this->root . '/src/modules/Shop/tests/OrderTest.php', '<?php');
-        file_put_contents($this->root . '/stubs/docker', "#!/bin/sh\ncase \" \$* \" in *' ps '*) printf 'running\\n' ;; esac\nexit 0\n");
+        file_put_contents($this->root . '/stubs/docker', "#!/bin/sh\nprintf 'docker %s\\n' \"\$*\" >> \"\$(dirname \"\$0\")/../docker.log\"\ncase \" \$* \" in *' ps '*) printf 'running\\n' ;; esac\nexit 0\n");
         chmod($this->root . '/stubs/docker', 0o755);
     }
 
@@ -44,9 +44,14 @@ final class TestRunFocusShellTest extends TestCase
     public function a_test_selection_skips_the_e2e_phase_and_a_bare_run_does_not(): void
     {
         foreach ([['--filter', 'OrderTest'], ['--filter=OrderTest'], ['--group', 'slow'], ['--testsuite', 'default']] as $selection) {
+            @unlink($this->root . '/docker.log');
             $output = $this->testRun(...$selection);
+            $calls = (string) @file_get_contents($this->root . '/docker.log');
             self::assertStringContainsString('E2E phase skipped', $output, implode(' ', $selection));
             self::assertStringNotContainsString('Phase 2/2', $output, implode(' ', $selection));
+            // PHPUnit got the selection, and nothing reached for Playwright.
+            self::assertStringContainsString('vendor/bin/phpunit ' . implode(' ', $selection), $calls, implode(' ', $selection));
+            self::assertStringNotContainsStringIgnoringCase('playwright', $calls, implode(' ', $selection));
         }
 
         self::assertStringContainsString('Phase 2/2', $this->testRun(), 'a bare run still goes on to E2E');
