@@ -2654,6 +2654,14 @@ cmd_test_run() {
     if [ "$_has_positional" -eq 0 ] && [ "$_suite_selected" -eq 0 ]; then
         _broad_packages_run=1
     fi
+    # `packages` asks for the discovered package tests, a suite for the XML's:
+    # PHPUnit can take only one, and dropping either silently runs less than
+    # was asked. Say so instead.
+    if [ "$_suite_selected" -eq 1 ] && [ "$_broad_packages_run" -eq 1 ]; then
+        error "test:run packages cannot be combined with --testsuite or --exclude-testsuite."
+        info "Run the packages (bin/semitexa test:run packages) or the suite (bin/semitexa test:run --testsuite <name>), not both at once."
+        exit 1
+    fi
 
     # Collect external composer path-repo URLs (those declared in composer.json
     # whose "url" points OUTSIDE the project's own packages/ tree). These are

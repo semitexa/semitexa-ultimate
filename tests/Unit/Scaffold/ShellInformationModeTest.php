@@ -137,6 +137,11 @@ SH);
         self::assertSame(0, $exit, $output);
         [$exit] = $this->runShell(['test:run', '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
         self::assertSame(1, $exit, 'the broad run still refuses the missing path repository');
+
+        // Both a `packages` target and a suite: PHPUnit takes one, so the run refuses rather than drop either.
+        [$exit, $output] = $this->runShell(['test:run', 'packages', '--testsuite', 'default', '--list-tests'], ['SEMITEXA_INFORMATION_RUNNING' => '1']);
+        self::assertSame(1, $exit);
+        self::assertStringContainsString('cannot be combined with --testsuite', $output);
     }
 
     /** @param list<string> $args @param array<string, string> $overrides @return array{int, string, string} */
