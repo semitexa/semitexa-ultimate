@@ -11,9 +11,14 @@ var/test-results/
 # (semitexa-update), generated sitemaps (semitexa-ssr), the project-graph
 # sqlite and other internal stores (semitexa-project-graph), and uploads
 # handled by the local storage driver (semitexa-storage). None is source.
-# var/migrations/history/ is deliberately absent — it is a schema audit
-# trail a project may well want under version control.
+# var/migrations/history/ too: every orm:sync writes two files there for
+# the database it ran against (a dev workspace measured 2140 of them), the
+# history of one machine's database rather than the project's source
+# (bench-scaffold-gitignore-runtime).
 var/lock/*
+var/migrations/history/
+# The queue worker's live counters (semitexa-core QueueWorker).
+var/queue-stats.json
 var/sitemap/*
 var/storage/*
 var/uploads/*
@@ -50,6 +55,8 @@ var/run/
 # var/ai-work (epics, tasks) is the backlog and stays committable.
 var/ai-work/agents/
 var/ai-work/stack-events.ndjson
+# Each agent's read position in the activity feed: whose news is unread.
+var/ai-work/activity.cursors
 !.gitkeep
 !var/docs/README.md
 
