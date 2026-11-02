@@ -2540,6 +2540,24 @@ ETD_SQL
     info "Test database '$3' is ready for '$_etd_user'."
 }
 
+# A PHPUnit option whose value is the NEXT argument (`--filter X`, `-c file`).
+# The value is no test path: counted as one, `test:run -- --filter X` stopped
+# discovering the test paths and PHPUnit ran nothing in a fresh install, whose
+# module tests sit outside phpunit.xml.dist (bench-test-run-filter-noop).
+phpunit_option_takes_value() {
+    case "$1" in
+        --filter|--exclude-filter|--group|--exclude-group|--testsuite|--exclude-testsuite|\
+        --covers|--uses|--test-suffix|-c|--configuration|--bootstrap|--cache-directory|\
+        --order-by|--random-order-seed|--log-junit|--log-teamcity|--log-events-text|\
+        --log-events-verbose-text|--testdox-html|--testdox-text|--coverage-clover|\
+        --coverage-cobertura|--coverage-crap4j|--coverage-html|--coverage-php|--coverage-xml|\
+        --coverage-filter|--include-path|-d|--extension|--columns|--generate-baseline|--use-baseline|\
+        --default-time-limit|--list-tests-xml|--coverage-cache|--cache-result-file)
+            return 0 ;;
+    esac
+    return 1
+}
+
 cmd_test_run() {
     [ "${1:-}" != "--" ] || shift
     _test_information=0
@@ -2607,16 +2625,42 @@ cmd_test_run() {
     # (phpunit.xml.dist stays minimal and environment-agnostic).
     _has_positional=0
     _broad_packages_run=0
+    _option_value=0
+    # A suite named from phpunit.xml.dist (--testsuite / --exclude-testsuite)
+    # is the selection: positional paths would replace the XML suites, so
+    # nothing is discovered for it.
+    _suite_selected=0
     for _arg in "$@"; do
+        if [ "$_option_value" -eq 1 ]; then
+            _option_value=0
+            continue
+        fi
+        case "$_arg" in
+            --testsuite|--testsuite=*|--exclude-testsuite|--exclude-testsuite=*) _suite_selected=1 ;;
+        esac
+        if phpunit_option_takes_value "$_arg"; then
+            _option_value=1
+            continue
+        fi
         case "$_arg" in
             -*) ;;
             packages|packages/|./packages|./packages/) _has_positional=1; _broad_packages_run=1 ;;
             *) _has_positional=1 ;;
         esac
     done
-    # Auto-discovery (no positional args) is also a broad packages run.
-    if [ "$_has_positional" -eq 0 ]; then
+    # Auto-discovery (no positional args) is also a broad packages run. A
+    # named suite is not: it needs no path repository, so neither the audit
+    # nor discovery below applies to it.
+    if [ "$_has_positional" -eq 0 ] && [ "$_suite_selected" -eq 0 ]; then
         _broad_packages_run=1
+    fi
+    # `packages` asks for the discovered package tests, a suite for the XML's:
+    # PHPUnit can take only one, and dropping either silently runs less than
+    # was asked. Say so instead.
+    if [ "$_suite_selected" -eq 1 ] && [ "$_broad_packages_run" -eq 1 ]; then
+        error "test:run packages cannot be combined with --testsuite or --exclude-testsuite."
+        info "Run the packages (bin/semitexa test:run packages) or the suite (bin/semitexa test:run --testsuite <name>), not both at once."
+        exit 1
     fi
 
     # Collect external composer path-repo URLs (those declared in composer.json
@@ -2651,7 +2695,16 @@ cmd_test_run() {
     # (a) explicit positional path validation. If the user named an external
     #     path-repo path, refuse to proceed when the source isn't there.
     if [ "$_has_positional" -eq 1 ]; then
+        _option_value=0
         for _arg in "$@"; do
+            if [ "$_option_value" -eq 1 ]; then
+                _option_value=0
+                continue
+            fi
+            if phpunit_option_takes_value "$_arg"; then
+                _option_value=1
+                continue
+            fi
             case "$_arg" in
                 -*) continue ;;
             esac
@@ -2748,8 +2801,16 @@ $_url_clean"
     fi
 
     _test_paths=""
-    if [ "$_has_positional" -eq 0 ] || [ "$_broad_packages_run" -eq 1 ]; then
+    if [ "$_suite_selected" -eq 0 ] && { [ "$_has_positional" -eq 0 ] || [ "$_broad_packages_run" -eq 1 ]; }; then
         _discovered=""
+        # The project's own tests/ first: discovered paths replace the XML
+        # suites, so a run that also found module or package tests dropped it
+        # (the phpunit.xml.dist suite is `tests`). Pure discovery only, as for
+        # src/modules: an explicit `packages` target means the packages.
+        if [ "$_has_positional" -eq 0 ] && [ -d "$PROJECT_ROOT/tests" ] \
+            && find "$PROJECT_ROOT/tests" -mindepth 1 -name '*Test.php' -print -quit 2>/dev/null | grep -q .; then
+            _discovered="tests"
+        fi
         if [ -d "$PROJECT_ROOT/packages" ]; then
             for _dir in "$PROJECT_ROOT"/packages/*/tests; do
                 [ -d "$_dir" ] || continue
