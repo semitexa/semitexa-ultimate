@@ -105,7 +105,7 @@ operator input
      │ └─ confidence: low/none → clarify
      ▼
 [2] inline-vs-epic triage (§3)
-     │ └── inline → edit → ai:verify → ai:trace → done
+     │ └── inline → [6b] if it touches the UI → edit → ai:verify → ai:trace → done
      ▼ epic
 [3] ai:epic start
 [4] ai:work start            export SEMITEXA_AI_TRACE_ID=<id>
@@ -113,10 +113,12 @@ operator input
 [6] ai:plan --files
      │ └─ risk=high → split; back to [3]
      ▼
-[6b] touching a page, a region, a form or an interaction?
-     │   ai:ask mechanisms --json          (narrow with --area=ssr or --area=ui)
-     │   └─ the framework already does deferred regions, components, live
-     │      transport and UI behaviours. Check BEFORE hand-rolling one.
+[6b] touching a page, a region, a form or an interaction? Inline work too.
+     │   ai:ask components                 what can be rendered; --name=<x> gives the call
+     │   ai:ask mechanisms --area=ssr      what exists; --id=<id> gives working code
+     │   └─ deferred regions, live updates, grids, forms and UI behaviours exist.
+     │      A hand-written fetch(), setInterval or JSON route for the page is the
+     │      sign one was missed: look again before writing it.
      ▼
 [7] edit via make:* or Edit
 [8] ai:verify
@@ -196,7 +198,8 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 | All routes | `routes:list [--json]` |
 | DI bindings | `contracts:list --json` |
 | Capabilities manifest — what COMMANDS exist to run | `ai:ask capabilities --json` |
-| What the FRAMEWORK can do — deferred regions, components, live transport, UI behaviours | `ai:ask mechanisms --json`; narrow with `--area=ssr`, `--area=ui` or `--id=<cap>` |
+| What the FRAMEWORK can do — deferred regions, components, live transport, UI behaviours | `ai:ask mechanisms --json`; narrow with `--area=ssr` or `--area=ui`; `--id=<cap>` gives working code and how data gets in and out |
+| What UI already exists, and how to call it — components, primitives, behaviours | `ai:ask components`; one entry with its props and the call to copy: `ai:ask components --name=platform.grid` |
 | How a framework class is called — attribute parameters, helper and method signatures, enum cases | `ai:ask api --name=<Class>`; don't know the class: `ai:ask api --search=<words>` |
 | Logs | `ai:ask logs --grep=<term> --lines=200 [--level=ERROR] --json` |
 | What is running RIGHT NOW / what just finished | `ai:observe ps` *(live processes: http, sse, scheduler, queue; stale flags; waterfall links)* |
