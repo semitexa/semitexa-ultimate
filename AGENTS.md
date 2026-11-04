@@ -115,7 +115,7 @@ operator input
      ▼
 [6b] touching a page, a region, a form or an interaction? Inline work too.
      │   ai:ask components                 what can be rendered; --name=<x> gives the call
-     │   ai:ask mechanisms --area=ssr      what exists; --id=<id> gives working code
+     │   ai:ask mechanisms --area=ssr      and --area=ui: what exists; --id=<id> gives working code
      │   └─ deferred regions, live updates, grids, forms and UI behaviours exist.
      │      A hand-written fetch(), setInterval or JSON route for the page is the
      │      sign one was missed: look again before writing it.
