@@ -1,0 +1,6 @@
+# Kept out of the archive `composer create-project semitexa/ultimate` unpacks
+# (--prefer-dist): a maintainer gate that compares this repository with the
+# semitexa-installer checkout beside it. A new project has neither, so its first
+# test:run was red (bench-fresh-testrun-red, 2026-11-04). The workspace and the
+# stack smoke are git checkouts and still run it.
+/tests/Unit/Scaffold/RuntimeScaffoldConsistencyTest.php export-ignore
