@@ -197,6 +197,7 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 | DI bindings | `contracts:list --json` |
 | Capabilities manifest — what COMMANDS exist to run | `ai:ask capabilities --json` |
 | What the FRAMEWORK can do — deferred regions, components, live transport, UI behaviours | `ai:ask mechanisms --json`; narrow with `--area=ssr`, `--area=ui` or `--id=<cap>` |
+| How a framework class is called — attribute parameters, helper and method signatures, enum cases | `ai:ask api --name=<Class>`; don't know the class: `ai:ask api --search=<words>` |
 | Logs | `ai:ask logs --grep=<term> --lines=200 [--level=ERROR] --json` |
 | What is running RIGHT NOW / what just finished | `ai:observe ps` *(live processes: http, sse, scheduler, queue; stale flags; waterfall links)* |
 | Live stream of process lifecycles | `ai:observe tail [--kind=] [--name=] [--follow --duration=15]` *(NDJSON; --follow self-terminates)* |
@@ -279,6 +280,7 @@ If an idea isn't in `ai:epic`, it doesn't exist from a backlog standpoint. The f
 - **Token budget.** Inline ≤ 4k, epic leaf ≤ 8k. Over budget → split via `ai:epic update` + new `ai:work start`.
 - **Don't dump NDJSON.** Summarize.
 - **Use `ai:ask` whenever the alternative is 3+ `Read`/`Grep`.** Use `ai:review-graph:*` whenever the question is "who/what uses this class".
+- **Never open `vendor/` to learn a framework API — not even once.** `ai:ask api --name=Column` gives an attribute's parameters and `ai:ask api --search="max length"` finds a helper, in about 1 KB. Read `vendor/` only for what a signature cannot say: how the code behaves inside.
 
 ---
 
