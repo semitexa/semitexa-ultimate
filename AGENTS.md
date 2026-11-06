@@ -107,7 +107,7 @@ Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it sa
 
 **Found a bug, debt or a cost off your path? File it and carry on:** `bin/semitexa ai:work start --id=<id> --epic=<epic> --title="<what>" --context-ref=<path> --recipe=fix_bug`, or `--phase=right`, or `--phase=fast` in place of the recipe. The path says whether it is the project's or the framework's. It counts from then on, a framework path with `--with-framework`, and the percent simply moves; nobody is blamed. File what your task showed you, and do not go looking for more.
 
-**A spec is one source of approved work, not the only one.** Cut it into tasks under an epic (`--phase=work`), show the architect the list, and on their yes approve the epic at once. When the spec changes, file what it adds, approve each on the architect's yes (`ai:work:approve --id`, since `--epic` would take every idea in it), and discard what it dropped: the percent moves, and that is right. Tasks carry no weights; the count sits beside the percent.
+**A spec is one source of approved work, not the only one.** Cut it into tasks under an epic of their own (`--phase=work`), show the architect the list, and on their yes approve that epic at once: `--epic` takes every idea in it, so nothing else belongs there. When the spec changes, file what it adds, approve each on the architect's yes (`ai:work:approve --id`, since `--epic` would take every idea in it), and discard what it dropped: the percent moves, and that is right. Tasks carry no weights; the count sits beside the percent.
 
 **One task, one commit, with a last line `Task: <id>`.** Do not push unless the project's charter says to.
 
