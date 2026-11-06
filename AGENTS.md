@@ -103,9 +103,9 @@ Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it sa
 | `ideas` | Only ideas are left | Offer them. Take none: an idea becomes work on the architect's yes (`ai:work:approve`) |
 | `done` | Everything is closed | Say so and ask for new ideas |
 
-**Approved tasks and bugs count**, ideas do not, and a task is done when a test proves it. `ai:state` shows how far each phase has come: work is what was asked for, right is structure, fast is cost.
+**Approved tasks and bugs count**, ideas do not, and a task is done when a test proves it; a change of docs or config needs only a pass of `ai:verify`. `ai:state` shows how far each phase has come: work is what was asked for, right is structure, fast is cost.
 
-**Found a bug, debt or a cost off your path? File it and carry on:** `ai:work start --id=<id> --epic=<epic> --title="<what>" --recipe=fix_bug`, or `--phase=right`, or `--phase=fast` in place of the recipe. It counts from then on and the percent simply moves; nobody is blamed. File what your task showed you, and do not go looking for more.
+**Found a bug, debt or a cost off your path? File it and carry on:** `bin/semitexa ai:work start --id=<id> --epic=<epic> --title="<what>" --recipe=fix_bug`, or `--phase=right`, or `--phase=fast` in place of the recipe. It counts from then on and the percent simply moves; nobody is blamed. File what your task showed you, and do not go looking for more.
 
 **One task, one commit, with a last line `Task: <id>`.** Do not push unless the project's charter says to.
 
