@@ -97,7 +97,7 @@ Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it sa
 
 | `state` | Means | You |
 |---|---|---|
-| `empty` | Nothing in the backlog | Interview the architect (`ai:charter next`), file the answers as epics and tasks, get a yes |
+| `empty` | Nothing to work on yet: no tasks, or an unfinished charter and nothing approved | Interview the architect (`ai:charter next`), file the answers as epics and tasks, get a yes |
 | `work` | An approved task is open | Take it through the steps: it names the task |
 | `waiting` | What is open is blocked or another agent's | Show the architect what it waits for |
 | `ideas` | Only ideas are left | Offer them. Take none: an idea becomes work on the architect's yes (`ai:work:approve`) |
@@ -105,9 +105,9 @@ Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it sa
 
 **Approved tasks and bugs count**, ideas do not, and a task is done when a test proves it; a change of docs or config needs only a pass of `ai:verify`. `ai:state` shows how far each phase has come: work is what was asked for, right is structure, fast is cost.
 
-**Found a bug, debt or a cost off your path? File it and carry on:** `bin/semitexa ai:work start --id=<id> --epic=<epic> --title="<what>" --recipe=fix_bug`, or `--phase=right`, or `--phase=fast` in place of the recipe. It counts from then on and the percent simply moves; nobody is blamed. File what your task showed you, and do not go looking for more.
+**Found a bug, debt or a cost off your path? File it and carry on:** `bin/semitexa ai:work start --id=<id> --epic=<epic> --title="<what>" --context-ref=<path> --recipe=fix_bug`, or `--phase=right`, or `--phase=fast` in place of the recipe. The path says whether it is the project's or the framework's. It counts from then on, a framework path with `--with-framework`, and the percent simply moves; nobody is blamed. File what your task showed you, and do not go looking for more.
 
-**A spec is one source of approved work, not the only one.** Cut it into tasks under an epic (`--phase=work`), show the architect the list, and on their yes approve the epic at once. When the spec changes, file what it adds and discard what it dropped: the percent moves, and that is right. Tasks carry no weights; the count sits beside the percent.
+**A spec is one source of approved work, not the only one.** Cut it into tasks under an epic (`--phase=work`), show the architect the list, and on their yes approve the epic at once. When the spec changes, file what it adds, approve each on the architect's yes (`ai:work:approve --id`, since `--epic` would take every idea in it), and discard what it dropped: the percent moves, and that is right. Tasks carry no weights; the count sits beside the percent.
 
 **One task, one commit, with a last line `Task: <id>`.** Do not push unless the project's charter says to.
 

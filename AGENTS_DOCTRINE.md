@@ -152,7 +152,7 @@ thought (not stored)
                                 └─► epic (done)  ← close
 ```
 
-Transitions always require operator confirmation. The agent offers; the operator commits. A task is an idea until approved, and an idea counts for nothing in `ai:state`. Bugs, and tickets filed under right or fast, skip that step: they are found, not proposed.
+Approval is the operator's: the agent offers, the operator commits. Once a task is approved it needs no further yes: "make it" takes it through to done. Closing an epic stays the operator's. A task is an idea until approved, and an idea counts for nothing in `ai:state`. Bugs, and tickets filed under right or fast, skip that step: they are found, not proposed.
 
 ---
 
