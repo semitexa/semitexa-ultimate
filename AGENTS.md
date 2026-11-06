@@ -107,6 +107,8 @@ Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it sa
 
 **Found a bug, debt or a cost off your path? File it and carry on:** `bin/semitexa ai:work start --id=<id> --epic=<epic> --title="<what>" --recipe=fix_bug`, or `--phase=right`, or `--phase=fast` in place of the recipe. It counts from then on and the percent simply moves; nobody is blamed. File what your task showed you, and do not go looking for more.
 
+**A spec is one source of approved work, not the only one.** Cut it into tasks under an epic (`--phase=work`), show the architect the list, and on their yes approve the epic at once. When the spec changes, file what it adds and discard what it dropped: the percent moves, and that is right. Tasks carry no weights; the count sits beside the percent.
+
 **One task, one commit, with a last line `Task: <id>`.** Do not push unless the project's charter says to.
 
 ---
@@ -199,6 +201,7 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 | `ai:make-it` | What to do next, from the state of the backlog (§1a) | Told "make it" |
 | `ai:work:approve` | An idea becomes approved work, a task or a whole epic; keeps the architect's `--words`; `--revoke` returns it | On the architect's yes |
 | `ai:state` | Done over approved tasks per phase, for `./src`; `--with-framework` or `SEMITEXA_STATE_WITH_FRAMEWORK=1` adds the framework | Reporting how far the project has come |
+| `ai:audit` | Records that right or fast was looked at, and what it covered, so a phase with no tickets reads as clean and not as unread; it goes stale after 30 days. What it found is filed as tickets | After an audit, found or not |
 | `ai:context <recipe>` | Prior-art for a recipe | Before edits, once per task |
 | `ai:plan --files` | Risk-score recipe + files | Before edits on >1 file or unclear risk |
 | `ai:verify` | Precise lint+test+module-structure subset on diff (see [`MODULE_STRUCTURE.md`](vendor/semitexa/docs/docs/MODULE_STRUCTURE.md)) | **After every edit.** Non-negotiable. |
