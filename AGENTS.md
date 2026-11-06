@@ -93,7 +93,7 @@ Every input goes through this gate **before** `ai:task`.
 
 ## 1a. "Make it"
 
-Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it says. It reads the backlog and answers with a `state`, what to `say`, the `steps` and `go_on`. While `go_on` is true do the steps and run it again, for as long as it takes; stop when it is false. Do not choose the next task yourself: the order is the command's.
+Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it says. It reads the backlog and answers with a `state`, what to `say`, the `steps` and `go_on`. While `go_on` is true do the steps and run it again, for as long as it takes. When it is false, finish its steps and stop; run it again only if a step says so. Do not choose the next task yourself: the order is the command's.
 
 | `state` | Means | You |
 |---|---|---|
