@@ -34,7 +34,7 @@
 - ❌ Scan `var/docs/**` for backlog questions — that's `ai:epic list` / `ai:work list`.
 - ❌ Write a planning/audit/analysis/report `.md` to project root — **all temporary docs go in `var/docs/`**. Root is reserved for framework scaffold docs (AGENTS, AI_ENTRY, AI_CONTEXT, CLAUDE, AGENTS_DOCTRINE, AI_REFERENCE, README, AI_NOTES).
 - ❌ Hand-write a payload/handler/resource trio — `make:page` exists.
-- ❌ Hand-roll a loading region, a live-updating block, a reusable UI element or a client interaction — SSR and platform-ui already do these. Run `ai:ask mechanisms` first; each entry says when to use it **and when not to**.
+- ❌ Hand-roll a loading region, a live-updating block, a reusable UI element or a client interaction — SSR and platform-ui already do these. Run `ai:ask mechanisms` first for the list, then `ai:ask mechanisms --search=<word>`: each entry it finds says when to use it **and when not to**.
 - ❌ Use `Grep` for structural questions about classes — use `ai:review-graph:*`.
 - ❌ Treat the 75-command `bin/semitexa` listing as the capability surface — use `ai:ask capabilities`.
 - ❌ Assume `ai:task` is useless because it returned `recipe=unknown_task` — that is the *correct* signal to proceed without a recipe.
