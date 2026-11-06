@@ -91,6 +91,26 @@ Every input goes through this gate **before** `ai:task`.
 
 ---
 
+## 1a. "Make it"
+
+Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it says. It reads the backlog and answers with a `state`, what to `say`, the `steps` and `go_on`. While `go_on` is true do the steps and run it again, for as long as it takes; stop when it is false. Do not choose the next task yourself: the order is the command's.
+
+| `state` | Means | You |
+|---|---|---|
+| `empty` | Nothing in the backlog | Interview the architect (`ai:charter next`), file the answers as epics and tasks, get a yes |
+| `work` | An approved task is open | Take it through the steps: it names the task |
+| `waiting` | What is open is blocked or another agent's | Show the architect what it waits for |
+| `ideas` | Only ideas are left | Offer them. Take none: an idea becomes work on the architect's yes (`ai:work:approve`) |
+| `done` | Everything is closed | Say so and ask for new ideas |
+
+**Only approved tasks count**, and a task is done when a test proves it. `ai:state` shows how far each phase has come: work is what was asked for, right is structure, fast is cost.
+
+**Found a bug, debt or a cost off your path? File it and carry on:** `ai:work start --recipe=fix_bug`, or `--phase=right`, or `--phase=fast`. It counts from then on and the percent simply moves; nobody is blamed. File what your task showed you, and do not go looking for more.
+
+**One task, one commit, with a last line `Task: <id>`.** Do not push unless the project's charter says to.
+
+---
+
 ## 2. Canonical Execution Pipeline (EXECUTE)
 
 ```
@@ -176,6 +196,9 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 | `ai:task` | Classify prose → recipe + score + `confidence` (high/low/none) + next-step | Every new EXECUTE unit |
 | `ai:epic` | Orchestrate N tasks under a shared goal | CAPTURE save / non-trivial EXECUTE |
 | `ai:work` | Track one executable leaf unit | Every leaf task |
+| `ai:make-it` | What to do next, from the state of the backlog (§1a) | Told "make it" |
+| `ai:work:approve` | An idea becomes approved work, a task or a whole epic; keeps the architect's `--words`; `--revoke` returns it | On the architect's yes |
+| `ai:state` | Done over approved tasks per phase, for `./src`; `--with-framework` or `SEMITEXA_STATE_WITH_FRAMEWORK=1` adds the framework | Reporting how far the project has come |
 | `ai:context <recipe>` | Prior-art for a recipe | Before edits, once per task |
 | `ai:plan --files` | Risk-score recipe + files | Before edits on >1 file or unclear risk |
 | `ai:verify` | Precise lint+test+module-structure subset on diff (see [`MODULE_STRUCTURE.md`](vendor/semitexa/docs/docs/MODULE_STRUCTURE.md)) | **After every edit.** Non-negotiable. |
