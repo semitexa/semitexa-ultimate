@@ -1,11 +1,18 @@
 # Optional: Redis for cache/sessions. Used when REDIS_HOST is set in .env.default/.env.
 # Start: docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d
 # Or: bin/semitexa server:start (uses this file automatically when REDIS_HOST is set).
+#
+# With Redis here the cache goes to it too, unless .env names another driver. The
+# default, array, is one cache per worker: a form's one-time token issued by one
+# worker is unknown to the worker that takes the submit, and on a fresh project
+# with four workers 7 of 20 visitors were refused (2026-11-07). Here and not in
+# .env.default, because a project without Redis must keep array.
 services:
   app:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      CACHE_DRIVER: ${CACHE_DRIVER:-redis}
     depends_on:
       redis:
         condition: service_healthy
@@ -14,6 +21,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      CACHE_DRIVER: ${CACHE_DRIVER:-redis}
     depends_on:
       redis:
         condition: service_healthy
