@@ -128,10 +128,11 @@ final class QueueWorkerScaffoldTest extends TestCase
         foreach (['docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.nats.yml', 'docker-compose.ollama.yml'] as $overlay) {
             preg_match_all('/^      ([A-Z_]+): "?([^"\n]+)"?$/m', self::section($this->service($overlay, 'app'), 'environment'), $m, PREG_SET_ORDER);
             foreach ($m as [, $key, $value]) {
-                $expected[] = "{$key}={$value}";
+                // ${CACHE_DRIVER:-redis}: compose takes the .env value or the default, and so does the worker.
+                $expected[] = $key . '=' . preg_replace('/^\$\{[A-Z_]+:-(.*)\}$/', '$1', $value);
             }
         }
-        self::assertCount(6, $expected, 'DB_HOST, DB_PORT, REDIS_HOST, REDIS_PORT, NATS_PRIMARY_URL, LLM_BASE_URL');
+        self::assertCount(7, $expected, 'DB_HOST, DB_PORT, REDIS_HOST, REDIS_PORT, CACHE_DRIVER, NATS_PRIMARY_URL, LLM_BASE_URL');
         $header = '# Written by bin/semitexa: the services the overlays give the app.';
 
         $this->shell('compose_write_worker_env', ['EVENTS_ASYNC' => '1', 'DB_DRIVER' => 'mysql', 'REDIS_HOST' => 'redis', 'LLM_PROVIDER' => 'ollama']);

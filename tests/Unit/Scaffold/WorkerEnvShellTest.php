@@ -45,6 +45,31 @@ final class WorkerEnvShellTest extends TestCase
         );
     }
 
+    /**
+     * REGRESSION (review). The worker takes the cache the app gets through the Redis overlay:
+     * .env first, then the caller's own CACHE_DRIVER, then redis.
+     *
+     * @return iterable<string, array{string, array<string, string>, string}>
+     */
+    public static function cacheDrivers(): iterable
+    {
+        yield '.env wins over the caller' => ["CACHE_DRIVER=array\n", ['CACHE_DRIVER' => 'redis'], 'array'];
+        yield 'the caller, when .env says nothing' => ['', ['CACHE_DRIVER' => 'array'], 'array'];
+        yield 'redis, when nobody says' => ['', [], 'redis'];
+    }
+
+    /** @param array<string, string> $caller */
+    #[Test]
+    #[\PHPUnit\Framework\Attributes\DataProvider('cacheDrivers')]
+    public function the_worker_gets_the_cache_the_app_gets(string $env, array $caller, string $driver): void
+    {
+        touch($this->root . '/docker-compose.redis.yml');
+        file_put_contents($this->root . '/.env', "REDIS_HOST=redis\n" . $env);
+
+        self::assertSame([0, []], $this->write($caller));
+        self::assertStringContainsString("\nCACHE_DRIVER={$driver}\n", (string) file_get_contents($this->root . '/var/run/worker.env'));
+    }
+
     #[Test]
     public function a_file_it_cannot_replace_is_said_and_fails(): void
     {
@@ -129,8 +154,11 @@ final class WorkerEnvShellTest extends TestCase
         return [(int) substr($last, strlen('status=')), $lines, $ran];
     }
 
-    /** @return array{int, list<string>} the exit status and what it said, one line each */
-    private function write(): array
+    /**
+     * @param array<string, string> $caller what the caller exported
+     * @return array{int, list<string>} the exit status and what it said, one line each
+     */
+    private function write(array $caller = []): array
     {
         $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
         preg_match_all('/^(env_val|compose_write_worker_env)\(\) \{\n.*?^\}$/ms', $script, $m);
@@ -140,8 +168,9 @@ final class WorkerEnvShellTest extends TestCase
             . 'env_merged_lines(){ cat "$PROJECT_ROOT/.env"; }' . "\n"
             . implode("\n", $m[0]) . "\ncompose_write_worker_env; echo \"status=\$?\"";
         $out = (string) shell_exec(sprintf(
-            'env -i PATH=/usr/bin:/bin PROJECT_ROOT=%s sh -c %s 2>&1',
+            'env -i PATH=/usr/bin:/bin PROJECT_ROOT=%s%s sh -c %s 2>&1',
             escapeshellarg($this->root),
+            implode('', array_map(static fn (string $k, string $v): string => ' ' . $k . '=' . escapeshellarg($v), array_keys($caller), $caller)),
             escapeshellarg($sh),
         ));
         $lines = array_values(array_filter(explode("\n", $out), static fn (string $line): bool => $line !== ''));
