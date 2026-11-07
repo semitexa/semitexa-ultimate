@@ -19,7 +19,7 @@ use PHPUnit\Framework\TestCase;
 final class EnvValueShellTest extends TestCase
 {
     private const PARSER = <<<'SH'
-        sed -e 's/^"\(\([^"]*[^"\\]\)\{0,1\}\)"[[:space:]]\{1,\}#.*$/\1/' -e t -e 's/^"\(.*\)"$/\1/' -e t -e "s/^'\([^']*\)'[[:space:]]\{1,\}#.*\$/\1/" -e t -e "s/^'\(.*\)'\$/\1/" -e t -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//'
+        sed -e 's/^"\(\([^"]*[^"\\]\)\{0,1\}\)"[[:space:]]\{1,\}#.*$/\1/' -e t -e 's/^"\(.*\)"$/\1/' -e t -e '/^"/b' -e "s/^'\([^']*\)'[[:space:]]\{1,\}#.*\$/\1/" -e t -e "s/^'\(.*\)'\$/\1/" -e t -e "/^'/b" -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//'
         SH;
 
     /** @return iterable<string, array{string, string}> */
@@ -37,6 +37,11 @@ final class EnvValueShellTest extends TestCase
         // the parser before this one gave, which a MySQL volume may have been set up with.
         yield 'an escaped quote before a hash' => ['K="abc\\" #suffix"', 'abc\\" #suffix'];
         yield 'an empty quoted value is no value' => ['K="" # none', 'fallback'];
+        // REGRESSION (review): a quoted line neither quote rule takes is left whole, as before
+        // comments were read at all; cutting it at its first ` #` kept the quote and lost the rest.
+        yield 'an escaped backslash before the closing quote' => ['K="a\\\\" # c', '"a\\\\" # c'];
+        yield 'an escaped quote inside, then a comment' => ['K="x\\" # y" # z', '"x\\" # y" # z'];
+        yield 'text after a single-quoted value' => ["K='a'b # c", "'a'b # c"];
     }
 
     #[Test]
