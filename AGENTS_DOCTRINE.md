@@ -143,14 +143,16 @@ The agent never creates a duplicate without operator override (option [b] chosen
 ### Idea → Epic → Tasks → Execution lifecycle
 
 ```
-idea (not stored)
+thought (not stored)
   └─► epic (status=new, no tasks)           ← CAPTURE save
-        └─► epic + tasks (status=new)       ← decompose
-              └─► epic + tasks (in_progress)← execute
-                    └─► epic (done)         ← close
+        └─► epic + tasks: ideas             ← decompose, or a spec cut into tasks
+              └─► tasks approved            ← the operator's yes (ai:work:approve)
+                    └─► tasks in_progress   ← execute
+                          └─► done, proven  ← a test proves it
+                                └─► epic (done)  ← close
 ```
 
-Transitions always require operator confirmation. The agent offers; the operator commits.
+Approval is the operator's: the agent offers, the operator commits. Once a task is approved it needs no further yes: "make it" takes it through to done. Closing an epic stays the operator's. A task is an idea until approved, and an idea counts for nothing in `ai:state`. Bugs, and tickets filed under right or fast, skip that step: they are found, not proposed.
 
 ---
 
