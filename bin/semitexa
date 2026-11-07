@@ -325,7 +325,7 @@ compose_write_worker_env() {
             echo "DB_HOST=mysql"; echo "DB_PORT=3306"
         fi
         if [ -f "$PROJECT_ROOT/docker-compose.redis.yml" ] && [ -n "$(env_val REDIS_HOST "")" ]; then
-            echo "REDIS_HOST=redis"; echo "REDIS_PORT=6379"
+            echo "REDIS_HOST=redis"; echo "REDIS_PORT=6379"; echo "CACHE_DRIVER=$(env_val CACHE_DRIVER redis)"
         fi
         if [ -f "$PROJECT_ROOT/docker-compose.nats.yml" ]; then
             case "$(env_val EVENTS_ASYNC 0)" in 1|true|yes) echo "NATS_PRIMARY_URL=nats://nats:4222" ;; esac
