@@ -3583,6 +3583,7 @@ cmd_ai_verify() {
         fi
         if [ -n "$_vpages" ]; then
             info "Opening the changed pages in light and dark on the host" >&2
+            _vpages_run=0
             (
                 env_export_compose_context
                 # shellcheck disable=SC2086
@@ -3590,8 +3591,14 @@ cmd_ai_verify() {
                     -e PAGE_CHECK_PAGES="$_vpages" \
                     -e PAGE_CHECK_OUT="/var/www/html/var/run/verify-e2e/$_vrun/pages" \
                     e2e-runner npx --no-install playwright test --config="$_vpcfg"
-            ) > "$_vdir/pages.log" 2>&1 < /dev/null || true
-            [ -d "$_vdir/pages" ] || printf '%s\n' "the page check filed nothing; its log is var/run/verify-e2e/$_vrun/pages.log" > "$_vdir/pages.txt"
+            ) > "$_vdir/pages.log" 2>&1 < /dev/null || _vpages_run=$?
+            # A page's finding exits non-zero too: what counts is whether any page was filed.
+            # The spec makes pages/ before it opens anything, so the directory proves nothing.
+            if ! ls "$_vdir/pages/"*.json >/dev/null 2>&1; then
+                printf '%s\n' "the page check exited $_vpages_run and filed no page; its log is var/run/verify-e2e/$_vrun/pages.log" > "$_vdir/pages.txt"
+            fi
+        elif [ "$_vpages_rc" -eq 0 ] && [ -f "$PROJECT_ROOT/$_vpcfg" ]; then
+            printf '%s\n' "ai:verify --list-pages named no page: no public GET route with no parameter shows this change" > "$_vdir/pages.txt"
         fi
     fi
 
