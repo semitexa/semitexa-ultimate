@@ -3491,6 +3491,10 @@ test_compose_overlays() {
 # (E2eSpecResultCheck); a spec with no result there stays incomplete, and
 # host.txt says why when nothing ran.
 cmd_ai_verify() {
+    # A list is an answer, not a run: nothing is opened for it.
+    for _varg in "$@"; do
+        case "$_varg" in --list-e2e|--list-pages) cmd_proxy ai:verify "$@"; return $? ;; esac
+    done
     _vrun="$(date +%s)-$$"
     _vdir="$PROJECT_ROOT/var/run/verify-e2e/$_vrun"
     SEMITEXA_VERIFY_E2E_RUN="$_vrun"
@@ -3559,6 +3563,36 @@ cmd_ai_verify() {
         done
         set +f
         IFS="$_vifs"
+
+        # The pages a changed template or stylesheet shows on (ai:verify --list-pages),
+        # opened in light and dark by the page check semitexa/dev ships. Filed under
+        # pages/ for PageCheckResult; pages.txt says why when nothing was opened.
+        _vpcfg="vendor/semitexa/dev/resources/page-check/playwright.config.ts"
+        _vpages=""
+        _vpages_rc=0
+        if [ ! -f "$PROJECT_ROOT/$_vpcfg" ]; then
+            printf '%s\n' "this semitexa/dev has no page check ($_vpcfg is missing)" > "$_vdir/pages.txt"
+        elif [ -n "$_vstdin" ]; then
+            _vpages="$(run_compose exec -T $(agent_env_args) app php vendor/bin/semitexa ai:verify "$@" --list-pages < "$_vstdin" 2>/dev/null)" || _vpages_rc=$?
+        else
+            _vpages="$(run_compose exec -T $(agent_env_args) app php vendor/bin/semitexa ai:verify "$@" --list-pages < /dev/null 2>/dev/null)" || _vpages_rc=$?
+        fi
+        if [ "$_vpages_rc" -ne 0 ]; then
+            printf '%s\n' "asking the app which pages to open failed (ai:verify --list-pages exited $_vpages_rc)" > "$_vdir/pages.txt"
+            _vpages=""
+        fi
+        if [ -n "$_vpages" ]; then
+            info "Opening the changed pages in light and dark on the host" >&2
+            (
+                env_export_compose_context
+                # shellcheck disable=SC2086
+                $_vcompose $_voverlays run --rm --no-deps -T \
+                    -e PAGE_CHECK_PAGES="$_vpages" \
+                    -e PAGE_CHECK_OUT="/var/www/html/var/run/verify-e2e/$_vrun/pages" \
+                    e2e-runner npx --no-install playwright test --config="$_vpcfg"
+            ) > "$_vdir/pages.log" 2>&1 < /dev/null || true
+            [ -d "$_vdir/pages" ] || printf '%s\n' "the page check filed nothing; its log is var/run/verify-e2e/$_vrun/pages.log" > "$_vdir/pages.txt"
+        fi
     fi
 
     if [ -n "$_vstdin" ]; then
