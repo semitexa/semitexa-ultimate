@@ -28,8 +28,10 @@ final class InstallerCheckoutTestsStayOutOfTheArchiveTest extends TestCase
             if (!$file instanceof \SplFileInfo || $file->getExtension() !== 'php' || $file->getPathname() === __FILE__) {
                 continue;
             }
-            // A path joined onto a directory: a workflow expression naming the repository reads nothing.
-            if (preg_match("#\\.\\s*'/semitexa-installer#", (string) file_get_contents($file->getPathname())) !== 1) {
+            $source = file_get_contents($file->getPathname());
+            self::assertIsString($source, "{$file->getPathname()} could not be read, so it was not checked");
+            // A path joined onto a directory, in either quotes: a workflow expression naming the repository reads nothing.
+            if (preg_match("#\\.\\s*['\"]/semitexa-installer#", $source) !== 1) {
                 continue;
             }
             ++$needing;
