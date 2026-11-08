@@ -37,5 +37,7 @@ final class InstallerCheckoutTestsStayOutOfTheArchiveTest extends TestCase
             self::assertMatchesRegularExpression('#^' . preg_quote($relative, '#') . '\s+export-ignore$#m', $attributes, "{$relative} reads the installer checkout and would ship to every new project");
         }
         self::assertGreaterThan(0, $needing, 'the scan found the tests it guards');
+        // The guard is a maintainer gate too: in a new project the tests it guards are not there.
+        self::assertMatchesRegularExpression('#^' . preg_quote(substr(__FILE__, strlen($root)), '#') . '\s+export-ignore$#m', $attributes);
     }
 }

@@ -5,3 +5,4 @@
 # stack smoke are git checkouts and still run it.
 /tests/Unit/Scaffold/RuntimeScaffoldConsistencyTest.php export-ignore
 /tests/Unit/Scaffold/InstallerGivesTheE2eRunnerTest.php export-ignore
+/tests/Unit/Scaffold/InstallerCheckoutTestsStayOutOfTheArchiveTest.php export-ignore
