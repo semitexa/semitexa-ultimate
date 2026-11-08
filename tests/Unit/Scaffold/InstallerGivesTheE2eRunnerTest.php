@@ -127,7 +127,8 @@ final class InstallerGivesTheE2eRunnerTest extends TestCase
         mkdir($project . '/src/modules/Empty/tests/E2E', 0o755, true);
         try {
             self::assertSame(1, preg_match('/^discover_e2e_dirs\(\) \{\n.*?^\}$/ms', (string) file_get_contents($root . '/bin/semitexa'), $m));
-            $out = (string) shell_exec(sprintf('env -i PATH=/usr/bin:/bin PROJECT_ROOT=%s sh -c %s 2>&1', escapeshellarg($project), escapeshellarg($m[0] . "\ndiscover_e2e_dirs")));
+            // The host's PATH: find may live outside /usr/bin:/bin, and a missing one prints nothing.
+            $out = (string) shell_exec(sprintf('env -i PATH=%s PROJECT_ROOT=%s sh -c %s 2>&1', escapeshellarg((string) getenv('PATH') ?: '/usr/bin:/bin'), escapeshellarg($project), escapeshellarg($m[0] . "\ndiscover_e2e_dirs")));
             self::assertSame("src/modules/Probe/tests/E2E\n", $out);
         } finally {
             exec('rm -rf ' . escapeshellarg($project));
