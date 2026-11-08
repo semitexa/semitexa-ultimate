@@ -3491,9 +3491,16 @@ test_compose_overlays() {
 # (E2eSpecResultCheck); a spec with no result there stays incomplete, and
 # host.txt says why when nothing ran.
 cmd_ai_verify() {
-    # A list is an answer, not a run: nothing is opened for it.
+    # A list is an answer, not a run: nothing is opened for it. One path per line on
+    # stdout and nothing else: the proxy's own notes go to stderr (review update#77).
     for _varg in "$@"; do
-        case "$_varg" in --list-e2e|--list-pages) cmd_proxy ai:verify "$@"; return $? ;; esac
+        case "$_varg" in --list-e2e|--list-pages)
+            (
+                info() { printf "%s[INFO]%s  %s\n" "$C_CYAN" "$C_RESET" "$*" >&2; }
+                cmd_proxy ai:verify "$@"
+            )
+            return $? ;;
+        esac
     done
     _vrun="$(date +%s)-$$"
     _vdir="$PROJECT_ROOT/var/run/verify-e2e/$_vrun"
