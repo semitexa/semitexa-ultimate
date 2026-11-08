@@ -3492,14 +3492,16 @@ test_compose_overlays() {
 # host.txt says why when nothing ran.
 cmd_ai_verify() {
     # A list is an answer, not a run: nothing is opened for it. One path per line on
-    # stdout and nothing else: the proxy's own notes go to stderr (review update#77).
+    # stdout and nothing else: the proxy's own notes go to stderr (review update#77), and
+    # the blank lines its port-conflict advice prints are dropped from the list.
     for _varg in "$@"; do
         case "$_varg" in --list-e2e|--list-pages)
-            (
+            _vlist="$(
                 info() { printf "%s[INFO]%s  %s\n" "$C_CYAN" "$C_RESET" "$*" >&2; }
                 cmd_proxy ai:verify "$@"
-            )
-            return $? ;;
+            )" || _vlist_rc=$?
+            printf '%s\n' "$_vlist" | grep -v '^[[:space:]]*$' || true
+            return "${_vlist_rc:-0}" ;;
         esac
     done
     _vrun="$(date +%s)-$$"
