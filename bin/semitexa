@@ -1181,8 +1181,12 @@ services:
     image: nginx:alpine
     container_name: semitexa-router-proxy
     restart: unless-stopped
+    # This machine only, as the DNS above: *.test resolves to 127.0.0.1 and
+    # nowhere else, so nobody else ever reaches the router by name. On 0.0.0.0
+    # anyone on the network could send any registered Host to port 80 and be
+    # proxied into that project's dev stack.
     ports:
-      - "80:80"
+      - "127.0.0.1:80:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -1305,8 +1309,67 @@ router_apply_name_resolution() {
     esac
 }
 
+# The addresses the running router proxy publishes port 80 on, space-separated;
+# nothing when it is not running or docker is not here.
+router_proxy_published() {
+    command -v docker >/dev/null 2>&1 || return 0
+    docker port semitexa-router-proxy 80/tcp 2>/dev/null | sed 's/:[0-9]*$//' | tr '\n' ' ' | sed 's/ *$//'
+}
+
+# The router workspace is shared by every project on the machine, and each
+# project's own bin/semitexa renders it. One with a script from before
+# 2026-11-09 writes "80:80" and reopens the router to the network whenever it
+# starts it. This script cannot stop that, so it says so and rebinds: start and
+# restart run it before `up -d`, doctor reports it. Returns 1 when public.
+router_warn_if_public() {
+    _published="$(router_proxy_published)"
+    _public=''
+    _rc=0
+    # Loopback is the only local-only answer. Anything else - 0.0.0.0, [::],
+    # or one LAN address such as 192.168.1.100 - is reachable from others.
+    for _address in $_published; do
+        case "$_address" in
+            127.*|'[::1]'|::1) ;;
+            *) _public="${_public:+$_public }$_address" ;;
+        esac
+    done
+    if [ -n "$_public" ]; then
+        warn "The shared local router answers beyond this machine ($_public), not only on 127.0.0.1."
+        warn "A Semitexa project with an older bin/semitexa reopens it whenever it starts the router: run 'bin/semitexa update' in each of your projects."
+        _rc=1
+    fi
+    # Before Docker Engine 28 a port published on 127.0.0.1 is still reachable
+    # from a host on the same network segment (fixed in 28.0, see the Docker
+    # port-publishing docs), so loopback there is not this machine only either.
+    # Checked whether or not the address was public: a rebind to 127.0.0.1
+    # does not close it.
+    [ -n "$_published" ] || return "$_rc"
+    _engine="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+    case "$_engine" in
+        ''|2[8-9].*|[3-9][0-9].*|[1-9][0-9][0-9]*) ;;
+        *)
+            warn "Docker Engine $_engine does not keep a port published on 127.0.0.1 from hosts on the same network; 28.0 does."
+            warn "The router is reachable from your network segment until Docker is upgraded."
+            [ "$_rc" -eq 1 ] || _rc=2
+            ;;
+    esac
+    # 0: this machine only. 1: published beyond it, which a rebind to 127.0.0.1
+    # fixes. 2: loopback, on an engine that does not enforce it.
+    return "$_rc"
+}
+
+# start and restart rebind (up -d with the rendered 127.0.0.1 port), so they
+# say so; doctor only reports.
+router_check_before_rebind() {
+    _check=0
+    router_warn_if_public || _check=$?
+    [ "$_check" -ne 1 ] || info "Rebinding it to 127.0.0.1."
+    return 0
+}
+
 router_start_for_mode() {
     _mode="$(router_mode_get)"
+    router_check_before_rebind
     router_render
     case "$_mode" in
         dns)
@@ -1355,13 +1418,20 @@ cmd_local_router_stop() {
 cmd_local_router_restart() {
     printf "\n%s%s Semitexa — Shared Local Router Restart %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
     cmd_local_router_init >/dev/null
+    router_check_before_rebind
     router_render
     _mode="$(router_mode_get)"
+    # up -d first: `restart` keeps a container's old configuration, so a
+    # rendered compose with new ports (127.0.0.1:80, 2026-11-09) never reached
+    # the running router. up -d recreates what changed; restart then reloads
+    # the nginx and dnsmasq files the containers mount.
     case "$_mode" in
         dns)
+            router_compose up -d dns proxy
             router_compose restart dns proxy
             ;;
         hosts)
+            router_compose up -d proxy
             router_compose restart proxy
             ;;
     esac
@@ -1385,6 +1455,18 @@ cmd_local_router_doctor() {
     if [ -f "$ROUTER_COMPOSE" ]; then
         printf "\n"
         router_compose ps || true
+    fi
+    if [ -n "$(router_proxy_published)" ]; then
+        _check=0
+        router_warn_if_public || _check=$?
+        case "$_check" in
+            # What was checked, not a network boundary: a host routed to the
+            # Docker bridge (allow-direct-routing) reaches the container itself.
+            0) success "The router proxy is published on loopback only ($(router_proxy_published))." ;;
+            1) info "Fix: bin/semitexa local-router:restart, after updating the older projects." ;;
+            # A restart rebinds to 127.0.0.1, which this engine does not keep local.
+            *) info "Fix: upgrade Docker Engine to 28 or later; a restart does not close this." ;;
+        esac
     fi
 
     printf "\n"
