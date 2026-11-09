@@ -23,7 +23,7 @@ final class SwoolePinnedTest extends TestCase
         $dockerfile = (string) file_get_contents(dirname(__DIR__, 3) . '/Dockerfile');
 
         self::assertSame(1, preg_match('/^ARG SWOOLE_VERSION=(\S+)$/m', $dockerfile, $m), 'Dockerfile must declare ARG SWOOLE_VERSION');
-        self::assertSame('6.2.3', $m[1]);
+        self::assertSame('6.2.5', $m[1]);
         self::assertStringContainsString('pecl install --nobuild swoole-"${SWOOLE_VERSION}"', $dockerfile);
         self::assertStringNotContainsString('pecl install --nobuild swoole \\', $dockerfile, 'an unpinned install takes whatever PECL serves that day');
     }
