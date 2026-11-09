@@ -29,9 +29,11 @@ ARG IMAGICK_VERSION=3.8.1
 # Swoole at the version the HTTP client was tested on. Unpinned, a rebuild on
 # 2026-10-29 took 6.2.4, whose curl hook inflates a gzip answer in memory
 # before the client's write callback sees it: the decompression-bomb cap
-# stopped nothing. Raise it only with CurlHttpClientCoroutineTest green on the
-# new version (ultimate's SwoolePinnedTest holds the number).
-ARG SWOOLE_VERSION=6.2.3
+# stopped nothing. Since then CurlHttpClient turns the hook's body_decompression
+# off (core#195), and 6.2.5 passes CurlHttpClientCoroutineTest with it and fails
+# without it. Raise it only with that test green on the new version (ultimate's
+# SwoolePinnedTest holds the number).
+ARG SWOOLE_VERSION=6.2.5
 
 # bash, on an image whose default shell is BusyBox ash: semitexa/update ships
 # its deploy tooling as bash scripts (tools/run-auto-deploy-systemd.sh and its
