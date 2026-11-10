@@ -81,3 +81,4 @@ docker-compose.override.yml
 # SSH state of update:packages:bootstrap-remote, and keys put in the project
 .ssh/
 var/ssh/
+var/e2e/

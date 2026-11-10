@@ -3184,18 +3184,37 @@ ${_url_clean}/tests"
         exit 1
     fi
 
-    _app_rc=0
-    (
-        env_export_compose_context
-        # Bring up the application so the E2E runner has a target. depends_on
-        # in the compose service handles the rest, but `up -d app` is explicit
-        # and makes the failure mode obvious if app cannot start.
-        # shellcheck disable=SC2086
-        $_compose $_overlays up -d app
-    ) || _app_rc=$?
-    if [ "$_app_rc" -ne 0 ]; then
-        error "Failed to start app service for E2E phase (exit $_app_rc)."
-        exit "$_app_rc"
+    # The phase's own app, on its own database, when this project can have one;
+    # otherwise the developer's app, said out loud (it writes into the live DB).
+    _e2e_isolated=''
+    _e2e_why="$(e2e_isolation_unavailable "$_compose" "$_overlays" || true)"
+    if [ -z "$_e2e_why" ]; then
+        e2e_database_reset "$_compose" "$_overlays" || exit 1
+        # Removed on every way out from here: a failed step, Ctrl-C or a kill,
+        # the 90 s the app takes to answer included (review, ultimate#135).
+        _e2e_cleanup="$(e2e_container_name)"
+        # shellcheck disable=SC2064
+        trap "docker rm -f '$_e2e_cleanup' >/dev/null 2>&1 || true" EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        e2e_app_start "$_compose" "$_overlays" || exit 1
+        _e2e_isolated="$E2E_APP_CONTAINER"
+        info "E2E runs on its own app ($_e2e_isolated) and database ($(e2e_db_name)), not the one you work in."
+    else
+        warn "E2E runs against your running app and writes into its database: $_e2e_why."
+        _app_rc=0
+        (
+            env_export_compose_context
+            # Bring up the application so the E2E runner has a target. depends_on
+            # in the compose service handles the rest, but `up -d app` is explicit
+            # and makes the failure mode obvious if app cannot start.
+            # shellcheck disable=SC2086
+            $_compose $_overlays up -d app
+        ) || _app_rc=$?
+        if [ "$_app_rc" -ne 0 ]; then
+            error "Failed to start app service for E2E phase (exit $_app_rc)."
+            exit "$_app_rc"
+        fi
     fi
 
     # Discovery is the single source of truth for WHICH specs run: the
@@ -3207,13 +3226,33 @@ ${_url_clean}/tests"
     # The runner writes test-results as the host user now; a directory an
     # earlier root run left behind would refuse it (EACCES on .last-run.json).
     project_ownership_reclaim || exit 1
-    e2e_runner_preflight "$_compose" "$_overlays" || exit 1
+    # On its own app, the runner is checked in that app's network namespace too:
+    # with no developer app running, the plain file set cannot start it at all,
+    # and a check that could not run lets the phase go on (review, installer#79).
+    _e2e_runner_overlays="$_overlays"
+    if [ -n "$_e2e_isolated" ]; then
+        SEMITEXA_E2E_APP_CONTAINER="$_e2e_isolated"
+        export SEMITEXA_E2E_APP_CONTAINER
+        _e2e_runner_overlays="$_overlays -f docker-compose.e2e.yml"
+    fi
+    e2e_runner_preflight "$_compose" "$_e2e_runner_overlays" || exit 1
     _e2e_rc=0
-    (
-        env_export_compose_context
-        # shellcheck disable=SC2086
-        $_compose $_overlays run --rm e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args
-    ) || _e2e_rc=$?
+    if [ -n "$_e2e_isolated" ]; then
+        (
+            env_export_compose_context
+            # The runner joins the E2E app's network namespace (docker-compose.e2e.yml);
+            # --no-deps: the developer's app is not this run's target.
+            # shellcheck disable=SC2086
+            $_compose $_e2e_runner_overlays run --rm --no-deps e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args
+        ) || _e2e_rc=$?
+        docker rm -f "$_e2e_isolated" >/dev/null 2>&1 || true
+    else
+        (
+            env_export_compose_context
+            # shellcheck disable=SC2086
+            $_compose $_overlays run --rm e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args
+        ) || _e2e_rc=$?
+    fi
 
     if [ "$_e2e_rc" -ne 0 ]; then
         printf "\n"
@@ -3653,6 +3692,177 @@ e2e_runner_preflight() {
     [ "$_e2e_missing_rc" -eq 3 ] || return 0
     error "The e2e-runner image lacks: $_e2e_missing (its Dockerfile installs them; the image was built without)."
     info "Rebuild it, then run again: $1 $2 build --no-cache e2e-runner"
+    return 1
+}
+
+# The E2E phase's own app (tk-e2e-own-database). The runner drove the
+# developer's running app, so a run's specs wrote into the database the
+# developer works in (a live run left 67 guestbook rows there, 07.11). The
+# phase now starts the app service once more, as a container of its own: it
+# inherits every overlay's env, volumes and command (a service declared in a
+# file of its own could not see what the mysql/redis/nats files add to app),
+# publishes no port, and gets its own database, runtime dirs under var/ (pid,
+# runtime build, caches, locks, logs), cache namespace and NATS queue and
+# event namespace. The
+# runner joins its network namespace through docker-compose.e2e.yml.
+# A database name as Compose hands it to MySQL: .env wins over the caller, as
+# ensure_test_database() resolves the user. An exported stale DB_DATABASE must
+# not make the guard check one name and the copy read another.
+#   $1 variable   $2 default
+e2e_compose_val() {
+    ( env_export_compose_context >/dev/null 2>&1; eval "printf '%s' \"\${$1:-$2}\"" )
+}
+
+e2e_db_name() {
+    _e2e_db="$(e2e_compose_val DB_E2E_DATABASE semitexa_e2e)"
+    printf '%s' "${_e2e_db:-semitexa_e2e}"
+}
+
+# Why the phase cannot run on its own app here, or nothing when it can.
+#   $1 compose binary   $2 compose -f arguments
+e2e_isolation_unavailable() {
+    case " $2 " in *docker-compose.mysql.yml*) ;; *) printf '%s' "the project runs no bundled MySQL to make the E2E database on"; return 0 ;; esac
+    [ -f "$PROJECT_ROOT/docker-compose.e2e.yml" ] || { printf '%s' "docker-compose.e2e.yml is missing (bin/semitexa update brings it)"; return 0; }
+    _e2e_live="$(e2e_compose_val DB_DATABASE semitexa)"
+    _e2e_test="$(e2e_compose_val DB_TEST_DATABASE semitexa_test)"
+    _e2e_name="$(e2e_db_name)"
+    case "$_e2e_name" in
+        "$_e2e_live"|"$_e2e_test"|mysql|sys|information_schema|performance_schema)
+            printf '%s' "DB_E2E_DATABASE '$_e2e_name' is the live, the test or a MySQL system database"
+            return 0 ;;
+    esac
+    case "$(e2e_db_mode)" in
+        copy|clean) ;;
+        *) printf '%s' "SEMITEXA_E2E_DB '$(e2e_db_mode)' is neither copy nor clean"; return 0 ;;
+    esac
+    if printf '%s\n' "$_e2e_name" | grep -Eq '[^A-Za-z0-9_]'; then
+        printf '%s' "DB_E2E_DATABASE '$_e2e_name' is not a plain identifier"
+        return 0
+    fi
+    # Seeding needs update --no-scaffold (semitexa/update after 2026.11.10.0849):
+    # without it the sweep would rewrite the project's scaffold files.
+    # shellcheck disable=SC2086
+    if ! ( env_export_compose_context; $1 $2 run --rm --no-deps -T app php vendor/bin/semitexa update --help 2>/dev/null < /dev/null ) | grep -q -- '--no-scaffold'; then
+        printf '%s' "this project's semitexa/update has no --no-scaffold yet (bin/semitexa update brings it)"
+        return 0
+    fi
+    return 1
+}
+
+# The runtime state two servers from one checkout would fight over: the pid
+# and worker env (run), the build marker (runtime), compiled caches, locks,
+# logs, temp files. Only these get a directory of their own under var/e2e;
+# the rest of var/ (storage and uploads, evidence, the project graph) is the
+# project's data, which the copied database's rows point at, and stays shared:
+# with all of var/ swapped, media, the evidence view and the graph had nothing.
+E2E_RUNTIME_DIRS="run runtime cache lock log tmp"
+
+# The env and mounts the E2E app and its seeding run share.
+e2e_app_args() {
+    _e2e_args="-e DB_DATABASE=$(e2e_db_name) -e CACHE_ENV=e2e -e NATS_QUEUE_STREAM=QUEUE_E2E -e NATS_QUEUE_SUBJECT_PREFIX=e2e.queue. -e LEDGER_STREAM=EVENTS_E2E -e LEDGER_SUBJECT_PREFIX=e2e.events"
+    for _e2e_dir in $E2E_RUNTIME_DIRS; do
+        # Relative: the script runs from PROJECT_ROOT, and a path with a space
+        # in it would split here.
+        _e2e_args="$_e2e_args -v ./var/e2e/$_e2e_dir:/var/www/html/var/$_e2e_dir"
+    done
+    printf '%s' "$_e2e_args"
+}
+
+# How the E2E database is filled: copy (default) or clean.
+#   copy   a snapshot of the live database, then the schema and data patches:
+#          38 specs today read data a developer's database grew through use
+#          (pings, leads, CMS users, media rows) and no seed or patch makes;
+#          the run writes into the copy, never into the live one.
+#   clean  the schema and data patches alone: what a spec that sets up its
+#          own data needs, and the target (tk-e2e-specs-own-their-data).
+e2e_db_mode() {
+    _e2e_mode="${SEMITEXA_E2E_DB:-$(env_val SEMITEXA_E2E_DB copy)}"
+    printf '%s' "${_e2e_mode:-copy}"
+}
+
+# Outbound work a copy would carry: a job, mail or webhook copied from the
+# live database must not be sent again by the E2E app's workers.
+E2E_TRUNCATE_TABLES="queue_messages mail_messages mail_attempts webhook_outbox webhook_attempts webhook_inbox replication_outbox replication_outbox_dead scheduler_locks platform_user_password_reset"
+
+# A fresh E2E database every run: dropped, made again, filled as e2e_db_mode
+# says, then the schema and data patches (update --no-composer --no-scaffold
+# writes no project file).
+#   $1 compose binary   $2 compose -f arguments
+e2e_database_reset() {
+    _e2e_name="$(e2e_db_name)"
+    _e2e_live="$(e2e_compose_val DB_DATABASE semitexa)"
+    # shellcheck disable=SC2086
+    ( env_export_compose_context; $1 $2 exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e 'DROP DATABASE IF EXISTS $_e2e_name;'" >/dev/null 2>&1 < /dev/null ) \
+        || { error "Could not drop the E2E database '$_e2e_name'."; return 1; }
+    ensure_test_database "$1" "$2" "$_e2e_name"
+    # ensure_test_database warns and returns 0 when it cannot create one: ask MySQL.
+    # shellcheck disable=SC2086
+    ( env_export_compose_context; $1 $2 exec -T mysql sh -c "mysql -N -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e \"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$_e2e_name'\"" 2>/dev/null < /dev/null ) | grep -qx "$_e2e_name" \
+        || { error "The E2E database '$_e2e_name' does not exist after creating it."; return 1; }
+    for _e2e_dir in $E2E_RUNTIME_DIRS; do mkdir -p "$PROJECT_ROOT/var/e2e/$_e2e_dir"; done
+    if [ "$(e2e_db_mode)" = "copy" ]; then
+        info "E2E database '$_e2e_name': a copy of '$_e2e_live'..."
+        _e2e_t0="$(date +%s)"
+        # One consistent snapshot without locking the app (--single-transaction);
+        # no --databases, so no USE of the live schema reaches the import;
+        # DEFINER dropped, so a view or routine needs no user of the source.
+        # pipefail: a dump that fails part way is a failed copy, never a half one.
+        # shellcheck disable=SC2086
+        ( env_export_compose_context; $1 $2 exec -T mysql bash -o pipefail -c '
+            set -e
+            mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --quick --routines --triggers --events --set-gtid-purged=OFF --no-tablespaces "$1" 2>/tmp/e2e-dump.err \
+              | sed -E "s/DEFINER=\`[^\`]+\`@\`[^\`]+\`//g" \
+              | mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$2" 2>/tmp/e2e-import.err \
+              || { grep -v "Using a password" /tmp/e2e-dump.err /tmp/e2e-import.err >&2; exit 1; }
+            # A table left with its live outbound rows would be sent again: a
+            # TRUNCATE that fails fails the copy.
+            for t in $3; do
+              if mysql -N -uroot -p"$MYSQL_ROOT_PASSWORD" "$2" -e "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = \"$t\"" 2>/dev/null | grep -q 1; then
+                mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$2" -e "TRUNCATE TABLE \`$t\`" 2>/dev/null || { echo "TRUNCATE $t failed" >&2; exit 1; }
+              fi
+            done' _ "$_e2e_live" "$_e2e_name" "$E2E_TRUNCATE_TABLES" < /dev/null ) \
+            || { error "Copying '$_e2e_live' into the E2E database failed; the run would test a partial copy. Retry, or SEMITEXA_E2E_DB=clean."; return 1; }
+        info "Copied in $(( $(date +%s) - _e2e_t0 )) s; queued jobs, mail, webhooks and outboxes emptied."
+    fi
+    info "E2E database '$_e2e_name': schema and data patches..."
+    # shellcheck disable=SC2046,SC2086
+    ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) app php vendor/bin/semitexa update --no-composer --no-scaffold < /dev/null ) \
+        || { error "Seeding the E2E database '$_e2e_name' failed."; return 1; }
+}
+
+# The E2E app's container name: unique per checkout (two with one directory
+# name must not remove each other's app) and starting with a letter, as
+# Docker requires. Known before the app starts, so the cleanup trap can be
+# set first.
+e2e_container_name() {
+    printf '%s' "semitexa-e2e-$(basename "$PROJECT_ROOT" | tr -c 'a-zA-Z0-9_.\n-' '-')-$(printf '%s' "$PROJECT_ROOT" | cksum | cut -d' ' -f1)"
+}
+
+# Starts the E2E app and waits until it answers; sets E2E_APP_CONTAINER.
+# Runs in the caller's shell, not in $(...): a TERM then interrupts the wait
+# within a second (the trap runs as the current sleep or probe ends) instead
+# of once a command substitution returns (review, installer#80).
+#   $1 compose binary   $2 compose -f arguments
+e2e_app_start() {
+    E2E_APP_CONTAINER=
+    _e2e_container="$(e2e_container_name)"
+    docker rm -f "$_e2e_container" >/dev/null 2>&1 || true
+    # shellcheck disable=SC2046,SC2086
+    ( env_export_compose_context; $1 $2 run -d --no-deps --name "$_e2e_container" $(e2e_app_args) app >/dev/null < /dev/null ) \
+        || { error "Could not start the E2E app."; return 1; }
+    # As Compose resolves it (.env first), the port the app and the runner use (review, update#81).
+    _e2e_port="$(e2e_compose_val SWOOLE_PORT 9502)"
+    _e2e_try=0
+    while [ "$_e2e_try" -lt 90 ]; do
+        # Bounded: an app that takes the connection and never answers cannot hold the wait.
+        docker exec "$_e2e_container" curl -fsS --connect-timeout 1 --max-time 2 -o /dev/null "http://127.0.0.1:${_e2e_port}/" >/dev/null 2>&1 \
+            && { E2E_APP_CONTAINER="$_e2e_container"; return 0; }
+        _e2e_try=$((_e2e_try + 1))
+        sleep 1
+    done
+    error "The E2E app did not answer on port $_e2e_port within 90 s. Its last log lines:"
+    docker logs --tail 30 "$_e2e_container" >&2 2>&1 || true
+    docker rm -f "$_e2e_container" >/dev/null 2>&1 || true
     return 1
 }
 
