@@ -63,8 +63,9 @@ final class E2eRunnerPreflightTest extends TestCase
     #[Test]
     public function the_e2e_phase_checks_before_it_runs_playwright(): void
     {
-        $check = strpos($this->script, 'e2e_runner_preflight "$_compose" "$_overlays" || exit 1');
-        $run = strpos($this->script, 'run --rm e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args');
+        // On its own app the check runs with the E2E app's file set (tk-e2e-own-database).
+        $check = strpos($this->script, 'e2e_runner_preflight "$_compose" "$_e2e_runner_overlays" || exit 1');
+        $run = strpos($this->script, 'run --rm --no-deps e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args');
 
         self::assertNotFalse($check);
         self::assertNotFalse($run);
