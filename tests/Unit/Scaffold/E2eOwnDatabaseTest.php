@@ -38,7 +38,9 @@ final class E2eOwnDatabaseTest extends TestCase
     #[Test]
     public function the_phase_runs_on_its_own_app_where_it_can(): void
     {
-        self::assertSame('', $this->unavailable([]), 'mysql overlay, the e2e file and an update with --no-scaffold: isolated');
+        // Proven by the function's own "available" status, not by an empty output a
+        // harness that stopped early would give too (review, ultimate#135).
+        self::assertSame('AVAILABLE', $this->unavailable([], true), 'mysql overlay, the e2e file and an update with --no-scaffold: isolated');
     }
 
     #[Test]
@@ -88,15 +90,75 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertStringContainsString('does not exist after creating it', $reset);
 
         $phase = (string) strstr($this->script, "Phase 2/2 — E2E tests");
-        $start = strpos($phase, '_e2e_isolated="$(e2e_app_start');
+        // In the caller's shell, not $(...): a TERM interrupts the wait within a
+        // second instead of when a command substitution returns (review, installer#80).
+        $start = strpos($phase, 'e2e_app_start "$_compose" "$_overlays" || exit 1');
+        self::assertStringNotContainsString('$(e2e_app_start', $phase);
+        self::assertStringContainsString('curl -fsS --connect-timeout 1 --max-time 2', $this->function('e2e_app_start'), 'one probe cannot hang the wait');
         $trap = strpos($phase, 'trap "docker rm -f');
         $preflight = strpos($phase, 'e2e_runner_preflight "$_compose" "$_e2e_runner_overlays"');
         self::assertNotFalse($start);
         self::assertNotFalse($trap);
         self::assertNotFalse($preflight, 'the runner is checked in the E2E app namespace too');
-        self::assertLessThan($trap, $start);
-        self::assertLessThan($preflight, $trap, 'the trap is set before any later step can exit');
+        // Before the app starts (review, ultimate#135): Ctrl-C in the 90 s it takes
+        // to answer left its container running.
+        self::assertLessThan($start, $trap, 'the trap is set before the app starts');
+        self::assertLessThan($preflight, $start);
+        self::assertStringContainsString('_e2e_cleanup="$(e2e_container_name)"', $phase);
         self::assertStringContainsString('warn "E2E runs against your running app and writes into its database: $_e2e_why."', $phase);
+    }
+
+    #[Test]
+    public function a_term_while_the_app_has_not_answered_ends_the_wait_and_removes_the_container(): void
+    {
+        // Review, installer#80: a probe that never returns, and a TERM to the script.
+        // The phase's own lines run here, from the trap to the start.
+        $phase = (string) strstr($this->script, "Phase 2/2 — E2E tests");
+        self::assertSame(1, preg_match('/^(\s+_e2e_cleanup="\$\(e2e_container_name\)".*?^\s+e2e_app_start "\$_compose" "\$_overlays" \|\| exit 1\n)/ms', $phase, $block), 'the phase sets its trap, then starts the app');
+
+        $root = $this->root([], true);
+        $bin = $root . '/stub';
+        mkdir($bin);
+        $log = $root . '/docker.log';
+        // docker: logs every call. The readiness probe (exec ... curl) is an app that
+        // takes the connection and never answers: curl waits out its --max-time and
+        // gives up with 28, as the real one does; the call must carry that bound.
+        file_put_contents($bin . '/docker', "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> " . escapeshellarg($log) . "\ncase \"\$1\" in exec) case \"\$*\" in *'--max-time 2'*) sleep 2; exit 28 ;; *) exec sleep 60 ;; esac ;; esac\nexit 0\n");
+        file_put_contents($bin . '/compose', "#!/bin/sh\nexit 0\n");
+        chmod($bin . '/docker', 0755);
+        chmod($bin . '/compose', 0755);
+        preg_match_all('/^[a-z_][a-z0-9_]*\(\) \{\n.*?^\}\n/ms', $this->script, $all);
+        self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
+        $script = "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . $dirs[0] . "\nC_RED=''; C_RESET=''\n"
+            . implode('', $all[0])
+            . "_compose=" . escapeshellarg($bin . '/compose') . "; _overlays='-f docker-compose.yml'\n"
+            . $block[1] . "echo STARTED\n";
+        file_put_contents($root . '/harness.sh', $script);
+
+        $process = proc_open(['sh', $root . '/harness.sh'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, ['PATH' => $bin . ':/usr/bin:/bin', 'HOME' => $root]);
+        self::assertIsResource($process);
+        // Until the probe is hanging.
+        for ($i = 0; $i < 50 && !str_contains((string) @file_get_contents($log), 'exec'); $i++) {
+            usleep(100_000);
+        }
+        self::assertStringContainsString('exec', (string) @file_get_contents($log), 'the probe ran');
+        $sentAt = microtime(true);
+        proc_terminate($process, 15);
+        $status = proc_get_status($process);
+        while ($status['running'] && microtime(true) - $sentAt < 10) {
+            usleep(100_000);
+            $status = proc_get_status($process);
+        }
+        $stdout = (string) stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+
+        self::assertFalse($status['running'], 'a TERM ends the wait');
+        self::assertLessThan(5.0, microtime(true) - $sentAt, 'within the probe timeout, not the 90 s wait');
+        self::assertStringNotContainsString('STARTED', $stdout);
+        $calls = (string) file_get_contents($log);
+        self::assertMatchesRegularExpression('/^rm -f semitexa-e2e-\S+$/m', substr($calls, (int) strpos($calls, 'exec')), 'the container is removed after the TERM');
     }
 
     /**
@@ -104,7 +166,7 @@ final class E2eOwnDatabaseTest extends TestCase
      *
      * @param array{overlays?: string, e2eFile?: bool, updateHelp?: string, env?: array<string, string>, shell?: array<string, string>} $o
      */
-    private function unavailable(array $o): string
+    private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);
         $bin = $root . '/stub';
@@ -117,8 +179,9 @@ final class E2eOwnDatabaseTest extends TestCase
             $shell .= "{$k}=" . escapeshellarg($v) . "; export {$k}\n";
         }
 
-        $out = $this->sh($root, $shell
-            . "e2e_isolation_unavailable " . escapeshellarg($bin . '/compose') . ' ' . escapeshellarg($o['overlays'] ?? '-f docker-compose.yml -f docker-compose.mysql.yml -f docker-compose.test.yml') . "\n");
+        $call = "e2e_isolation_unavailable " . escapeshellarg($bin . '/compose') . ' ' . escapeshellarg($o['overlays'] ?? '-f docker-compose.yml -f docker-compose.mysql.yml -f docker-compose.test.yml');
+        // 1 with nothing said is "available"; a marker says it reached that return.
+        $out = $this->sh($root, $shell . ($status ? "if {$call}; then :; else echo AVAILABLE; fi\n" : $call . " || true\n"));
 
         return trim($out);
     }

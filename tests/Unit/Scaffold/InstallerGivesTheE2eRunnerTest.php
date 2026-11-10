@@ -46,6 +46,28 @@ final class InstallerGivesTheE2eRunnerTest extends TestCase
         }
     }
 
+    /**
+     * Every compose file the scaffold ships is copied by install.sh (review,
+     * ultimate#135): it copies file by file, and docker-compose.e2e.yml was
+     * left out, so a fresh project's E2E phase fell back to the developer's
+     * database. A list of the runner's files above could not see a new one.
+     */
+    public function test_every_compose_file_of_the_scaffold_is_copied(): void
+    {
+        $script = $this->script();
+        $compose = glob($this->installer() . '/scaffold/docker-compose*.yml') ?: [];
+        self::assertContains($this->installer() . '/scaffold/docker-compose.e2e.yml', $compose);
+
+        foreach ($compose as $path) {
+            $file = basename($path);
+            self::assertMatchesRegularExpression(
+                '#^cp /installer/scaffold/' . preg_quote($file, '#') . '[ \t]+/app/' . preg_quote($file, '#') . '[ \t]*$#m',
+                $script,
+                "{$file} ships in the scaffold but install.sh does not copy it",
+            );
+        }
+    }
+
     public function test_the_runner_directory_exists_before_its_dockerfile_is_copied(): void
     {
         $script = $this->script();
