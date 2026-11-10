@@ -129,7 +129,7 @@ final class E2eOwnDatabaseTest extends TestCase
         chmod($bin . '/compose', 0755);
         preg_match_all('/^[a-z_][a-z0-9_]*\(\) \{\n.*?^\}\n/ms', $this->script, $all);
         self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
-        $script = "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . $dirs[0] . "\nC_RED=''; C_RESET=''\n"
+        $script = "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\nC_RED=''; C_RESET=''\n"
             . implode('', $all[0])
             . "_compose=" . escapeshellarg($bin . '/compose') . "; _overlays='-f docker-compose.yml'\n"
             . $block[1] . "echo STARTED\n";
@@ -159,6 +159,49 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertStringNotContainsString('STARTED', $stdout);
         $calls = (string) file_get_contents($log);
         self::assertMatchesRegularExpression('/^rm -f semitexa-e2e-\S+$/m', substr($calls, (int) strpos($calls, 'exec')), 'the container is removed after the TERM');
+    }
+
+    #[Test]
+    public function an_app_that_never_answers_is_given_up_on_at_the_deadline_not_after_every_probe(): void
+    {
+        // Review, update#82: 90 probes of up to 2 s each with a 1 s pause were ~270 s
+        // behind "within 90 s". The wait is a deadline in seconds; an 8 s one here,
+        // written "08", which $(( )) would read as a bad octal (review, installer#81).
+        $root = $this->root([], true);
+        $bin = $root . '/stub';
+        mkdir($bin);
+        $log = $root . '/docker.log';
+        // Every probe is an app that takes the connection and never answers: curl
+        // waits out its 2 s and gives up with 28.
+        file_put_contents($bin . '/docker', "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> " . escapeshellarg($log) . "\ncase \"\$1\" in exec) sleep 2; exit 28 ;; esac\nexit 0\n");
+        file_put_contents($bin . '/compose', "#!/bin/sh\nexit 0\n");
+        chmod($bin . '/docker', 0755);
+        chmod($bin . '/compose', 0755);
+        preg_match_all('/^[a-z_][a-z0-9_]*\(\) \{\n.*?^\}\n/ms', $this->script, $all);
+        self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
+        file_put_contents($root . '/harness.sh', "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\nC_RED=''; C_RESET=''\n"
+            . implode('', $all[0])
+            // The script's one-line printers are not in the function blocks above.
+            . "error() { printf '%s\\n' \"\$*\" >&2; }\n"
+            . "if e2e_app_start " . escapeshellarg($bin . '/compose') . " '-f docker-compose.yml'; then echo STARTED; else echo GAVE_UP; fi\n");
+
+        $started = microtime(true);
+        $process = proc_open(['sh', $root . '/harness.sh'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, ['PATH' => $bin . ':/usr/bin:/bin', 'HOME' => $root, 'E2E_APP_START_TIMEOUT' => '08']);
+        self::assertIsResource($process);
+        $stdout = (string) stream_get_contents($pipes[1]);
+        $stderr = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        $took = microtime(true) - $started;
+
+        self::assertStringContainsString('GAVE_UP', $stdout);
+        self::assertStringContainsString('did not answer on port 9502 within 8 s', $stderr);
+        // At most the deadline, one pause and the probe running when it passed.
+        // Wide for a loaded runner (review, ultimate#136); the old loop took ~270 s.
+        self::assertLessThan(20.0, $took, 'given up at the deadline, not after a count of probes');
+        self::assertGreaterThanOrEqual(2, substr_count((string) file_get_contents($log), "\nexec ") + (str_starts_with((string) file_get_contents($log), 'exec ') ? 1 : 0), 'it probed more than once before giving up');
+        self::assertMatchesRegularExpression('/^rm -f semitexa-e2e-\S+$/m', substr((string) file_get_contents($log), (int) strrpos((string) file_get_contents($log), 'exec')), 'the container is removed when it gives up');
     }
 
     /**
@@ -219,7 +262,7 @@ final class E2eOwnDatabaseTest extends TestCase
         $functions = implode('', $all[0]);
         self::assertStringContainsString('e2e_isolation_unavailable() {', $functions);
         self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
-        $script = "set -e\nPROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . $dirs[0] . "\n" . $functions . $body;
+        $script = "set -e\nPROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\n" . $functions . $body;
         // A file, not sh -c: every function together is longer than one argument may be.
         file_put_contents($root . '/harness.sh', $script);
         $process = proc_open(['sh', $root . '/harness.sh'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, ['PATH' => '/usr/bin:/bin', 'HOME' => $root]);
