@@ -129,7 +129,7 @@ final class E2eOwnDatabaseTest extends TestCase
         chmod($bin . '/compose', 0755);
         preg_match_all('/^[a-z_][a-z0-9_]*\(\) \{\n.*?^\}\n/ms', $this->script, $all);
         self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
-        $script = "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . $dirs[0] . "\nC_RED=''; C_RESET=''\n"
+        $script = "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\nC_RED=''; C_RESET=''\n"
             . implode('', $all[0])
             . "_compose=" . escapeshellarg($bin . '/compose') . "; _overlays='-f docker-compose.yml'\n"
             . $block[1] . "echo STARTED\n";
@@ -179,7 +179,7 @@ final class E2eOwnDatabaseTest extends TestCase
         chmod($bin . '/compose', 0755);
         preg_match_all('/^[a-z_][a-z0-9_]*\(\) \{\n.*?^\}\n/ms', $this->script, $all);
         self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
-        file_put_contents($root . '/harness.sh', "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . $dirs[0] . "\nC_RED=''; C_RESET=''\n"
+        file_put_contents($root . '/harness.sh', "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\nC_RED=''; C_RESET=''\n"
             . implode('', $all[0])
             // The script's one-line printers are not in the function blocks above.
             . "error() { printf '%s\\n' \"\$*\" >&2; }\n"
@@ -261,7 +261,7 @@ final class E2eOwnDatabaseTest extends TestCase
         $functions = implode('', $all[0]);
         self::assertStringContainsString('e2e_isolation_unavailable() {', $functions);
         self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
-        $script = "set -e\nPROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . $dirs[0] . "\n" . $functions . $body;
+        $script = "set -e\nPROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\n" . $functions . $body;
         // A file, not sh -c: every function together is longer than one argument may be.
         file_put_contents($root . '/harness.sh', $script);
         $process = proc_open(['sh', $root . '/harness.sh'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, ['PATH' => '/usr/bin:/bin', 'HOME' => $root]);
