@@ -1321,16 +1321,23 @@ router_proxy_inspect() {
     ROUTER_PUBLISHED_STATE=absent
     ROUTER_INSPECT_ERROR=''
     command -v docker >/dev/null 2>&1 || return 0
-    if _port_out="$(docker port semitexa-router-proxy 80/tcp 2>&1)"; then
+    # stderr apart: a CLI warning (a malformed config file, say) beside a
+    # successful answer is not an address, and would read as a public one.
+    _port_err_file="$(mktemp 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/semitexa-router-port.$$")"
+    _port_rc=0
+    _port_out="$(docker port semitexa-router-proxy 80/tcp 2>"$_port_err_file")" || _port_rc=$?
+    _port_err="$(cat "$_port_err_file" 2>/dev/null || true)"
+    rm -f "$_port_err_file"
+    if [ "$_port_rc" -eq 0 ]; then
         ROUTER_PUBLISHED="$(printf '%s\n' "$_port_out" | sed '/^$/d; s/:[0-9]*$//' | tr '\n' ' ' | sed 's/ *$//')"
         [ -z "$ROUTER_PUBLISHED" ] || ROUTER_PUBLISHED_STATE=ok
         return 0
     fi
-    case "$_port_out" in
+    case "$_port_err$_port_out" in
         *'No such container'*|*'o public port'*) ;;
         *)
             ROUTER_PUBLISHED_STATE=failed
-            ROUTER_INSPECT_ERROR="$(printf '%s\n' "$_port_out" | sed -n '1p')"
+            ROUTER_INSPECT_ERROR="$(printf '%s\n' "$_port_err" "$_port_out" | sed '/^$/d' | sed -n '1p')"
             ;;
     esac
 }

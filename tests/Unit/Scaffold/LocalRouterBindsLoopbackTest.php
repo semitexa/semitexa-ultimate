@@ -113,6 +113,9 @@ final class LocalRouterBindsLoopbackTest extends TestCase
         self::assertStringStartsWith('The shared local router answers beyond this machine (0.0.0.0)', $first);
         self::assertStringContainsString('Could not read the Docker Engine version', $all);
 
+        // A CLI warning beside a successful answer is not an address (review, installer#76).
+        self::assertSame(['0', ''], $this->runWarn('127.0.0.1:80', '29.8.1', false, 0, 'WARNING: Error loading config file: /root/.docker/config.json: unexpected end of JSON input'));
+
         // No proxy container is "not running", not a failure.
         self::assertSame(['0', ''], $this->runWarn("Error response from daemon: No such container: semitexa-router-proxy\n", '29.8.1', false, 1));
 
@@ -137,9 +140,9 @@ final class LocalRouterBindsLoopbackTest extends TestCase
      * @param string|null $engine null: docker version fails
      * @return array{0: string, 1: string, 2?: string} exit code, the first warning, and with $all everything said
      */
-    private function runWarn(?string $dockerPortOutput, ?string $engine = '29.8.1', bool $all = false, int $portExit = 0): array
+    private function runWarn(?string $dockerPortOutput, ?string $engine = '29.8.1', bool $all = false, int $portExit = 0, string $portStderr = ''): array
     {
-        [$code, , $stderr] = $this->runScript($dockerPortOutput, $engine, $portExit);
+        [$code, , $stderr] = $this->runScript($dockerPortOutput, $engine, $portExit, $portStderr);
         $said = (string) preg_replace('/^\[WARN\]  /m', '', rtrim($stderr, "\n"));
         $first = explode("\n", $said, 2)[0];
 
@@ -151,7 +154,7 @@ final class LocalRouterBindsLoopbackTest extends TestCase
      *
      * @return array{string, string, string} exit code, stdout, stderr
      */
-    private function runScript(?string $dockerPortOutput, ?string $engine, int $portExit): array
+    private function runScript(?string $dockerPortOutput, ?string $engine, int $portExit, string $portStderr = ''): array
     {
         $dir = sys_get_temp_dir() . '/semitexa-router-' . bin2hex(random_bytes(4));
         mkdir($dir);
@@ -161,7 +164,8 @@ final class LocalRouterBindsLoopbackTest extends TestCase
         $port = $dockerPortOutput === null
             ? "echo 'permission denied while trying to connect to the Docker daemon socket' >&2; exit 1"
             : ($portExit === 0
-                ? "printf '%s\\n' " . escapeshellarg($dockerPortOutput) . " | sed '/^\$/d'"
+                ? ($portStderr === '' ? '' : "printf '%s\\n' " . escapeshellarg($portStderr) . ' >&2; ')
+                    . "printf '%s\\n' " . escapeshellarg($dockerPortOutput) . " | sed '/^\$/d'"
                 : "printf '%s' " . escapeshellarg($dockerPortOutput) . " >&2; exit {$portExit}");
         file_put_contents($dir . '/docker', "#!/bin/sh\n[ \"\$1\" = version ] && { {$version}; }\n{$port}\n");
         chmod($dir . '/docker', 0755);
