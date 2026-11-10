@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ locale()|default('en')|e('html_attr') }}">
+<html lang="{{ locale()|default('en')|e('html_attr') }}" data-theme="{{ theme_info().theme|default('') }}" data-skin="{{ theme_info().skin|default('') }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +7,8 @@
     {% include '@project-layouts-theme-base/partials/head/theme-switcher.html.twig' %}
     {{ __ssr_preload_hints|default('')|raw }}
     {{ asset_head() }}
+    <link rel="stylesheet" href="{{ theme_skin_css() }}">
+    <link rel="stylesheet" href="{{ asset('css/hello.css', 'Hello') }}">
 </head>
 <body
     class="hello-page"
