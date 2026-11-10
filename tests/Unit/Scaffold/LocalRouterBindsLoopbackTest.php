@@ -122,6 +122,10 @@ final class LocalRouterBindsLoopbackTest extends TestCase
         // number (YY.MM), 5.4.0 is not one Docker ever had (review, update#79).
         self::assertSame('2', $this->runWarn('127.0.0.1:80', '|27.5.1')[0]);
         self::assertSame(['3', 'The engine is 5.4.0, not Docker Engine: whether 127.0.0.1 keeps the router to this machine is not checked here.'], $this->runWarn('127.0.0.1:80', '|5.4.0'));
+        // Docker went from 1.13 to 17.03: 1.x is old Docker, not another engine (review, installer#78).
+        self::assertSame('2', $this->runWarn('127.0.0.1:80', '|1.13.1')[0]);
+        self::assertSame('2', $this->runWarn('127.0.0.1:80', 'oldcli:1.13.1')[0]);
+        self::assertSame('2', $this->runWarn('127.0.0.1:80', '|20.10.24')[0], 'a two-digit major is not 2.x');
         // A Podman name built from OS, architecture and distribution has no "Docker" in it either.
         self::assertSame('3', $this->runWarn('127.0.0.1:80', 'linux/amd64/fedora-41|5.4.0')[0]);
 
