@@ -50,10 +50,13 @@ final class E2eRunnerPreflightTest extends TestCase
     #[Test]
     public function a_complete_image_or_a_check_that_could_not_run_lets_the_phase_go_on(): void
     {
-        self::assertSame(0, $this->preflight(0, '')[0]);
-        // Anything but 3 is the check failing, not a missing module: the run that follows says why.
-        [$code, $said] = $this->preflight(1, '');
+        [$code, , $argv] = $this->preflight(0, '');
         self::assertSame(0, $code);
+        self::assertStringContainsString('run --rm --no-deps -T e2e-runner node -e', $argv, 'the runner was asked');
+        // Anything but 3 is the check failing, not a missing module: the run that follows says why.
+        [$code, $said, $argv] = $this->preflight(1, '');
+        self::assertSame(0, $code);
+        self::assertStringContainsString('run --rm --no-deps -T e2e-runner node -e', $argv, 'the runner was asked, and its failure let through');
         self::assertStringNotContainsString('lacks', $said);
     }
 

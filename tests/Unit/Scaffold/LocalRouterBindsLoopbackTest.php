@@ -125,6 +125,17 @@ final class LocalRouterBindsLoopbackTest extends TestCase
         // A Podman name built from OS, architecture and distribution has no "Docker" in it either.
         self::assertSame('3', $this->runWarn('127.0.0.1:80', 'linux/amd64/fedora-41|5.4.0')[0]);
 
+        // Review, installer#78 / ultimate#133: a CLI too old for Server.Platform still gets the
+        // Docker answer; a name holding "|" leaves the version the last field; a field that
+        // is no number is no version.
+        self::assertSame('2', $this->runWarn('127.0.0.1:80', 'oldcli:27.5.1')[0]);
+        self::assertSame('0', $this->runWarn('127.0.0.1:80', 'oldcli:28.1.0')[0]);
+        self::assertSame(['3', 'The engine is foo|bar 5.4.0, not Docker Engine: whether 127.0.0.1 keeps the router to this machine is not checked here.'], $this->runWarn('127.0.0.1:80', 'foo|bar|5.4.0'));
+        [$code, $first] = $this->runWarn('127.0.0.1:80', 'Docker Engine - Community|');
+        self::assertSame('3', $code);
+        self::assertStringStartsWith('Could not read the Docker Engine version', $first);
+        self::assertStringContainsString('see the warning above for what could not be judged', $this->function('cmd_local_router_doctor'), 'a 3 is not always docker not answering');
+
         // A CLI warning beside a successful answer is not an address (review, installer#76).
         self::assertSame(['0', ''], $this->runWarn('127.0.0.1:80', '29.8.1', false, 0, 'WARNING: Error loading config file: /root/.docker/config.json: unexpected end of JSON input'));
 
@@ -173,7 +184,10 @@ final class LocalRouterBindsLoopbackTest extends TestCase
         $version = $engine === null
             ? "echo 'Error response from daemon: authorization denied by plugin' >&2; exit 1"
             // The script asks '{{.Server.Platform.Name}}|{{.Server.Version}}': a bare version is Docker Engine's.
-            : "printf '%s\\n' " . escapeshellarg(str_contains($engine, '|') ? $engine : 'Docker Engine - Community|' . $engine) . '; exit 0';
+            : (str_starts_with($engine, 'oldcli:')
+                // A CLI without Server.Platform: that template fails, the version alone answers.
+                ? "case \"\$*\" in *Platform*) echo 'template: :1:9: executing \"\" at <.Server.Platform.Name>: cannot evaluate field Platform' >&2; exit 1 ;; esac; printf '%s\\n' " . escapeshellarg(substr($engine, 7)) . '; exit 0'
+                : "printf '%s\\n' " . escapeshellarg(str_contains($engine, '|') ? $engine : 'Docker Engine - Community|' . $engine) . '; exit 0');
         $port = $dockerPortOutput === null
             ? "echo 'permission denied while trying to connect to the Docker daemon socket' >&2; exit 1"
             : ($portExit === 0
