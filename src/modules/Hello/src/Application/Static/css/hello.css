@@ -5,6 +5,9 @@
 :root {
     --demo-accent: #b63a2f;
     --demo-accent-light: #db7d55;
+    /* The primary action's text and the end of its gradient: 4.5:1 or more along the whole button. */
+    --demo-cta-text: #fff7ef;
+    --demo-cta-end: #bd4a35;
     --demo-accent-dark: #7f271f;
     --demo-ink-blue: #27404d;
     --demo-ink-green: #2d5a4d;
@@ -35,6 +38,9 @@
 :root[data-skin-mode="dark"] {
     --demo-accent: #ef8c68;
     --demo-accent-light: #f3ae84;
+    /* Light text on the light accent was 1.8-2.3:1; dark text is 7.2-9.3:1. */
+    --demo-cta-text: #2a1410;
+    --demo-cta-end: #f3ae84;
     --demo-accent-dark: #ffd0b2;
     --demo-ink-blue: #a7c7da;
     --demo-ink-green: #84c3ad;
@@ -362,8 +368,8 @@ h2 {
 }
 
 .cta--primary {
-    color: #fff7ef;
-    background: linear-gradient(135deg, var(--demo-accent), var(--demo-accent-light));
+    color: var(--demo-cta-text);
+    background: linear-gradient(135deg, var(--demo-accent), var(--demo-cta-end));
     box-shadow: 0 16px 32px rgba(182, 58, 47, 0.18);
 }
 
