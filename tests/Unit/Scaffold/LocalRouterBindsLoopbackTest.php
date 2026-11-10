@@ -88,23 +88,99 @@ final class LocalRouterBindsLoopbackTest extends TestCase
         self::assertStringContainsString('upgrade Docker Engine to 28 or later; a restart does not close this', $doctor);
     }
 
-    /** @return array{0: string, 1: string, 2?: string} exit code, the first warning, and with $all everything said */
-    private function runWarn(string $dockerPortOutput, string $engine = '29.8.1', bool $all = false): array
+    /**
+     * A check that cannot read what it needs says so and gives no all-clear
+     * (review, ultimate#133): docker port failing for another reason than "no
+     * such container" leaves the binding unknown; an engine that will not say
+     * its version is unknown, not new enough. Both return 3, and doctor prints
+     * no success for 3.
+     */
+    #[Test]
+    public function a_check_docker_would_not_answer_is_unknown_not_clean(): void
+    {
+        [$code, $first, $all] = $this->runWarn(null, '29.8.1', true);
+        self::assertSame('3', $code);
+        self::assertStringStartsWith('Could not read which addresses the router proxy publishes port 80 on: permission denied while trying to connect', $first);
+
+        [$code, $first] = $this->runWarn('127.0.0.1:80', null);
+        self::assertSame('3', $code);
+        self::assertStringStartsWith('Could not read the Docker Engine version', $first);
+        self::assertStringNotContainsString('upgrade', $first, 'no upgrade advice for a version nobody read');
+
+        // Public is still said, and a rebind still worth it (1), with the version unknown.
+        [$code, $first, $all] = $this->runWarn('0.0.0.0:80', null, true);
+        self::assertSame('1', $code);
+        self::assertStringStartsWith('The shared local router answers beyond this machine (0.0.0.0)', $first);
+        self::assertStringContainsString('Could not read the Docker Engine version', $all);
+
+        // No proxy container is "not running", not a failure.
+        self::assertSame(['0', ''], $this->runWarn("Error response from daemon: No such container: semitexa-router-proxy\n", '29.8.1', false, 1));
+
+        $doctor = $this->function('cmd_local_router_doctor');
+        self::assertStringContainsString('absent:*)', $doctor);
+        self::assertMatchesRegularExpression('/\*:0\) success /', $doctor, 'success only for a 0');
+        self::assertStringNotContainsString('router_proxy_published', $this->script, 'one reader of the binding: router_proxy_inspect');
+    }
+
+    #[Test]
+    public function the_warnings_go_to_stderr_and_nothing_to_stdout(): void
+    {
+        [, $stdout, $stderr] = $this->runScript('0.0.0.0:80', '27.5.1', 0);
+
+        self::assertSame('', $stdout, 'doctor > file must not swallow the warnings');
+        self::assertStringContainsString('[WARN]  The shared local router answers beyond this machine (0.0.0.0)', $stderr);
+        self::assertStringContainsString('[WARN]  Docker Engine 27.5.1 does not keep', $stderr);
+    }
+
+    /**
+     * @param string|null $dockerPortOutput null: docker port fails with a daemon error
+     * @param string|null $engine null: docker version fails
+     * @return array{0: string, 1: string, 2?: string} exit code, the first warning, and with $all everything said
+     */
+    private function runWarn(?string $dockerPortOutput, ?string $engine = '29.8.1', bool $all = false, int $portExit = 0): array
+    {
+        [$code, , $stderr] = $this->runScript($dockerPortOutput, $engine, $portExit);
+        $said = (string) preg_replace('/^\[WARN\]  /m', '', rtrim($stderr, "\n"));
+        $first = explode("\n", $said, 2)[0];
+
+        return $all ? [$code, $first, $said] : [$code, $first];
+    }
+
+    /**
+     * router_warn_if_public as the script defines it, with its own warn(), against a stub docker.
+     *
+     * @return array{string, string, string} exit code, stdout, stderr
+     */
+    private function runScript(?string $dockerPortOutput, ?string $engine, int $portExit): array
     {
         $dir = sys_get_temp_dir() . '/semitexa-router-' . bin2hex(random_bytes(4));
         mkdir($dir);
-        file_put_contents($dir . '/docker', "#!/bin/sh\n[ \"\$1\" = version ] && { printf '%s\\n' " . escapeshellarg($engine) . "; exit 0; }\nprintf '%s\\n' " . escapeshellarg($dockerPortOutput) . " | sed '/^\$/d'\n");
+        $version = $engine === null
+            ? "echo 'Error response from daemon: authorization denied by plugin' >&2; exit 1"
+            : "printf '%s\\n' " . escapeshellarg($engine) . '; exit 0';
+        $port = $dockerPortOutput === null
+            ? "echo 'permission denied while trying to connect to the Docker daemon socket' >&2; exit 1"
+            : ($portExit === 0
+                ? "printf '%s\\n' " . escapeshellarg($dockerPortOutput) . " | sed '/^\$/d'"
+                : "printf '%s' " . escapeshellarg($dockerPortOutput) . " >&2; exit {$portExit}");
+        file_put_contents($dir . '/docker', "#!/bin/sh\n[ \"\$1\" = version ] && { {$version}; }\n{$port}\n");
         chmod($dir . '/docker', 0755);
-        $script = "warn() { printf '%s\\n' \"\$*\"; }\n"
-            . "router_proxy_published() {\n" . $this->function('router_proxy_published') . "}\n"
+        self::assertSame(1, preg_match('/^warn\(\)\s+\{.*\}$/m', $this->script, $warn), 'bin/semitexa defines warn()');
+        $script = "C_YELLOW=''; C_RESET=''\n" . $warn[0] . "\n"
+            . "router_proxy_inspect() {\n" . $this->function('router_proxy_inspect') . "}\n"
             . "router_warn_if_public() {\n" . $this->function('router_warn_if_public') . "}\n"
-            . "out=\$(router_warn_if_public); code=\$?; printf '%s\\n%s\\n%s' \"\$code\" \"\$(printf '%s' \"\$out\" | head -n 1)\" \"\$out\"\n";
-        $out = (string) shell_exec('PATH=' . escapeshellarg($dir) . ':/usr/bin:/bin sh -c ' . escapeshellarg($script));
+            . "router_warn_if_public; exit \$?\n";
+        $process = proc_open(['sh', '-c', $script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, ['PATH' => $dir . ':/usr/bin:/bin']);
+        self::assertIsResource($process);
+        $stdout = (string) stream_get_contents($pipes[1]);
+        $stderr = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $code = proc_close($process);
         array_map('unlink', glob($dir . '/*') ?: []);
         rmdir($dir);
-        $lines = explode("\n", $out, 3);
 
-        return $all ? [$lines[0], $lines[1] ?? '', $lines[2] ?? ''] : [$lines[0], $lines[1] ?? ''];
+        return [(string) $code, $stdout, $stderr];
     }
 
     private function function(string $name): string

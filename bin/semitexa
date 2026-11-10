@@ -1309,11 +1309,30 @@ router_apply_name_resolution() {
     esac
 }
 
-# The addresses the running router proxy publishes port 80 on, space-separated;
-# nothing when it is not running or docker is not here.
-router_proxy_published() {
+# Reads what the router proxy publishes port 80 on, in this shell (no subshell,
+# so the caller sees the result):
+#   ROUTER_PUBLISHED        the addresses, space-separated
+#   ROUTER_PUBLISHED_STATE  ok; absent (no docker, no proxy container, or one
+#                           publishing nothing); failed (docker answered with
+#                           another error: the binding is unknown, not clean)
+#   ROUTER_INSPECT_ERROR    docker's first line, when failed
+router_proxy_inspect() {
+    ROUTER_PUBLISHED=''
+    ROUTER_PUBLISHED_STATE=absent
+    ROUTER_INSPECT_ERROR=''
     command -v docker >/dev/null 2>&1 || return 0
-    docker port semitexa-router-proxy 80/tcp 2>/dev/null | sed 's/:[0-9]*$//' | tr '\n' ' ' | sed 's/ *$//'
+    if _port_out="$(docker port semitexa-router-proxy 80/tcp 2>&1)"; then
+        ROUTER_PUBLISHED="$(printf '%s\n' "$_port_out" | sed '/^$/d; s/:[0-9]*$//' | tr '\n' ' ' | sed 's/ *$//')"
+        [ -z "$ROUTER_PUBLISHED" ] || ROUTER_PUBLISHED_STATE=ok
+        return 0
+    fi
+    case "$_port_out" in
+        *'No such container'*|*'o public port'*) ;;
+        *)
+            ROUTER_PUBLISHED_STATE=failed
+            ROUTER_INSPECT_ERROR="$(printf '%s\n' "$_port_out" | sed -n '1p')"
+            ;;
+    esac
 }
 
 # The router workspace is shared by every project on the machine, and each
@@ -1322,9 +1341,16 @@ router_proxy_published() {
 # starts it. This script cannot stop that, so it says so and rebinds: start and
 # restart run it before `up -d`, doctor reports it. Returns 1 when public.
 router_warn_if_public() {
-    _published="$(router_proxy_published)"
+    router_proxy_inspect
+    _published="$ROUTER_PUBLISHED"
     _public=''
     _rc=0
+    # A binding docker would not show is unknown, not clean: say so.
+    if [ "$ROUTER_PUBLISHED_STATE" = failed ]; then
+        warn "Could not read which addresses the router proxy publishes port 80 on: ${ROUTER_INSPECT_ERROR:-docker port failed}"
+        warn "Its binding is not checked. See: docker port semitexa-router-proxy 80/tcp"
+        return 3
+    fi
     # Loopback is the only local-only answer. Anything else - 0.0.0.0, [::],
     # or one LAN address such as 192.168.1.100 - is reachable from others.
     for _address in $_published; do
@@ -1344,9 +1370,16 @@ router_warn_if_public() {
     # Checked whether or not the address was public: a rebind to 127.0.0.1
     # does not close it.
     [ -n "$_published" ] || return "$_rc"
+    # An engine that will not say its version (an authorization plugin, a
+    # daemon error) is unknown, not new enough: no upgrade advice, no all-clear.
     _engine="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+    if [ -z "$_engine" ]; then
+        warn "Could not read the Docker Engine version, so it is not known whether 127.0.0.1 keeps the router to this machine (Engine 28 and later do). See: docker version"
+        [ "$_rc" -eq 1 ] || _rc=3
+        return "$_rc"
+    fi
     case "$_engine" in
-        ''|2[8-9].*|[3-9][0-9].*|[1-9][0-9][0-9]*) ;;
+        2[8-9].*|[3-9][0-9].*|[1-9][0-9][0-9]*) ;;
         *)
             warn "Docker Engine $_engine does not keep a port published on 127.0.0.1 from hosts on the same network; 28.0 does."
             warn "The router is reachable from your network segment until Docker is upgraded."
@@ -1354,7 +1387,8 @@ router_warn_if_public() {
             ;;
     esac
     # 0: this machine only. 1: published beyond it, which a rebind to 127.0.0.1
-    # fixes. 2: loopback, on an engine that does not enforce it.
+    # fixes. 2: loopback, on an engine that does not enforce it. 3: not known,
+    # because docker would not say the binding or the engine version.
     return "$_rc"
 }
 
@@ -1456,16 +1490,18 @@ cmd_local_router_doctor() {
         printf "\n"
         router_compose ps || true
     fi
-    if [ -n "$(router_proxy_published)" ]; then
+    if command -v docker >/dev/null 2>&1; then
         _check=0
         router_warn_if_public || _check=$?
-        case "$_check" in
+        case "$ROUTER_PUBLISHED_STATE:$_check" in
+            absent:*) info "The router proxy is not running, so it publishes nothing." ;;
             # What was checked, not a network boundary: a host routed to the
             # Docker bridge (allow-direct-routing) reaches the container itself.
-            0) success "The router proxy is published on loopback only ($(router_proxy_published))." ;;
-            1) info "Fix: bin/semitexa local-router:restart, after updating the older projects." ;;
+            *:0) success "The router proxy is published on loopback only ($ROUTER_PUBLISHED)." ;;
+            *:1) info "Fix: bin/semitexa local-router:restart, after updating the older projects." ;;
             # A restart rebinds to 127.0.0.1, which this engine does not keep local.
-            *) info "Fix: upgrade Docker Engine to 28 or later; a restart does not close this." ;;
+            *:2) info "Fix: upgrade Docker Engine to 28 or later; a restart does not close this." ;;
+            *) info "Not checked: the warning above names what docker would not say; run doctor again once it answers." ;;
         esac
     fi
 
