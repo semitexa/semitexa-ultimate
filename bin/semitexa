@@ -1390,16 +1390,23 @@ router_warn_if_public() {
     fi
     # The 28.0 fix is Docker Engine's. Another engine behind the docker CLI
     # (Podman reports its own version, e.g. 5.4.0) is not measured by that
-    # number, so it is unknown rather than "too old". An empty platform name
-    # is read as Docker: older engines did not report one.
+    # number, so it is unknown rather than "too old". Two signs, either enough:
+    # a platform name without "Docker", or a version Docker Engine never had
+    # (its numbers are YY.MM since 17.03, so a major below 17 is something
+    # else) - the second holds when an engine reports no platform name at all.
+    _not_docker=''
     case "$_platform" in
         ''|*Docker*) ;;
-        *)
-            warn "The engine is $_platform $_engine, not Docker Engine: whether 127.0.0.1 keeps the router to this machine is not checked here."
-            [ "$_rc" -eq 1 ] || _rc=3
-            return "$_rc"
-            ;;
+        *) _not_docker=1 ;;
     esac
+    case "$_engine" in
+        [0-9].*|1[0-6].*) _not_docker=1 ;;
+    esac
+    if [ -n "$_not_docker" ]; then
+        warn "The engine is ${_platform:+$_platform }$_engine, not Docker Engine: whether 127.0.0.1 keeps the router to this machine is not checked here."
+        [ "$_rc" -eq 1 ] || _rc=3
+        return "$_rc"
+    fi
     case "$_engine" in
         2[8-9].*|[3-9][0-9].*|[1-9][0-9][0-9]*) ;;
         *)

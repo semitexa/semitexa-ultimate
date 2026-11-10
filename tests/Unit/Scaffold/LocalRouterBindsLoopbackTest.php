@@ -118,8 +118,12 @@ final class LocalRouterBindsLoopbackTest extends TestCase
         self::assertSame('3', $code);
         self::assertSame('The engine is Podman Engine 5.4.0, not Docker Engine: whether 127.0.0.1 keeps the router to this machine is not checked here.', $first);
         self::assertSame('1', $this->runWarn('0.0.0.0:80', 'Podman Engine|5.4.0')[0], 'public stays public: a rebind still helps');
-        // An engine that names no platform is read as Docker, as older ones did not.
+        // An engine that names no platform: its version decides. 27.5.1 is a Docker Engine
+        // number (YY.MM), 5.4.0 is not one Docker ever had (review, update#79).
         self::assertSame('2', $this->runWarn('127.0.0.1:80', '|27.5.1')[0]);
+        self::assertSame(['3', 'The engine is 5.4.0, not Docker Engine: whether 127.0.0.1 keeps the router to this machine is not checked here.'], $this->runWarn('127.0.0.1:80', '|5.4.0'));
+        // A Podman name built from OS, architecture and distribution has no "Docker" in it either.
+        self::assertSame('3', $this->runWarn('127.0.0.1:80', 'linux/amd64/fedora-41|5.4.0')[0]);
 
         // A CLI warning beside a successful answer is not an address (review, installer#76).
         self::assertSame(['0', ''], $this->runWarn('127.0.0.1:80', '29.8.1', false, 0, 'WARNING: Error loading config file: /root/.docker/config.json: unexpected end of JSON input'));
