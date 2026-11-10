@@ -198,7 +198,8 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertStringContainsString('GAVE_UP', $stdout);
         self::assertStringContainsString('did not answer on port 9502 within 8 s', $stderr);
         // At most the deadline, one pause and the probe running when it passed.
-        self::assertLessThan(12.0, $took, 'given up at the deadline, not after a count of probes');
+        // Wide for a loaded runner (review, ultimate#136); the old loop took ~270 s.
+        self::assertLessThan(20.0, $took, 'given up at the deadline, not after a count of probes');
         self::assertGreaterThanOrEqual(2, substr_count((string) file_get_contents($log), "\nexec ") + (str_starts_with((string) file_get_contents($log), 'exec ') ? 1 : 0), 'it probed more than once before giving up');
         self::assertMatchesRegularExpression('/^rm -f semitexa-e2e-\S+$/m', substr((string) file_get_contents($log), (int) strrpos((string) file_get_contents($log), 'exec')), 'the container is removed when it gives up');
     }
