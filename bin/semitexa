@@ -1379,12 +1379,27 @@ router_warn_if_public() {
     [ -n "$_published" ] || return "$_rc"
     # An engine that will not say its version (an authorization plugin, a
     # daemon error) is unknown, not new enough: no upgrade advice, no all-clear.
-    _engine="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+    _server="$(docker version --format '{{.Server.Platform.Name}}|{{.Server.Version}}' 2>/dev/null || true)"
+    _platform="${_server%%|*}"
+    _engine="${_server#*|}"
+    [ "$_server" != "$_engine" ] || _platform=''
     if [ -z "$_engine" ]; then
         warn "Could not read the Docker Engine version, so it is not known whether 127.0.0.1 keeps the router to this machine (Engine 28 and later do). See: docker version"
         [ "$_rc" -eq 1 ] || _rc=3
         return "$_rc"
     fi
+    # The 28.0 fix is Docker Engine's. Another engine behind the docker CLI
+    # (Podman reports its own version, e.g. 5.4.0) is not measured by that
+    # number, so it is unknown rather than "too old". An empty platform name
+    # is read as Docker: older engines did not report one.
+    case "$_platform" in
+        ''|*Docker*) ;;
+        *)
+            warn "The engine is $_platform $_engine, not Docker Engine: whether 127.0.0.1 keeps the router to this machine is not checked here."
+            [ "$_rc" -eq 1 ] || _rc=3
+            return "$_rc"
+            ;;
+    esac
     case "$_engine" in
         2[8-9].*|[3-9][0-9].*|[1-9][0-9][0-9]*) ;;
         *)
@@ -3175,6 +3190,7 @@ ${_url_clean}/tests"
     # The runner writes test-results as the host user now; a directory an
     # earlier root run left behind would refuse it (EACCES on .last-run.json).
     project_ownership_reclaim || exit 1
+    e2e_runner_preflight "$_compose" "$_overlays" || exit 1
     _e2e_rc=0
     (
         env_export_compose_context
@@ -3585,6 +3601,42 @@ agent_identity() {
     SEMITEXA_AGENT_SESSION="$_ai_name-$(printf '%06x' "$_ai_sum" | cut -c1-6)"
     SEMITEXA_AGENT_IMPLICIT="$_ai_name"
     export SEMITEXA_AGENT_SESSION SEMITEXA_AGENT_IMPLICIT
+}
+
+# The node modules the e2e-runner image is built to carry: the packages its
+# Dockerfile installs ("@axe-core/playwright@${AXE_PLAYWRIGHT_VERSION}" ...),
+# one per line. @playwright/test when the Dockerfile names none.
+e2e_runner_required_modules() {
+    _e2e_df="$PROJECT_ROOT/docker/e2e-runner/Dockerfile"
+    _e2e_mods=''
+    # Every quoted "name@${VERSION}", however many share a line.
+    [ -f "$_e2e_df" ] && _e2e_mods="$(grep -oE '"@?[a-z0-9._/-]+@[$][{][A-Z0-9_]+[}]"' "$_e2e_df" | sed 's/^"//; s/@[$][{].*$//' | sort -u)"
+    printf '%s\n' "${_e2e_mods:-@playwright/test}"
+}
+
+# A present image tag skips the build, so an image tagged ...-axe4.13.0 that was
+# built without @axe-core/playwright (seen 2026-11-05) made every spec that
+# imports it stop at load: Playwright ran nothing and the phase "failed" with
+# the cause buried in its output. Ask the runner itself, before the run, and
+# name the fix. Returns 0 when everything resolves, 1 when a module is missing
+# (said on stderr), and 0 when the check itself could not run: the run that
+# follows reports that failure in its own words.
+e2e_runner_preflight() {
+    _e2e_need="$(e2e_runner_required_modules | tr '\n' ' ')"
+    _e2e_missing_rc=0
+    # stderr stays visible: with no image yet, compose builds it right here.
+    # shellcheck disable=SC2086
+    _e2e_missing="$(
+        env_export_compose_context
+        $1 $2 run --rm --no-deps -T e2e-runner node -e '
+            const missing = process.argv.slice(1).filter((m) => { try { require.resolve(m); return false; } catch (e) { return true; } });
+            if (missing.length) { console.log(missing.join(" ")); process.exit(3); }
+        ' $_e2e_need < /dev/null
+    )" || _e2e_missing_rc=$?
+    [ "$_e2e_missing_rc" -eq 3 ] || return 0
+    error "The e2e-runner image lacks: $_e2e_missing (its Dockerfile installs them; the image was built without)."
+    info "Rebuild it, then run again: $1 $2 build --no-cache e2e-runner"
+    return 1
 }
 
 # The compose files the test services (phpunit, e2e-runner) are defined by:
