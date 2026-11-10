@@ -513,6 +513,17 @@ router_registry_write_entry() {
     _mode="$3"
     _path="$(router_entry_path "$_domain")"
     _compose_project_name="$(basename "$PROJECT_ROOT")"
+    # The container route (router_attach_project): given, or kept from this
+    # project's existing entry, so a rewrite before the app is up does not
+    # drop it. UPSTREAM_HOST/UPSTREAM_PORT stay as they were: an older
+    # bin/semitexa elsewhere renders from them, and the port checks read them.
+    _uc="${4:-}" _un="${5:-}" _ucp="${6:-}"
+    if [ -z "$_uc" ] && [ -f "$_path" ]; then
+        _uc="$(sed -n "s/^UPSTREAM_CONTAINER=//p" "$_path" | head -n 1)"
+        _un="$(sed -n "s/^UPSTREAM_NETWORK=//p" "$_path" | head -n 1)"
+        _ucp="$(sed -n "s/^UPSTREAM_CONTAINER_PORT=//p" "$_path" | head -n 1)"
+        [ "$(sed -n "s/^PROJECT_ROOT=//p" "$_path" | head -n 1)" = "$PROJECT_ROOT" ] || { _uc=''; _un=''; _ucp=''; }
+    fi
 
     router_ensure_dirs
     cat > "$_path" <<EOF
@@ -524,6 +535,9 @@ UPSTREAM_PORT=$_upstream_port
 MODE=$_mode
 UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
+    if [ -n "$_uc" ] && [ -n "$_un" ] && [ -n "$_ucp" ]; then
+        printf 'UPSTREAM_CONTAINER=%s\nUPSTREAM_NETWORK=%s\nUPSTREAM_CONTAINER_PORT=%s\n' "$_uc" "$_un" "$_ucp" >> "$_path"
+    fi
 }
 
 router_registry_delete_entry() {
@@ -1087,9 +1101,107 @@ local_app_reconcile() {
     return 0
 }
 
+# The networks the router proxy is on, one per line; nothing when it is not running.
+router_proxy_networks() {
+    docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' semitexa-router-proxy 2>/dev/null | sed '/^$/d'
+}
+
+# Puts the router on this project's network and records the app container as
+# the route for this project's domains (tk-app-port-binds-every-interface).
+# Names are read from Docker, never built: with the router on several
+# projects' networks, "app" names a different container on each.
+router_attach_project() {
+    project_has_shared_domains || return 0
+    docker inspect semitexa-router-proxy >/dev/null 2>&1 || return 0
+    _ra_compose="$(compose_bin)"
+    # shellcheck disable=SC2086
+    _ra_cid="$($_ra_compose $(compose_args) ps -q app 2>/dev/null </dev/null | head -n 1 || true)"
+    [ -n "$_ra_cid" ] || return 0
+    # || true throughout: an app that died right after up is not a reason to stop.
+    _ra_name="$(docker inspect -f '{{.Name}}' "$_ra_cid" 2>/dev/null | sed 's#^/##' || true)"
+    _ra_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$_ra_cid" 2>/dev/null || true)"
+    _ra_nets="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$_ra_cid" 2>/dev/null | sed '/^$/d' || true)"
+    _ra_net="$(printf '%s\n' "$_ra_nets" | grep -Fx -- "${_ra_proj}_default" | head -n 1)"
+    [ -n "$_ra_net" ] || _ra_net="$(printf '%s\n' "$_ra_nets" | head -n 1)"
+    [ -n "$_ra_name" ] && [ -n "$_ra_net" ] || return 0
+    docker network connect "$_ra_net" semitexa-router-proxy >/dev/null 2>&1 || true
+    if ! router_proxy_networks | grep -Fx -- "$_ra_net" >/dev/null 2>&1; then
+        warn "The shared router could not join network $_ra_net; its domains keep going through port $(env_val SWOOLE_PORT 8080)."
+        return 0
+    fi
+    _ra_port="$(env_val SWOOLE_PORT 8080)"
+    _ra_mode="$(router_mode_get)"
+    _ra_root="$PROJECT_ROOT"
+    for _ra_entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_ra_entry" ] || continue
+        [ "$(sed -n "s/^PROJECT_ROOT=//p" "$_ra_entry" | head -n 1)" = "$_ra_root" ] || continue
+        _ra_domain="$(sed -n "s/^DOMAIN=//p" "$_ra_entry" | head -n 1)"
+        _ra_hport="$(sed -n "s/^UPSTREAM_PORT=//p" "$_ra_entry" | head -n 1)"
+        [ -n "$_ra_domain" ] || continue
+        router_registry_write_entry "$_ra_domain" "${_ra_hport:-$_ra_port}" "$_ra_mode" "$_ra_name" "$_ra_net" "$_ra_port"
+    done
+    PROJECT_ROOT="$_ra_root"
+    router_generate_nginx_config
+    router_reload_proxy
+}
+
+# Takes the router off this project's networks, so `down` can remove them
+# ("network has active endpoints" otherwise, and set -e then ends the run
+# before `up`). Docker says which networks are the project's, by the compose
+# project label: the registry can have lost the entry (local-domain:remove,
+# a domain renamed in .env) while the router is still attached (Fable review,
+# installer#82). The registry is read as well, for an entry Docker no longer
+# labels.
+router_detach_project() {
+    docker inspect semitexa-router-proxy >/dev/null 2>&1 || return 0
+    _rd_compose="$(compose_bin)"
+    # shellcheck disable=SC2086
+    _rd_cid="$($_rd_compose $(compose_args) ps -a -q 2>/dev/null </dev/null | head -n 1 || true)"
+    _rd_proj=''
+    [ -n "$_rd_cid" ] && _rd_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$_rd_cid" 2>/dev/null || true)"
+    _rd_nets="$(sed -n "s/^UPSTREAM_NETWORK=//p" $(grep -lxF "PROJECT_ROOT=$PROJECT_ROOT" "$ROUTER_REGISTRY_DIR"/*.env 2>/dev/null) </dev/null 2>/dev/null || true)"
+    for _rd_net in $(router_proxy_networks || true); do
+        [ "$_rd_net" = "router_default" ] && continue
+        if [ -n "$_rd_proj" ] && [ "$(docker network inspect -f '{{index .Labels "com.docker.compose.project"}}' "$_rd_net" 2>/dev/null || true)" = "$_rd_proj" ]; then
+            _rd_nets="$_rd_nets
+$_rd_net"
+        fi
+    done
+    for _rd_net in $(printf '%s\n' "$_rd_nets" | sed '/^$/d' | sort -u); do
+        docker network disconnect -f "$_rd_net" semitexa-router-proxy >/dev/null 2>&1 || true
+    done
+    return 0
+}
+
+# A recreated router container is on its own network only: put it back on
+# every network a registered project's app is reached over.
+router_reconnect_all() {
+    docker inspect semitexa-router-proxy >/dev/null 2>&1 || return 0
+    for _rc_net in $(sed -n "s/^UPSTREAM_NETWORK=//p" "$ROUTER_REGISTRY_DIR"/*.env 2>/dev/null | sort -u); do
+        docker network connect "$_rc_net" semitexa-router-proxy >/dev/null 2>&1 || true
+    done
+    return 0
+}
+
+# Loads the rendered config only when nginx accepts it: a bad render leaves
+# the working one in place instead of a router that no longer starts.
+router_reload_proxy() {
+    docker inspect semitexa-router-proxy >/dev/null 2>&1 || return 0
+    if docker exec semitexa-router-proxy nginx -t >/dev/null 2>&1; then
+        docker exec semitexa-router-proxy nginx -s reload >/dev/null 2>&1 || true
+    else
+        warn "The shared router refused the new config (nginx -t); it keeps the one it had."
+    fi
+}
+
 router_generate_nginx_config() {
     router_ensure_dirs
     _saved_project_root="$PROJECT_ROOT"
+    # Each entry sets COMPOSE_PROJECT_NAME to its own project's, and .env keys
+    # are exported (env_export_compose_context): left as the last entry's, a
+    # compose call after this would run in another project (Fable review,
+    # installer#82).
+    _saved_cpn_set="${COMPOSE_PROJECT_NAME+x}" _saved_cpn="${COMPOSE_PROJECT_NAME:-}"
     cat > "$ROUTER_NGINX_DEFAULT" <<'EOF'
 server {
     listen 80 default_server;
@@ -1104,20 +1216,34 @@ server {
 EOF
 
     : > "$ROUTER_NGINX_DOMAINS"
+    _router_nets="$(router_proxy_networks)"
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
+        UPSTREAM_CONTAINER='' UPSTREAM_NETWORK='' UPSTREAM_CONTAINER_PORT=''
         # shellcheck disable=SC1090
         . "$_entry"
         [ -n "$DOMAIN" ] || continue
         [ -n "$UPSTREAM_PORT" ] || continue
+        # Into the app's container over its own network when the router is on
+        # it (tk-app-port-binds-every-interface): the host port is then not
+        # needed. Resolved per request, so a stopped project is a 502 for its
+        # own domain, not a router that refuses to load, and a recreated app is
+        # found again within 5 s. Otherwise the host port, as before.
+        _route="proxy_pass http://$UPSTREAM_HOST:$UPSTREAM_PORT;"
+        if [ -n "$UPSTREAM_CONTAINER" ] && [ -n "$UPSTREAM_CONTAINER_PORT" ] \
+            && printf '%s\n' "$_router_nets" | grep -Fx -- "$UPSTREAM_NETWORK" >/dev/null 2>&1; then
+            _route="resolver 127.0.0.11 valid=5s ipv6=off;
+        set \$semitexa_upstream $UPSTREAM_CONTAINER;
+        proxy_pass http://\$semitexa_upstream:$UPSTREAM_CONTAINER_PORT;"
+        fi
         cat >> "$ROUTER_NGINX_DOMAINS" <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
 
     location / {
-        proxy_pass http://$UPSTREAM_HOST:$UPSTREAM_PORT;
+        $_route
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -1128,6 +1254,7 @@ server {
 EOF
     done
     PROJECT_ROOT="$_saved_project_root"
+    if [ -n "$_saved_cpn_set" ]; then COMPOSE_PROJECT_NAME="$_saved_cpn"; else unset COMPOSE_PROJECT_NAME; fi
 }
 
 router_generate_dns_config() {
@@ -1445,10 +1572,12 @@ router_start_for_mode() {
         dns)
             router_apply_name_resolution
             router_compose up -d dns proxy
+            router_reconnect_all; router_generate_nginx_config
             router_compose restart dns proxy >/dev/null 2>&1 || true
             ;;
         hosts)
             router_compose up -d proxy
+            router_reconnect_all; router_generate_nginx_config
             router_compose stop dns >/dev/null 2>&1 || true
             router_compose restart proxy >/dev/null 2>&1 || true
             ;;
@@ -1498,10 +1627,12 @@ cmd_local_router_restart() {
     case "$_mode" in
         dns)
             router_compose up -d dns proxy
+            router_reconnect_all; router_generate_nginx_config
             router_compose restart dns proxy
             ;;
         hosts)
             router_compose up -d proxy
+            router_reconnect_all; router_generate_nginx_config
             router_compose restart proxy
             ;;
     esac
@@ -2172,6 +2303,9 @@ cmd_server_start() {
     project_ownership_reclaim || exit 1
     info "Starting containers..."
     server_start_run_with_port_conflict_fallback || exit $?
+    # Up, then connect, then render and reload: a router started before the
+    # app has no network to join yet.
+    router_attach_project
 
     _port="$(env_val SWOOLE_PORT 8080)"
     printf "\n"
@@ -2224,6 +2358,7 @@ cmd_server_stop() {
     stack_warn_live_agents stop
     stack_event stop
     info "Stopping containers..."
+    router_detach_project
     _compose="$(compose_bin)"
     _overlays="$(compose_all_args)"
     # shellcheck disable=SC2086
@@ -2291,10 +2426,14 @@ cmd_server_restart() {
         fi
         server_restart_build_or_warn
         _overlays="$(compose_all_args)"
+        router_detach_project
         # shellcheck disable=SC2086
         $_compose $_overlays down --remove-orphans
         run_compose up -d --no-build
     fi
+    # A new network after down/up, a new container after a recreate: the
+    # router joins it again and the domains follow.
+    router_attach_project
     # Again after the swap: the old root container could still write a file
     # between the first pass and its own stop.
     project_ownership_reclaim
