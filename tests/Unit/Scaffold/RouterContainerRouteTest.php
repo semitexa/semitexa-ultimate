@@ -105,7 +105,10 @@ final class RouterContainerRouteTest extends TestCase
 
         self::assertStringContainsString('UPSTREAM_CONTAINER=shop-app-1', (string) file_get_contents($this->root . '/home/.semitexa/router/registry/domains/shop.test.env'));
         // The domain moved to this project: another project's container is not its route.
-        self::assertStringNotContainsString('UPSTREAM_CONTAINER', (string) file_get_contents($this->root . '/home/.semitexa/router/registry/domains/taken.test.env'));
+        // Written, and this project's, first: a missing file would pass the negative (review, ultimate#137).
+        $taken = (string) file_get_contents($this->root . '/home/.semitexa/router/registry/domains/taken.test.env');
+        self::assertStringContainsString('PROJECT_ROOT=' . $this->root . "/project\n", $taken);
+        self::assertStringNotContainsString('UPSTREAM_CONTAINER', $taken);
     }
 
     #[Test]
@@ -119,7 +122,12 @@ final class RouterContainerRouteTest extends TestCase
         $script = (string) file_get_contents(self::SCRIPT);
         foreach (['cmd_server_stop', 'cmd_server_restart'] as $command) {
             self::assertSame(1, preg_match('/^' . $command . '\(\) \{\n(.*?)^\}\n/ms', $script, $body), $command);
-            self::assertLessThan(strpos($body[1], 'down --remove-orphans'), strpos($body[1], 'router_detach_project'), "{$command} detaches before down");
+            // Both found before they are compared: strpos() false is "less" than any position (review, ultimate#137).
+            $detach = strpos($body[1], 'router_detach_project');
+            $down = strpos($body[1], 'down --remove-orphans');
+            self::assertIsInt($detach, "{$command} detaches");
+            self::assertIsInt($down, "{$command} runs down");
+            self::assertLessThan($down, $detach, "{$command} detaches before down");
         }
     }
 
