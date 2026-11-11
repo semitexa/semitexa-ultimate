@@ -184,6 +184,17 @@ final class RouterContainerRouteTest extends TestCase
 
         $this->runScript("router_stale_projects > stale.txt");
 
+        // And the start says so, with each path and how to update an edited script (review, ultimate#141).
+        $this->runScript("router_check_before_rebind 2> warn.txt");
+        $warning = (string) file_get_contents($this->root . '/project/warn.txt');
+        self::assertStringContainsString('may reopen the shared router to the network', $warning);
+        foreach (['old', 'quoted'] as $name) {
+            self::assertStringContainsString('    ' . $this->root . "/{$name}\n", $warning);
+        }
+        self::assertStringNotContainsString($this->root . "/new\n", $warning);
+        self::assertStringContainsString('--write-scaffold-candidates', $warning);
+        self::assertStringContainsString('has no bin/semitexa: restore it, or, if the project is gone, remove its domains', $warning);
+
         self::assertSame(
             $this->root . "/gone (no bin/semitexa: not checked)\n" . $this->root . "/old\n" . $this->root . "/quoted\n",
             (string) file_get_contents($this->root . '/project/stale.txt'),

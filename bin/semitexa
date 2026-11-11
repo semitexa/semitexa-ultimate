@@ -1583,8 +1583,12 @@ router_check_before_rebind() {
     [ "$_check" -ne 1 ] || info "Rebinding it to 127.0.0.1."
     _stale="$(router_stale_projects)"
     if [ -n "$_stale" ]; then
-        warn "These projects' bin/semitexa reopen the shared router to the network when they start it; run 'bin/semitexa update' in each:"
+        # "may": a project without a script is listed as not checked (review, update#87).
+        warn "These projects may reopen the shared router to the network when they start it (an older bin/semitexa, or one not checked):"
         printf '%s\n' "$_stale" | while IFS= read -r _sp; do warn "    $_sp"; done
+        warn "Run 'bin/semitexa update' in each. One whose bin/semitexa was edited there keeps it: run 'bin/semitexa update --write-scaffold-candidates', merge bin/semitexa.new, and check that the router ports line reads \"127.0.0.1:80:80\"."
+        # Neither update runs where there is no script (review, installer#85).
+        warn "One marked not checked has no bin/semitexa: restore it, or, if the project is gone, remove its domains from $ROUTER_REGISTRY_DIR."
     fi
     return 0
 }
