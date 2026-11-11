@@ -109,7 +109,7 @@ Told **"make it"** in a project: run `bin/semitexa ai:make-it` and do what it sa
 
 **A spec is one source of approved work, not the only one.** Cut it into tasks under an epic of their own (`--phase=work`), show the architect the list, and on their yes approve that epic at once: `--epic` takes every idea in it, so nothing else belongs there. When the spec changes, file what it adds, approve each on the architect's yes (`ai:work:approve --id`, since `--epic` would take every idea in it), and discard what it dropped: the percent moves, and that is right. Tasks carry no weights; the count sits beside the percent.
 
-**One task, one commit, with a last line `Task: <id>`.** Do not push unless the project's charter says to.
+**One task, one commit, with a last line `Task: <id>`.** Do not push unless the project's charter says to. A commit in a framework repository (`packages/semitexa-*`, made from any session) is not the project's: it follows the workspace git flow (push its branch and open a PR from `develop`), and one left unpushed is work nobody ships. Check with `git -C packages/<repo> status -sb` ("ahead"); `ai:orient` lists them under `unshipped_commits` when semitexa/dev has it (tracked branches under this workspace's `packages/` only).
 
 ---
 
