@@ -4170,6 +4170,8 @@ cmd_ai_verify() {
 }
 
 cmd_proxy() {
+    # The wrapper's own lines go to stderr: stdout is the command's, and a
+    # --json caller parses it whole (tk-cli-info-line-on-stdout-with-json).
     if command -v php >/dev/null 2>&1; then
         if [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ]; then
             if is_app_running; then
@@ -4189,22 +4191,22 @@ cmd_proxy() {
                         warn "App container is not running for this project, and SWOOLE_PORT=$_swoole_port is held by another owner."
                         # Diagnosis returns non-zero, but we continue because
                         # the CLI command does not need a published port.
-                        proxy_diagnose_port_conflict "$_swoole_port" "$_our_compose" "$_our_app_id" || true
-                        printf "\n"
-                        info "Running this command in a one-off container (no host port published)."
+                        proxy_diagnose_port_conflict "$_swoole_port" "$_our_compose" "$_our_app_id" >&2 || true
+                        printf "\n" >&2
+                        info "Running this command in a one-off container (no host port published)." >&2
                         proxy_run_one_off_app "$@"
                         return $?
                     fi
 
-                    info "App container is not running; using a one-off container for this CLI command..."
+                    info "App container is not running; using a one-off container for this CLI command..." >&2
                     proxy_run_one_off_app "$@"
                     return $?
                 else
-                    info "Running locally with PHP (no Semitexa env files for Docker)..."
+                    info "Running locally with PHP (no Semitexa env files for Docker)..." >&2
                     php "$PROJECT_ROOT/vendor/bin/semitexa" "$@"
                 fi
             else
-                info "Running locally with PHP (Docker not available)..."
+                info "Running locally with PHP (Docker not available)..." >&2
                 php "$PROJECT_ROOT/vendor/bin/semitexa" "$@"
             fi
         else
@@ -4221,20 +4223,20 @@ cmd_proxy() {
                     _our_compose="$(proxy_compose_project_name)"
                     _our_app_id="$(env_val SEMITEXA_APP_ID '')"
                     warn "App container is not running and SWOOLE_PORT=$_swoole_port is held by another owner."
-                    proxy_diagnose_port_conflict "$_swoole_port" "$_our_compose" "$_our_app_id" || true
-                    printf "\n"
-                    info "Running this command in a one-off container (no host port published)."
+                    proxy_diagnose_port_conflict "$_swoole_port" "$_our_compose" "$_our_app_id" >&2 || true
+                    printf "\n" >&2
+                    info "Running this command in a one-off container (no host port published)." >&2
                 fi
                 proxy_run_one_off_app "$@"
             else
                 error "App container is not running."
-                info "Start with: bin/semitexa server:start"
+                info "Start with: bin/semitexa server:start" >&2
                 exit 1
             fi
         else
             error "PHP is not available and Docker is not running."
-            info "Either start Docker and run: bin/semitexa server:start"
-            info "Or install PHP locally"
+            info "Either start Docker and run: bin/semitexa server:start" >&2
+            info "Or install PHP locally" >&2
             exit 1
         fi
     fi
