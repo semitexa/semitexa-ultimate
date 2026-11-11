@@ -1555,12 +1555,37 @@ router_warn_if_public() {
     return "$_rc"
 }
 
+# The registered projects whose bin/semitexa still publishes the router on
+# every interface, one root per line (tk-router-refuses-public-bind). Every
+# project renders the shared router with its own script, so one from before
+# 2026-11-09 reopens port 80 to the network the next time it starts it; this
+# names them before that happens instead of "update each of your projects".
+router_stale_projects() {
+    # The ports line itself, anchored: a plain grep for the address also found
+    # this function's own text, so any script carrying it read as fresh
+    # (Fable review, installer#84). One root per line, spaces kept.
+    sed -n 's/^PROJECT_ROOT=//p' "$ROUTER_REGISTRY_DIR"/*.env 2>/dev/null | sort -u | while IFS= read -r _rs_root; do
+        [ -n "$_rs_root" ] && [ "$_rs_root" != "$PROJECT_ROOT" ] || continue
+        if [ ! -f "$_rs_root/bin/semitexa" ]; then
+            printf '%s (no bin/semitexa: not checked)\n' "$_rs_root"
+        elif ! grep -Eq '^[[:space:]]*- "127\.0\.0\.1:80:80"[[:space:]]*$' "$_rs_root/bin/semitexa" 2>/dev/null; then
+            printf '%s\n' "$_rs_root"
+        fi
+    done
+    return 0
+}
+
 # start and restart rebind (up -d with the rendered 127.0.0.1 port), so they
 # say so; doctor only reports.
 router_check_before_rebind() {
     _check=0
     router_warn_if_public || _check=$?
     [ "$_check" -ne 1 ] || info "Rebinding it to 127.0.0.1."
+    _stale="$(router_stale_projects)"
+    if [ -n "$_stale" ]; then
+        warn "These projects' bin/semitexa reopen the shared router to the network when they start it; run 'bin/semitexa update' in each:"
+        printf '%s\n' "$_stale" | while IFS= read -r _sp; do warn "    $_sp"; done
+    fi
     return 0
 }
 

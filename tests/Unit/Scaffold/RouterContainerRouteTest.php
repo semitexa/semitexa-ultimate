@@ -165,6 +165,32 @@ final class RouterContainerRouteTest extends TestCase
         self::assertStringContainsString("network connect blog_default semitexa-router-proxy\n", $calls);
     }
 
+    /**
+     * The projects whose script reopens the router to the network are named on
+     * every start (tk-router-refuses-public-bind): one from before 2026-11-09
+     * publishes "80:80" whenever it starts the shared router.
+     */
+    #[Test]
+    public function a_router_start_names_the_projects_whose_script_reopens_it(): void
+    {
+        // "quoted" carries the address only in a grep line, as this very function does:
+        // that is no proof its router is rendered on loopback (Fable review, installer#84).
+        foreach (['old' => "ports:\n      - \"80:80\"\n", 'new' => "ports:\n      - \"127.0.0.1:80:80\"\n", 'quoted' => "grep -q '\"127.0.0.1:80:80\"' x\nports:\n      - \"80:80\"\n"] as $name => $script) {
+            mkdir($this->root . "/{$name}/bin", 0755, true);
+            file_put_contents($this->root . "/{$name}/bin/semitexa", $script);
+            $this->entry("{$name}.test", '', $this->root . "/{$name}");
+        }
+        $this->entry('gone.test', '', $this->root . '/gone');
+
+        $this->runScript("router_stale_projects > stale.txt");
+
+        self::assertSame(
+            $this->root . "/gone (no bin/semitexa: not checked)\n" . $this->root . "/old\n" . $this->root . "/quoted\n",
+            (string) file_get_contents($this->root . '/project/stale.txt'),
+            'the old scripts, the address in a grep line not counting; a project without a script said, not skipped; never the new one',
+        );
+    }
+
     private function entry(string $domain, string $route, ?string $project = null, int $port = 9507): void
     {
         file_put_contents(
