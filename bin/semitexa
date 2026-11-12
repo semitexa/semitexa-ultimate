@@ -1547,7 +1547,7 @@ router_warn_if_public() {
         2[8-9].*|[3-9][0-9].*|[1-9][0-9][0-9]*) ;;
         *)
             warn "Docker Engine $_engine does not keep a port published on 127.0.0.1 from hosts on the same network; 28.0 does."
-            warn "The router is reachable from your network segment until Docker is upgraded."
+            warn "The router, and each project's app port on SWOOLE_BIND=127.0.0.1, are reachable from your network segment until Docker is upgraded."
             [ "$_rc" -eq 1 ] || _rc=2
             ;;
     esac
