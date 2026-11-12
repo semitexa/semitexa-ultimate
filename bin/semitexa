@@ -1126,7 +1126,16 @@ router_attach_project() {
     [ -n "$_ra_name" ] && [ -n "$_ra_net" ] || return 0
     docker network connect "$_ra_net" semitexa-router-proxy >/dev/null 2>&1 || true
     if ! router_proxy_networks | grep -Fx -- "$_ra_net" >/dev/null 2>&1; then
-        warn "The shared router could not join network $_ra_net; its domains keep going through port $(env_val SWOOLE_PORT 8080)."
+        # The host port is published on SWOOLE_BIND, 127.0.0.1 by default, where the
+        # router's host.docker.internal route cannot reach it (tk-app-port-binds-every-interface).
+        _ra_bind="$(env_val SWOOLE_BIND 127.0.0.1)"
+        _ra_direct="$_ra_bind"
+        [ "$_ra_direct" = "0.0.0.0" ] && _ra_direct=127.0.0.1
+        warn "The shared router could not join network $_ra_net, so its domains go through the host port $(env_val SWOOLE_PORT 8080), published on $_ra_bind. The router reaches that port only when SWOOLE_BIND=0.0.0.0 in .env; open http://$_ra_direct:$(env_val SWOOLE_PORT 8080) meanwhile."
+        # The container route an earlier attach wrote no longer resolves: write the
+        # host-port route the warning names, or the domain stays a 502 (review, ultimate#145).
+        router_generate_nginx_config
+        router_reload_proxy
         return 0
     fi
     _ra_port="$(env_val SWOOLE_PORT 8080)"
@@ -1545,7 +1554,7 @@ router_warn_if_public() {
         2[8-9].*|[3-9][0-9].*|[1-9][0-9][0-9]*) ;;
         *)
             warn "Docker Engine $_engine does not keep a port published on 127.0.0.1 from hosts on the same network; 28.0 does."
-            warn "The router is reachable from your network segment until Docker is upgraded."
+            warn "The router, and any app port published on 127.0.0.1 (SWOOLE_BIND's default), are reachable from your network segment until Docker is upgraded."
             [ "$_rc" -eq 1 ] || _rc=2
             ;;
     esac
