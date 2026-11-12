@@ -42,6 +42,8 @@ final class AgentsManualStaysShortTest extends TestCase
         $doctrine = (string) file_get_contents(self::ROOT . '/AGENTS_DOCTRINE.md');
 
         self::assertStringContainsString('**`ai:verify` is the one check.**', $manual);
+        // Read, not empty: the rows the next line looks at are there, saying ai:verify runs them.
+        self::assertMatchesRegularExpression('/^\| `lint:di` \|[^\n]*`ai:verify` runs it/m', $doctrine);
         self::assertDoesNotMatchRegularExpression('/^\| `lint:[a-z-]+` \|[^\n]*\| After /m', $doctrine, 'a lint row sends the agent to run it beside ai:verify');
     }
 
