@@ -4,5 +4,8 @@
     "include": {
         "css": ["css/**/*.css"],
         "js": ["js/**/*.js"]
+    },
+    "overrides": {
+        "css/hello.css": { "scope": "page" }
     }
 }
