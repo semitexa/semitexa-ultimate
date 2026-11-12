@@ -29,7 +29,10 @@ services:
       - .:/var/www/html
       - ${SEMITEXA_AGENTS_HOST_DIR:-./var/ai-work/agents}:/var/semitexa/agents
     ports:
-      - "${SWOOLE_PORT:-8080}:${SWOOLE_PORT:-8080}"
+      # This machine only by default (tk-app-port-binds-every-interface): the shared router
+      # reaches the app over the project's network. SWOOLE_BIND=0.0.0.0 in .env opens the
+      # port to the network, e.g. to test on a phone.
+      - "${SWOOLE_BIND:-127.0.0.1}:${SWOOLE_PORT:-8080}:${SWOOLE_PORT:-8080}"
     restart: unless-stopped
     # Docker kills the container 10 s after asking it to stop, which is as long
     # as a stopping worker waits for its requests (SWOOLE_MAX_WAIT_TIME, 10):

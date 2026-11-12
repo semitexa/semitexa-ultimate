@@ -1126,7 +1126,9 @@ router_attach_project() {
     [ -n "$_ra_name" ] && [ -n "$_ra_net" ] || return 0
     docker network connect "$_ra_net" semitexa-router-proxy >/dev/null 2>&1 || true
     if ! router_proxy_networks | grep -Fx -- "$_ra_net" >/dev/null 2>&1; then
-        warn "The shared router could not join network $_ra_net; its domains keep going through port $(env_val SWOOLE_PORT 8080)."
+        # The host port is published on SWOOLE_BIND, 127.0.0.1 by default, where the
+        # router's host.docker.internal route cannot reach it (tk-app-port-binds-every-interface).
+        warn "The shared router could not join network $_ra_net, so its domains go through the host port $(env_val SWOOLE_PORT 8080), published on $(env_val SWOOLE_BIND 127.0.0.1). The router reaches that port only when SWOOLE_BIND=0.0.0.0 in .env; open http://127.0.0.1:$(env_val SWOOLE_PORT 8080) meanwhile."
         return 0
     fi
     _ra_port="$(env_val SWOOLE_PORT 8080)"
