@@ -23,15 +23,54 @@ final class AppPortStaysOnThisMachineTest extends TestCase
     {
         $published = [];
         foreach (glob(self::ROOT . '/docker-compose*.yml') ?: [] as $file) {
-            preg_match_all('/^\s+-\s+"([^"]*:[^"]*)"\s*$/m', (string) preg_replace('/^.*#.*$/m', '', (string) file_get_contents($file)), $m);
-            foreach ($m[1] as $mapping) {
-                if (preg_match('/^\$\{SWOOLE_PORT|^\$\{SWOOLE_BIND|^[0-9.]+:|^\d+:\d+$/', $mapping) === 1) {
-                    $published[basename($file)][] = $mapping;
-                }
+            foreach (self::portEntries((string) file_get_contents($file)) as $entry) {
+                $published[basename($file)][] = $entry;
             }
         }
 
-        self::assertSame(['docker-compose.yml' => ['${SWOOLE_BIND:-127.0.0.1}:${SWOOLE_PORT:-8080}:${SWOOLE_PORT:-8080}']], $published, 'a port published on every interface opens the dev server to the network');
+        self::assertSame(['docker-compose.yml' => ['"${SWOOLE_BIND:-127.0.0.1}:${SWOOLE_PORT:-8080}:${SWOOLE_PORT:-8080}"']], $published, 'a port published on every interface opens the dev server to the network');
+    }
+
+    /** Review, ultimate#145: every entry under a ports: key, quoted, bare or long syntax, is read; none is skipped. */
+    #[Test]
+    public function an_unquoted_or_long_syntax_port_is_seen_too(): void
+    {
+        $yaml = "services:\n  app:\n    ports:\n      # a comment\n      - \"\${SWOOLE_BIND:-127.0.0.1}:9502:9502\"\n      - 9503:9503\n      - target: 80\n        published: 8081\n    volumes:\n      - ./a:/a\n";
+
+        self::assertSame(['"${SWOOLE_BIND:-127.0.0.1}:9502:9502"', '9503:9503', 'target: 80 published: 8081'], self::portEntries($yaml));
+    }
+
+    /**
+     * The entries under every `ports:` key, one string each; comments left out.
+     *
+     * @return list<string>
+     */
+    private static function portEntries(string $yaml): array
+    {
+        $entries = [];
+        $indent = null;
+        foreach (preg_split('/\R/', $yaml) ?: [] as $line) {
+            if (preg_match('/^(\s*)ports:\s*$/', $line, $m) === 1) {
+                $indent = strlen($m[1]);
+                continue;
+            }
+            if ($indent === null || trim($line) === '' || preg_match('/^\s*#/', $line) === 1) {
+                continue;
+            }
+            $depth = strlen($line) - strlen(ltrim($line));
+            if ($depth <= $indent) {
+                $indent = null;
+                continue;
+            }
+            $text = trim((string) preg_replace('/\s+#.*$/', '', $line));
+            if (str_starts_with($text, '- ')) {
+                $entries[] = substr($text, 2);
+            } elseif ($entries !== []) {
+                $entries[count($entries) - 1] .= ' ' . $text;
+            }
+        }
+
+        return $entries;
     }
 
     #[Test]

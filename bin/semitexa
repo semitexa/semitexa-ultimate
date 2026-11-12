@@ -1128,7 +1128,14 @@ router_attach_project() {
     if ! router_proxy_networks | grep -Fx -- "$_ra_net" >/dev/null 2>&1; then
         # The host port is published on SWOOLE_BIND, 127.0.0.1 by default, where the
         # router's host.docker.internal route cannot reach it (tk-app-port-binds-every-interface).
-        warn "The shared router could not join network $_ra_net, so its domains go through the host port $(env_val SWOOLE_PORT 8080), published on $(env_val SWOOLE_BIND 127.0.0.1). The router reaches that port only when SWOOLE_BIND=0.0.0.0 in .env; open http://127.0.0.1:$(env_val SWOOLE_PORT 8080) meanwhile."
+        _ra_bind="$(env_val SWOOLE_BIND 127.0.0.1)"
+        _ra_direct="$_ra_bind"
+        [ "$_ra_direct" = "0.0.0.0" ] && _ra_direct=127.0.0.1
+        warn "The shared router could not join network $_ra_net, so its domains go through the host port $(env_val SWOOLE_PORT 8080), published on $_ra_bind. The router reaches that port only when SWOOLE_BIND=0.0.0.0 in .env; open http://$_ra_direct:$(env_val SWOOLE_PORT 8080) meanwhile."
+        # The container route an earlier attach wrote no longer resolves: write the
+        # host-port route the warning names, or the domain stays a 502 (review, ultimate#145).
+        router_generate_nginx_config
+        router_reload_proxy
         return 0
     fi
     _ra_port="$(env_val SWOOLE_PORT 8080)"
