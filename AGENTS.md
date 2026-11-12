@@ -43,10 +43,8 @@ The **agent** is the reasoning system (Claude, Codex, Copilot). **Semitexa** is 
     have uncommitted edits; then `ai:agent join --name=<you> --intent="<one sentence>" --repo=<repo>`
     and `export SEMITEXA_AGENT_SESSION=<id>`. Moving a task to `in_progress` claims it; a task a
     live agent holds is refused (coordinate, or `--take-over`). `ai:agent leave` when done.
-    - `server:stop|restart` names the live agents it is about to interrupt (a full restart also
-      removes their one-off CLI containers); `server:start|stop|restart` log who ran them, and
-      `ai:orient` shows the last one.
-      Prefer `server:restart app` over a full restart when only the app needs reloading.
+    - `server:stop|restart` names the live agents it would interrupt; prefer `server:restart app`
+      when only the app needs reloading.
     - Before committing in a repo another live agent claimed, or one flagged "claimed by no
       agent", run `git status` as its own step and commit by pathspec — those files may not be yours.
 
@@ -202,7 +200,9 @@ A task runs, in order: **`ai:orient`** (first on cold start: who else is working
 | What runs now, one request in depth | `ai:observe ps`, `ai:observe show --id=<p-…>` — observe before hypothesizing |
 | Logs | `ai:ask logs --grep=<term> --lines=200 --json` |
 
-Every command with its role and when to use it — `ai:agent`, `ai:quality`, `ai:report`, `ai:verify:receipt`, `ai:invoke`, the observatory, the lints: **`AGENTS_DOCTRINE.md` §12**.
+Every command with its role — `ai:agent`, `ai:quality`, `ai:report`, `ai:verify:receipt`, `ai:invoke`, the observatory: **`AGENTS_DOCTRINE.md` §12**.
+
+**`ai:verify` is the one check.** It is layered — lints, tests, module structure, page checks — picks the layers by the kind of file changed, and names the one that failed. Do not run a lint yourself beside it; rerun a single layer (`bin/semitexa lint:<name>`, or the failing test) only to recheck what it reported.
 
 **`ai:verify` does NOT need a restart**: each check runs in a fresh CLI process that rediscovers from disk. `server:restart` (~16s) only before exercising the running server — browser, curl, E2E — since workers cache discovered classes and compiled templates.
 
