@@ -38,39 +38,8 @@ final class AppPortStaysOnThisMachineTest extends TestCase
         $yaml = "services:\n  app:\n    ports:\n      # a comment\n      - \"\${SWOOLE_BIND:-127.0.0.1}:9502:9502\"\n      - 9503:9503\n      - target: 80\n        published: 8081\n    volumes:\n      - ./a:/a\n";
 
         self::assertSame(['"${SWOOLE_BIND:-127.0.0.1}:9502:9502"', '9503:9503', 'target: 80 published: 8081'], self::portEntries($yaml));
-    }
-
-    /**
-     * The entries under every `ports:` key, one string each; comments left out.
-     *
-     * @return list<string>
-     */
-    private static function portEntries(string $yaml): array
-    {
-        $entries = [];
-        $indent = null;
-        foreach (preg_split('/\R/', $yaml) ?: [] as $line) {
-            if (preg_match('/^(\s*)ports:\s*$/', $line, $m) === 1) {
-                $indent = strlen($m[1]);
-                continue;
-            }
-            if ($indent === null || trim($line) === '' || preg_match('/^\s*#/', $line) === 1) {
-                continue;
-            }
-            $depth = strlen($line) - strlen(ltrim($line));
-            if ($depth <= $indent) {
-                $indent = null;
-                continue;
-            }
-            $text = trim((string) preg_replace('/\s+#.*$/', '', $line));
-            if (str_starts_with($text, '- ')) {
-                $entries[] = substr($text, 2);
-            } elseif ($entries !== []) {
-                $entries[count($entries) - 1] .= ' ' . $text;
-            }
-        }
-
-        return $entries;
+        self::assertSame(['"a:1:1"', '"b:2:2"'], self::portEntries("x:\n  ports: [\"a:1:1\", \"b:2:2\"]\n"), 'a flow list');
+        self::assertSame(['"a:1:1"'], self::portEntries("x:\n  ports:  # one\n  -  \"a:1:1\"\n  volumes: []\n"), 'a comment after the key, a list at its own indent');
     }
 
     #[Test]
@@ -80,5 +49,54 @@ final class AppPortStaysOnThisMachineTest extends TestCase
 
         self::assertStringContainsString('# SWOOLE_BIND=0.0.0.0', $env);
         self::assertDoesNotMatchRegularExpression('/^SWOOLE_BIND=/m', $env, 'the default lives in the compose file, so an unset .env keeps it on loopback');
+    }
+
+    /**
+     * The entries under every `ports:` key, one string each: block lists (indented or
+     * at the key's own indent), flow lists, long syntax joined onto its dash line;
+     * comments left out. Review, ultimate#145: a form it cannot read would pass unseen.
+     *
+     * @return list<string>
+     */
+    private static function portEntries(string $yaml): array
+    {
+        $entries = [];
+        $indent = null;
+        foreach (preg_split('/\R/', $yaml) ?: [] as $line) {
+            $code = rtrim((string) preg_replace('/\s+#.*$|^\s*#.*$/', '', $line));
+            if (preg_match('/^(\s*)(?:-\s+)?ports:\s*(.*)$/', $code, $m) === 1) {
+                $indent = null;
+                $rest = trim($m[2]);
+                if ($rest === '') {
+                    $indent = strlen($m[1]);
+                } elseif (preg_match('/^\[(.*)\]$/', $rest, $flow) === 1) {
+                    foreach (explode(',', $flow[1]) as $item) {
+                        if (trim($item) !== '') {
+                            $entries[] = trim($item);
+                        }
+                    }
+                } else {
+                    self::fail('a ports: value this test cannot read: ' . $rest);
+                }
+                continue;
+            }
+            if ($indent === null || trim($code) === '') {
+                continue;
+            }
+            $depth = strlen($code) - strlen(ltrim($code));
+            $text = trim($code);
+            $isItem = str_starts_with($text, '-');
+            if ($depth < $indent || ($depth === $indent && !$isItem)) {
+                $indent = null;
+                continue;
+            }
+            if ($isItem) {
+                $entries[] = trim(substr($text, 1));
+            } elseif ($entries !== []) {
+                $entries[count($entries) - 1] .= ' ' . $text;
+            }
+        }
+
+        return $entries;
     }
 }
