@@ -530,6 +530,100 @@ Clarifications break rhythm. Ask only when:
 
 Otherwise: pick the best option, say which and why, and proceed.
 
+## 12. Tool reference
+
+The full tables behind `AGENTS.md` §4 and §5, kept here so the manual every run reads stays short.
+
+### Workflow + memory
+
+| Command | Role | When |
+|---|---|---|
+| **`ai:orient`** | Session dashboard — **who else is working now** + git + active epic + in-progress tasks (with the agent holding each) + recent traces + last verify + next step | **First command on cold start.** Replaces ~6 probes. |
+| `ai:agent` | Presence: `join --name --intent --repo` (then export `SEMITEXA_AGENT_SESSION`), `list` (live agents + uncommitted edits per repo, and who claimed them), `leave`. Every `ai:*` command is a heartbeat; silent 15 min = not live | Right after `ai:orient`; `leave` when done |
+| `ai:task` | Classify prose → recipe + score + `confidence` (high/low/none) + next-step | Every new EXECUTE unit |
+| `ai:epic` | Orchestrate N tasks under a shared goal | CAPTURE save / non-trivial EXECUTE |
+| `ai:work` | Track one executable leaf unit | Every leaf task |
+| `ai:make-it` | What to do next, from the state of the backlog (§1a) | Told "make it" |
+| `ai:work:approve` | An idea becomes approved work, a task or a whole epic; keeps the architect's `--words`; `--revoke` returns it | On the architect's yes |
+| `ai:state` | Done over approved tasks per phase, for `./src`; `--with-framework` or `SEMITEXA_STATE_WITH_FRAMEWORK=1` adds the framework | Reporting how far the project has come |
+| `ai:audit` | Records that right or fast was looked at, and what it covered, so a phase with no tickets reads as clean and not as unread; it goes stale after 30 days. What it found is filed as tickets | After an audit, found or not |
+| `ai:context <recipe>` | Prior-art for a recipe | Before edits, once per task |
+| `ai:plan --files` | Risk-score recipe + files | Before edits on >1 file or unclear risk |
+| `ai:verify` | Precise lint+test+module-structure subset on diff (see [`MODULE_STRUCTURE.md`](vendor/semitexa/docs/docs/MODULE_STRUCTURE.md)) | **After every edit.** Non-negotiable. |
+| `ai:verify:rules` | How often each verify rule had a chance and fired, from every recorded run; rules that never fire come first. Quiet is not proof of uselessness: a guard on rarely-changed code is quiet by design | When deciding whether a rule still earns its place |
+| `ai:verify:receipt` | Checks the receipt an ai:verify run wrote (`receipt.id` in `--json`): intact, every file it checked unchanged since, verdict pass. **When you report that verification passed, name the receipt id** so the claim can be checked instead of believed. `--unread` lists runs nobody checked, red first (also in `ai:orient`) | Reporting a pass; reviewing a subagent's or someone else's |
+| `ai:quality` | Quality ledger: numbers that may only go down (`check` / `record` / `accept --metric --reason`). `ai:verify` already holds it; a regression fails, and so does an improvement until `record` locks it in. Raising a number needs `accept` with a reason, which lands in the diff. `ai:quality next` names what to improve next (also in `ai:orient`); humans see the same ledger, with trends, at `/__quality`. Workspace-only for now — elsewhere it reports `skipped` | When `ai:verify` names a `QualityLedgerGateTest` failure, or when choosing what to improve |
+| `ai:trace` | Durable cross-session event stream | Always. `export SEMITEXA_AI_TRACE_ID=<id>` at task start; `ai:task` / `ai:context` / `ai:plan` / `ai:verify` auto-append. |
+| `ai:backlog` | Stats + hygiene (`status=discarded`, never hard-delete) | Before big renders; on operator request |
+| `ai:report` | File a **framework** defect + the workaround as a Semitexa issue. Requires evidence; searches for duplicates first and adds a sighting instead; drafts locally when `gh` is unavailable so nothing is lost | Whenever you work around a Semitexa bug — see Directive 4a |
+
+### Read-only introspection — use BEFORE Read/Grep
+
+| Question | Command |
+|---|---|
+| Session state | `ai:orient --json` |
+| Project overview | `ai:ask project --json` |
+| Module shape | `ai:ask module --name=<Name> --json` |
+| Route chain (payload→handler→resource→template→auth) | `ai:ask route --path=</p> [--method=GET] --json` |
+| Events + listeners | `ai:ask event [--name=<Event>] --json` |
+| All routes | `routes:list [--json]` |
+| DI bindings | `contracts:list --json` |
+| Capabilities manifest — what COMMANDS exist to run | `ai:ask capabilities --json` |
+| What the FRAMEWORK can do — deferred regions, components, live transport, UI behaviours | `ai:ask mechanisms --json`; narrow with `--area=ssr` or `--area=ui`; `--id=<cap>` gives working code and how data gets in and out |
+| What UI already exists, and how to call it — components, primitives, behaviours | `ai:ask components`; one entry with its props and the call to copy: `ai:ask components --name=platform.grid` |
+| How a framework class is called — attribute parameters, helper and method signatures, enum cases | `ai:ask api --name=<Class>`; don't know the class: `ai:ask api --search=<words>` |
+| Logs | `ai:ask logs --grep=<term> --lines=200 [--level=ERROR] --json` |
+| What is running RIGHT NOW / what just finished | `ai:observe ps` *(live processes: http, sse, scheduler, queue; stale flags; waterfall links)* |
+| Live stream of process lifecycles | `ai:observe tail [--kind=] [--name=] [--follow --duration=15]` *(NDJSON; --follow self-terminates)* |
+| One process in depth — spans, queries with positions, payload snapshot | `ai:observe show --id=<p-…> [--source]` *(inlines the full trace when the request carried `?__trace=1`; `--source` adds the source of the method each span ran — read live, keyed `Class::method`, spans carry `source_ref`)* |
+| Re-run a recorded request in a sandbox | `ai:observe replay --id=<p-…> [--mutate k=v]` *(writes ALWAYS roll back, queue handoffs captured; diffs vs the original trace)* |
+
+### Project graph — structural queries, prefer over Grep
+
+The graph understands **real edges** (`instantiates`, `accepts`, `returns`, `implements`, `extends`, `uses`, `imports`, `handles`, `serves_route`) — use it whenever the question is about code structure, not string matches.
+
+| Question | Command |
+|---|---|
+| Who uses class `X`? | `ai:review-graph:query --usages=<FQCN> --json` |
+| What does class `X` depend on? | `ai:review-graph:query --dependencies=<FQCN> --json` |
+| Blast radius of changing `X` | `ai:review-graph:impact <FQCN> --json` |
+| Cross-module edges | `ai:review-graph:query --cross-module [--from=<M>] [--to=<M>] --json` |
+| Full-text symbol search | `ai:review-graph:query --search=<term> --json` |
+| Rebuild after large changes | `ai:review-graph:generate [--full] --json` |
+
+Accepts raw FQCN or node id.
+
+### Runtime + scaffolding
+
+| Command | Role | When |
+|---|---|---|
+| `ai:invoke` | Dry-run a handler — no HTTP / auth / middleware | Fast feedback on handler changes (`--route=</p>` or `--handler=<FQCN>`) |
+| `ai:observe` | The Observatory: live process journal, deep traces, sandbox replay. Humans get the same data at `/__observatory`; a request with `?__trace=1` records a full waterfall at `/__trace`, and every step there opens the source of the method that ran it at `/__trace/node` | **First stop when debugging runtime behaviour** — observe before hypothesizing. Dev-only by construction |
+| `make:*` | Generators — **dry-run by default**, `--write` commits. Prefer `make:page` over three `make:payload/handler/resource` calls. Generated files carry `/** @generated by 'semitexa make:X' */`. | New payload / handler / resource / module / service / contract / event-listener / command |
+| `lint:handlers` | Handler signature validity | After modifying handlers |
+| `lint:di` | DI injection validity | After changing service wiring |
+
+| `server:restart` | Reload the RUNNING server (~16s) | **Only** before exercising it — browser, curl, E2E. Workers cache discovered classes and compiled templates for their lifetime. |
+
+**`ai:verify` does NOT need a restart.** Every check runs in a fresh CLI process that rediscovers from disk, so a file saved a second ago is already visible. Wrapping verification in `server:restart` costs ~16s around ~4s of actual work — four fifths of the cycle, for nothing. The envelope says so in `restart`.
+
+**Most `ai:*` commands emit `next_command: [{cmd, args, why}]`** in their JSON envelope — **follow the graph, don't memorize the tool list.**
+
+
+### Backlog queries (`AGENTS.md` §5)
+
+| Operator says | Run |
+|---|---|
+| "show ideas / backlog / epics / initiatives" | `ai:epic list --json` *(scope=active default)* |
+| "show tasks / work items" | `ai:work list [--epic=<id>] --json` |
+| "what are we working on / active" | `ai:work list --status=in_progress,blocked --json` |
+| "what's next" | `ai:work list --status=new --json` |
+| "show epic X" | `ai:epic show --id=<id> --json` |
+| "show drafts / junk / archive / discarded / everything" | `ai:epic list --scope=<drafts\|junk\|archive\|discarded\|all> --json` |
+| "backlog health" | `ai:backlog stats --json` |
+| "clean the backlog" | `ai:backlog clean [--apply] --json` *(dry-run by default)* |
+
+
 ---
 
 *Short form: `AGENTS.md`. This file is the expansion — keep in the background, consult when needed.*
