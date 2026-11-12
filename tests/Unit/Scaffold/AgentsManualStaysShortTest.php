@@ -30,6 +30,21 @@ final class AgentsManualStaysShortTest extends TestCase
         self::assertLessThanOrEqual(self::BUDGET, $size, 'AGENTS.md grew: move reference material to AGENTS_DOCTRINE.md, keep the rules here');
     }
 
+    /**
+     * One tool for checks (tk-verify-one-door): the manual listed lint:handlers and
+     * lint:di as steps "after modifying", while ai:verify already ran both for those
+     * files, so an agent repeated the work and learned two of sixteen layers.
+     */
+    #[Test]
+    public function the_manual_names_one_check_and_no_lint_is_a_step_of_its_own(): void
+    {
+        $manual = (string) file_get_contents(self::ROOT . '/AGENTS.md');
+        $doctrine = (string) file_get_contents(self::ROOT . '/AGENTS_DOCTRINE.md');
+
+        self::assertStringContainsString('**`ai:verify` is the one check.**', $manual);
+        self::assertDoesNotMatchRegularExpression('/^\| `lint:[a-z-]+` \|[^\n]*\| After /m', $doctrine, 'a lint row sends the agent to run it beside ai:verify');
+    }
+
     #[Test]
     public function what_left_the_manual_is_still_one_pointer_away(): void
     {
