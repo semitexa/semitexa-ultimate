@@ -4058,8 +4058,11 @@ e2e_lock_acquire() {
             continue
         fi
         if [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null && mkdir "$_e2e_lock.takeover" 2>/dev/null; then
-            if [ "$(readlink "$_e2e_lock" 2>/dev/null || true)" = "$_e2e_holder" ]; then
-                rm -f "$_e2e_lock"
+            if [ "$(readlink "$_e2e_lock" 2>/dev/null || true)" = "$_e2e_holder" ] && ! rm -f "$_e2e_lock"; then
+                # Not ours to remove (a sticky var/run, another user's link): retrying would spin.
+                rmdir "$_e2e_lock.takeover" 2>/dev/null || true
+                error "Could not remove the dead E2E lock $_e2e_lock: remove it."
+                return 1
             fi
             rmdir "$_e2e_lock.takeover" 2>/dev/null || true
             continue

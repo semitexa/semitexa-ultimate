@@ -270,9 +270,17 @@ final class E2eOwnDatabaseTest extends TestCase
             ln() { return 1; }
             E2E_LOCK_TIMEOUT=0 e2e_lock_acquire 2>err || echo "cannot make it: failed"
             grep -q 'Could not create the E2E lock' err && echo "said why"
+            # Review, ultimate#146: a dead holder's lock this run cannot remove fails, never spins.
+            unset -f ln
+            sleep 30 & dead=$!; kill "$dead"; wait "$dead" 2>/dev/null || true
+            ln -s "$dead" var/run/e2e.lock
+            rm() { return 1; }
+            E2E_LOCK_TIMEOUT=0 e2e_lock_acquire 2>err || echo "cannot remove it: failed"
+            unset -f rm
+            grep -q 'Could not remove the dead E2E lock' err && [ ! -d var/run/e2e.lock.takeover ] && echo "said why, guard released"
             SH);
 
-        self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\ncannot make it: failed\nsaid why\n", $out);
+        self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\ncannot make it: failed\nsaid why\ncannot remove it: failed\nsaid why, guard released\n", $out);
     }
 
     private function unavailable(array $o, bool $status = false): string
