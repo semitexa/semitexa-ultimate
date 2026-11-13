@@ -131,6 +131,9 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
         $script = "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\nC_RED=''; C_RESET=''\n"
             . implode('', $all[0])
+            // The reset now runs under the trap, after the lock (installer#89); it is not what this
+            // test is about, and the compose stub has no database to answer it.
+            . "e2e_database_reset() { return 0; }\n"
             . "_compose=" . escapeshellarg($bin . '/compose') . "; _overlays='-f docker-compose.yml'\n"
             . $block[1] . "echo STARTED\n";
         file_put_contents($root . '/harness.sh', $script);
