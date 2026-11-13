@@ -95,7 +95,7 @@ final class E2eOwnDatabaseTest extends TestCase
         $start = strpos($phase, 'e2e_app_start "$_compose" "$_overlays" || exit 1');
         self::assertStringNotContainsString('$(e2e_app_start', $phase);
         self::assertStringContainsString('curl -fsS --connect-timeout 1 --max-time 2', $this->function('e2e_app_start'), 'one probe cannot hang the wait');
-        $trap = strpos($phase, 'trap "docker rm -f');
+        $trap = strpos($phase, 'trap "e2e_lock_end \'$_e2e_cleanup\'" EXIT');
         $preflight = strpos($phase, 'e2e_runner_preflight "$_compose" "$_e2e_runner_overlays"');
         self::assertNotFalse($start);
         self::assertNotFalse($trap);
@@ -134,6 +134,8 @@ final class E2eOwnDatabaseTest extends TestCase
             // The reset now runs under the trap, after the lock (installer#89); it is not what this
             // test is about, and the compose stub has no database to answer it.
             . "e2e_database_reset() { return 0; }\n"
+            // The phase takes the lock before this block; only its holder removes the container.
+            . "e2e_lock_acquire || exit 1\n"
             . "_compose=" . escapeshellarg($bin . '/compose') . "; _overlays='-f docker-compose.yml'\n"
             . $block[1] . "echo STARTED\n";
         file_put_contents($root . '/harness.sh', $script);
@@ -212,6 +214,29 @@ final class E2eOwnDatabaseTest extends TestCase
      *
      * @param array{overlays?: string, e2eFile?: bool, updateHelp?: string, env?: array<string, string>, shell?: array<string, string>} $o
      */
+    /** Review, installer#89: a run that does not hold the lock never removes the holder's container. */
+    #[Test]
+    public function only_the_lock_holder_removes_the_e2e_container_and_the_lock(): void
+    {
+        $root = $this->root([], true);
+        $out = $this->sh($root, <<<'SH'
+            docker() { echo "docker $*" >> calls; }
+            mkdir -p var/run/e2e.lock.d
+            sleep 30 & other=$!
+            echo "$other" > var/run/e2e.lock.d/pid
+            e2e_lock_end semitexa-e2e-x
+            [ -d var/run/e2e.lock.d ] && echo "other's lock kept"
+            kill "$other"
+            echo "$$" > var/run/e2e.lock.d/pid
+            e2e_lock_end semitexa-e2e-x
+            [ -d var/run/e2e.lock.d ] || echo "own lock gone"
+            e2e_lock_end semitexa-e2e-x
+            cat calls
+            SH);
+
+        self::assertSame("other's lock kept\nown lock gone\ndocker rm -f semitexa-e2e-x\n", $out, 'one removal, by the holder, and none once its turn ended');
+    }
+
     private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);

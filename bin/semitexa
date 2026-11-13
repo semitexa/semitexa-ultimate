@@ -3371,7 +3371,7 @@ ${_url_clean}/tests"
         # the 90 s the app takes to answer included (review, ultimate#135).
         _e2e_cleanup="$(e2e_container_name)"
         # shellcheck disable=SC2064
-        trap "docker rm -f '$_e2e_cleanup' >/dev/null 2>&1 || true; e2e_lock_release" EXIT
+        trap "e2e_lock_end '$_e2e_cleanup'" EXIT
         e2e_database_reset "$_compose" "$_overlays" || exit 1
         trap 'exit 130' INT
         trap 'exit 143' TERM
@@ -4061,8 +4061,12 @@ e2e_lock_acquire() {
     printf '%s\n' "$$" > "$_e2e_lock/pid"
 }
 
-e2e_lock_release() {
+# Ends this run's turn: its E2E container removed, then the lock, only while this run holds it. A
+# run still waiting, or one whose turn already ended, has another run's container under that name
+# (review, installer#89).
+e2e_lock_end() {
     if [ "$(cat "$PROJECT_ROOT/var/run/e2e.lock.d/pid" 2>/dev/null || true)" = "$$" ]; then
+        docker rm -f "$1" >/dev/null 2>&1 || true
         rm -rf "$PROJECT_ROOT/var/run/e2e.lock.d"
     fi
 }
@@ -4186,7 +4190,7 @@ cmd_ai_verify() {
             # Removed on every way out, Ctrl-C and the app's start-up wait included (as test:run).
             _vcleanup="$(e2e_container_name)"
             # shellcheck disable=SC2064
-            trap "docker rm -f '$_vcleanup' >/dev/null 2>&1 || true; e2e_lock_release" EXIT
+            trap "e2e_lock_end '$_vcleanup'" EXIT
             trap 'exit 130' INT
             trap 'exit 143' TERM
             if [ -n "$_vwhy" ]; then
@@ -4196,7 +4200,7 @@ cmd_ai_verify() {
             elif ! { e2e_database_reset "$_vcompose" "$_voverlays" >&2 && e2e_app_start "$_vcompose" "$_voverlays" >&2; }; then
                 _vwhy="the E2E app could not start"
                 # Not held through a run on the developer's app (Fable, installer#89).
-                e2e_lock_release
+                e2e_lock_end "$_vcleanup"
             fi
             if [ -z "$_vwhy" ]; then
                 _visolated="$E2E_APP_CONTAINER"
@@ -4240,10 +4244,7 @@ cmd_ai_verify() {
         done
         set +f
         IFS="$_vifs"
-        if [ -n "$_visolated" ]; then
-            docker rm -f "$_visolated" >/dev/null 2>&1 || true
-        fi
-        e2e_lock_release
+        e2e_lock_end "$_vcleanup"
 
         # The pages a changed template or stylesheet shows on (ai:verify --list-pages),
         # opened in light and dark by the page check semitexa/dev ships. Filed under
