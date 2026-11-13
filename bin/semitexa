@@ -3366,12 +3366,13 @@ ${_url_clean}/tests"
     _e2e_isolated=''
     _e2e_why="$(e2e_isolation_unavailable "$_compose" "$_overlays" || true)"
     if [ -z "$_e2e_why" ]; then
-        e2e_database_reset "$_compose" "$_overlays" || exit 1
+        e2e_lock_acquire || exit 1
         # Removed on every way out from here: a failed step, Ctrl-C or a kill,
         # the 90 s the app takes to answer included (review, ultimate#135).
         _e2e_cleanup="$(e2e_container_name)"
         # shellcheck disable=SC2064
-        trap "docker rm -f '$_e2e_cleanup' >/dev/null 2>&1 || true" EXIT
+        trap "docker rm -f '$_e2e_cleanup' >/dev/null 2>&1 || true; e2e_lock_release" EXIT
+        e2e_database_reset "$_compose" "$_overlays" || exit 1
         trap 'exit 130' INT
         trap 'exit 143' TERM
         e2e_app_start "$_compose" "$_overlays" || exit 1
@@ -4020,6 +4021,42 @@ e2e_container_name() {
 # within a second (the trap runs as the current sleep or probe ends) instead
 # of once a command substitution returns (review, installer#80).
 #   $1 compose binary   $2 compose -f arguments
+# One E2E app and one E2E database per project: test:run and ai:verify take turns at them, so a
+# second run cannot reset the database under the first one's specs, or remove its container
+# (review, installer#89). A directory is the lock (mkdir is atomic); the holder's pid is in it, and
+# a holder that died leaves a lock the next run takes over.
+e2e_lock_acquire() {
+    _e2e_lock="$PROJECT_ROOT/var/run/e2e.lock.d"
+    mkdir -p "$PROJECT_ROOT/var/run"
+    _e2e_lock_wait="${E2E_LOCK_TIMEOUT:-900}"
+    case "$_e2e_lock_wait" in ''|*[!0-9]*) _e2e_lock_wait=900 ;; esac
+    _e2e_lock_deadline=$(( $(date +%s) + _e2e_lock_wait ))
+    _e2e_lock_said=''
+    until mkdir "$_e2e_lock" 2>/dev/null; do
+        _e2e_holder="$(cat "$_e2e_lock/pid" 2>/dev/null || true)"
+        if [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null; then
+            rm -rf "$_e2e_lock"
+            continue
+        fi
+        if [ "$(date +%s)" -ge "$_e2e_lock_deadline" ]; then
+            error "Another E2E run (pid ${_e2e_holder:-unknown}) still holds $_e2e_lock after ${_e2e_lock_wait} s."
+            return 1
+        fi
+        if [ -z "$_e2e_lock_said" ]; then
+            info "Waiting for the E2E run in pid ${_e2e_holder:-unknown} to finish (one E2E app per project)..." >&2
+            _e2e_lock_said=1
+        fi
+        sleep 2
+    done
+    printf '%s\n' "$$" > "$_e2e_lock/pid"
+}
+
+e2e_lock_release() {
+    if [ "$(cat "$PROJECT_ROOT/var/run/e2e.lock.d/pid" 2>/dev/null || true)" = "$$" ]; then
+        rm -rf "$PROJECT_ROOT/var/run/e2e.lock.d"
+    fi
+}
+
 e2e_app_start() {
     E2E_APP_CONTAINER=
     _e2e_container="$(e2e_container_name)"
@@ -4139,10 +4176,10 @@ cmd_ai_verify() {
             # Removed on every way out, Ctrl-C and the app's start-up wait included (as test:run).
             _vcleanup="$(e2e_container_name)"
             # shellcheck disable=SC2064
-            trap "docker rm -f '$_vcleanup' >/dev/null 2>&1 || true" EXIT
+            trap "docker rm -f '$_vcleanup' >/dev/null 2>&1 || true; e2e_lock_release" EXIT
             trap 'exit 130' INT
             trap 'exit 143' TERM
-            if [ -z "$_vwhy" ] && e2e_database_reset "$_vcompose" "$_voverlays" >&2 && e2e_app_start "$_vcompose" "$_voverlays" >&2; then
+            if [ -z "$_vwhy" ] && e2e_lock_acquire && e2e_database_reset "$_vcompose" "$_voverlays" >&2 && e2e_app_start "$_vcompose" "$_voverlays" >&2; then
                 _visolated="$E2E_APP_CONTAINER"
                 SEMITEXA_E2E_APP_CONTAINER="$_visolated"
                 export SEMITEXA_E2E_APP_CONTAINER
@@ -4187,6 +4224,7 @@ cmd_ai_verify() {
         if [ -n "$_visolated" ]; then
             docker rm -f "$_visolated" >/dev/null 2>&1 || true
         fi
+        e2e_lock_release
 
         # The pages a changed template or stylesheet shows on (ai:verify --list-pages),
         # opened in light and dark by the page check semitexa/dev ships. Filed under
