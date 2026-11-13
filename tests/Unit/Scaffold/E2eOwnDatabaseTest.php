@@ -237,6 +237,33 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertSame("other's lock kept\nown lock gone\ndocker rm -f semitexa-e2e-x\n", $out, 'one removal, by the holder, and none once its turn ended');
     }
 
+    /**
+     * Review, installer#89: a fresh pidless lock is another waiter's new one, never stale; a takeover
+     * guard a killed waiter left does not block every later run.
+     */
+    #[Test]
+    public function a_fresh_pidless_lock_is_kept_and_an_abandoned_takeover_guard_is_recovered(): void
+    {
+        $root = $this->root([], true);
+        $out = $this->sh($root, <<<'SH'
+            # BusyBox touch reads no "2 minutes ago": a -t stamp both touch builds accept.
+            old="$(date -d "@$(( $(date +%s) - 120 ))" +%Y%m%d%H%M.%S)"
+            mkdir -p var/run/e2e.lock.d
+            e2e_lock_stale '' && echo "fresh pidless: stale" || echo "fresh pidless: kept"
+            touch -t "$old" var/run/e2e.lock.d
+            e2e_lock_stale '' && echo "old pidless: stale" || echo "old pidless: kept"
+            e2e_lock_stale "$$" && echo "live: stale" || echo "live: kept"
+            sleep 30 & dead=$!; kill "$dead"; wait "$dead" 2>/dev/null || true
+            echo "$dead" > var/run/e2e.lock.d/pid
+            mkdir var/run/e2e.lock.d.takeover
+            touch -t "$old" var/run/e2e.lock.d.takeover
+            E2E_LOCK_TIMEOUT=10 e2e_lock_acquire 2>/dev/null && echo "acquired: $(cat var/run/e2e.lock.d/pid)"
+            [ -d var/run/e2e.lock.d.takeover ] || echo "guard gone"
+            SH);
+
+        self::assertMatchesRegularExpression("/\\Afresh pidless: kept\nold pidless: stale\nlive: kept\nacquired: \\d+\nguard gone\n\\z/", $out);
+    }
+
     private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);

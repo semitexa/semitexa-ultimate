@@ -4035,13 +4035,15 @@ e2e_lock_acquire() {
     until mkdir "$_e2e_lock" 2>/dev/null; do
         _e2e_holder="$(cat "$_e2e_lock/pid" 2>/dev/null || true)"
         # A dead holder, or a lock left without a pid for a minute (killed between mkdir and the
-        # pid write). Taken over under a lock of its own, re-read inside it, so two waiters that
-        # saw the same dead pid cannot both take it, one removing the other's live lock (Fable).
-        if { [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null; } \
-            || { [ -z "$_e2e_holder" ] && [ -n "$(find "$_e2e_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
+        # pid write), is taken over under a guard of its own. Inside it the lock is judged again,
+        # so a waiter that saw a dead or pidless lock never removes the fresh one another waiter
+        # made meanwhile (Fable; review, installer#89).
+        if e2e_lock_stale "$_e2e_holder"; then
+            # The guard is held for an instant: one a minute old was left by a killed waiter.
+            find "$_e2e_lock.takeover" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
             if mkdir "$_e2e_lock.takeover" 2>/dev/null; then
                 _e2e_again="$(cat "$_e2e_lock/pid" 2>/dev/null || true)"
-                if [ "$_e2e_again" = "$_e2e_holder" ]; then
+                if [ "$_e2e_again" = "$_e2e_holder" ] && e2e_lock_stale "$_e2e_again"; then
                     rm -rf "$_e2e_lock"
                 fi
                 rmdir "$_e2e_lock.takeover" 2>/dev/null || true
@@ -4059,6 +4061,16 @@ e2e_lock_acquire() {
         sleep 2
     done
     printf '%s\n' "$$" > "$_e2e_lock/pid"
+}
+
+# Whether the lock may be taken over: its holder ($1, the pid read from it) is dead, or it has had
+# no pid for a minute.
+e2e_lock_stale() {
+    if [ -n "$1" ]; then
+        ! kill -0 "$1" 2>/dev/null
+    else
+        [ -n "$(find "$PROJECT_ROOT/var/run/e2e.lock.d" -maxdepth 0 -mmin +1 2>/dev/null)" ]
+    fi
 }
 
 # Ends this run's turn: its E2E container removed, then the lock, only while this run holds it. A
