@@ -4023,35 +4023,43 @@ e2e_container_name() {
 #   $1 compose binary   $2 compose -f arguments
 # One E2E app and one E2E database per project: test:run and ai:verify take turns at them, so a
 # second run cannot reset the database under the first one's specs, or remove its container
-# (review, installer#89). A directory is the lock (mkdir is atomic); the holder's pid is in it, and
-# a holder that died leaves a lock the next run takes over.
+# (review, installer#89). The lock is a symlink whose target is the holder's pid: `ln -s` makes it
+# and names its holder in one atomic step. A dead holder's lock is taken over under a guard, inside
+# which it is read again, so two waiters that saw the same dead pid cannot both take it. Nothing
+# guesses from ages (Fable): a guard left by a killed waiter makes the next runs time out, and the
+# error names both paths. Holders are assumed to be this user's processes in one pid namespace:
+# `kill -0` cannot see a live holder run under another user or in another container.
+e2e_lock_path() {
+    printf '%s' "$PROJECT_ROOT/var/run/e2e.lock"
+}
+
 e2e_lock_acquire() {
-    _e2e_lock="$PROJECT_ROOT/var/run/e2e.lock.d"
+    _e2e_lock="$(e2e_lock_path)"
     mkdir -p "$PROJECT_ROOT/var/run"
     _e2e_lock_wait="${E2E_LOCK_TIMEOUT:-900}"
     case "$_e2e_lock_wait" in ''|*[!0-9]*) _e2e_lock_wait=900 ;; esac
     _e2e_lock_deadline=$(( $(date +%s) + _e2e_lock_wait ))
     _e2e_lock_said=''
-    until mkdir "$_e2e_lock" 2>/dev/null; do
-        _e2e_holder="$(cat "$_e2e_lock/pid" 2>/dev/null || true)"
-        # A dead holder, or a lock left without a pid for a minute (killed between mkdir and the
-        # pid write), is taken over under a guard of its own. Inside it the lock is judged again,
-        # so a waiter that saw a dead or pidless lock never removes the fresh one another waiter
-        # made meanwhile (Fable; review, installer#89).
-        if e2e_lock_stale "$_e2e_holder"; then
-            # The guard is held for an instant: one a minute old was left by a killed waiter.
-            find "$_e2e_lock.takeover" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
-            if mkdir "$_e2e_lock.takeover" 2>/dev/null; then
-                _e2e_again="$(cat "$_e2e_lock/pid" 2>/dev/null || true)"
-                if [ "$_e2e_again" = "$_e2e_holder" ] && e2e_lock_stale "$_e2e_again"; then
-                    rm -rf "$_e2e_lock"
-                fi
-                rmdir "$_e2e_lock.takeover" 2>/dev/null || true
-                continue
+    # A directory there would take the link inside it (ln succeeds): not a lock this code made.
+    if [ -e "$_e2e_lock" ] && [ ! -L "$_e2e_lock" ]; then
+        error "$_e2e_lock is not an E2E lock (a symlink to a pid): remove it."
+        return 1
+    fi
+    until ln -sn "$$" "$_e2e_lock" 2>/dev/null; do
+        _e2e_holder="$(readlink "$_e2e_lock" 2>/dev/null || true)"
+        if [ -z "$_e2e_holder" ] && [ ! -L "$_e2e_lock" ]; then
+            continue # released between the two calls: try again
+        fi
+        if [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null && mkdir "$_e2e_lock.takeover" 2>/dev/null; then
+            if [ "$(readlink "$_e2e_lock" 2>/dev/null || true)" = "$_e2e_holder" ]; then
+                rm -f "$_e2e_lock"
             fi
+            rmdir "$_e2e_lock.takeover" 2>/dev/null || true
+            continue
         fi
         if [ "$(date +%s)" -ge "$_e2e_lock_deadline" ]; then
             error "Another E2E run (pid ${_e2e_holder:-unknown}) still holds $_e2e_lock after ${_e2e_lock_wait} s."
+            info "If no E2E run is going on, remove $_e2e_lock and $_e2e_lock.takeover." >&2
             return 1
         fi
         if [ -z "$_e2e_lock_said" ]; then
@@ -4060,26 +4068,15 @@ e2e_lock_acquire() {
         fi
         sleep 2
     done
-    printf '%s\n' "$$" > "$_e2e_lock/pid"
-}
-
-# Whether the lock may be taken over: its holder ($1, the pid read from it) is dead, or it has had
-# no pid for a minute.
-e2e_lock_stale() {
-    if [ -n "$1" ]; then
-        ! kill -0 "$1" 2>/dev/null
-    else
-        [ -n "$(find "$PROJECT_ROOT/var/run/e2e.lock.d" -maxdepth 0 -mmin +1 2>/dev/null)" ]
-    fi
 }
 
 # Ends this run's turn: its E2E container removed, then the lock, only while this run holds it. A
 # run still waiting, or one whose turn already ended, has another run's container under that name
 # (review, installer#89).
 e2e_lock_end() {
-    if [ "$(cat "$PROJECT_ROOT/var/run/e2e.lock.d/pid" 2>/dev/null || true)" = "$$" ]; then
+    if [ "$(readlink "$(e2e_lock_path)" 2>/dev/null || true)" = "$$" ]; then
         docker rm -f "$1" >/dev/null 2>&1 || true
-        rm -rf "$PROJECT_ROOT/var/run/e2e.lock.d"
+        rm -f "$(e2e_lock_path)"
     fi
 }
 

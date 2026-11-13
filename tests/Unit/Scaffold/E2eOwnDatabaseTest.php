@@ -221,15 +221,15 @@ final class E2eOwnDatabaseTest extends TestCase
         $root = $this->root([], true);
         $out = $this->sh($root, <<<'SH'
             docker() { echo "docker $*" >> calls; }
-            mkdir -p var/run/e2e.lock.d
+            mkdir -p var/run
             sleep 30 & other=$!
-            echo "$other" > var/run/e2e.lock.d/pid
+            ln -s "$other" var/run/e2e.lock
             e2e_lock_end semitexa-e2e-x
-            [ -d var/run/e2e.lock.d ] && echo "other's lock kept"
+            [ -L var/run/e2e.lock ] && echo "other's lock kept"
             kill "$other"
-            echo "$$" > var/run/e2e.lock.d/pid
+            rm var/run/e2e.lock && ln -s "$$" var/run/e2e.lock
             e2e_lock_end semitexa-e2e-x
-            [ -d var/run/e2e.lock.d ] || echo "own lock gone"
+            [ -L var/run/e2e.lock ] || echo "own lock gone"
             e2e_lock_end semitexa-e2e-x
             cat calls
             SH);
@@ -238,30 +238,36 @@ final class E2eOwnDatabaseTest extends TestCase
     }
 
     /**
-     * Review, installer#89: a fresh pidless lock is another waiter's new one, never stale; a takeover
-     * guard a killed waiter left does not block every later run.
+     * Review, installer#89, and Fable: the lock names its holder in the one step that makes it, so
+     * there is no pidless lock to guess about; a dead holder's lock is taken over; a guard left
+     * behind is not guessed away either, and the run that times out says which two paths to remove.
      */
     #[Test]
-    public function a_fresh_pidless_lock_is_kept_and_an_abandoned_takeover_guard_is_recovered(): void
+    public function a_dead_holder_is_taken_over_and_a_stuck_guard_is_named_at_the_timeout(): void
     {
         $root = $this->root([], true);
         $out = $this->sh($root, <<<'SH'
-            # BusyBox touch reads no "2 minutes ago": a -t stamp both touch builds accept.
-            old="$(date -d "@$(( $(date +%s) - 120 ))" +%Y%m%d%H%M.%S)"
-            mkdir -p var/run/e2e.lock.d
-            e2e_lock_stale '' && echo "fresh pidless: stale" || echo "fresh pidless: kept"
-            touch -t "$old" var/run/e2e.lock.d
-            e2e_lock_stale '' && echo "old pidless: stale" || echo "old pidless: kept"
-            e2e_lock_stale "$$" && echo "live: stale" || echo "live: kept"
+            # One-line helpers the function list leaves out; on a host, `info` would be texinfo's.
+            error() { echo "$*" >&2; }
+            info() { echo "$*"; }
+            mkdir -p var/run
             sleep 30 & dead=$!; kill "$dead"; wait "$dead" 2>/dev/null || true
-            echo "$dead" > var/run/e2e.lock.d/pid
-            mkdir var/run/e2e.lock.d.takeover
-            touch -t "$old" var/run/e2e.lock.d.takeover
-            E2E_LOCK_TIMEOUT=10 e2e_lock_acquire 2>/dev/null && echo "acquired: $(cat var/run/e2e.lock.d/pid)"
-            [ -d var/run/e2e.lock.d.takeover ] || echo "guard gone"
+            ln -s "$dead" var/run/e2e.lock
+            E2E_LOCK_TIMEOUT=10 e2e_lock_acquire 2>/dev/null
+            [ "$(readlink var/run/e2e.lock)" = "$$" ] && echo "dead holder taken over"
+            [ -d var/run/e2e.lock.takeover ] || echo "guard released"
+            rm var/run/e2e.lock
+            sleep 30 & dead=$!; kill "$dead"; wait "$dead" 2>/dev/null || true
+            ln -s "$dead" var/run/e2e.lock
+            mkdir var/run/e2e.lock.takeover
+            E2E_LOCK_TIMEOUT=0 e2e_lock_acquire 2>err || echo "stuck guard: timed out"
+            grep -q 'remove .*var/run/e2e.lock and .*var/run/e2e.lock.takeover' err && echo "both paths named"
+            rm -rf var/run/e2e.lock var/run/e2e.lock.takeover
+            mkdir var/run/e2e.lock
+            e2e_lock_acquire 2>/dev/null || echo "a directory there: refused"
             SH);
 
-        self::assertMatchesRegularExpression("/\\Afresh pidless: kept\nold pidless: stale\nlive: kept\nacquired: \\d+\nguard gone\n\\z/", $out);
+        self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\n", $out);
     }
 
     private function unavailable(array $o, bool $status = false): string
