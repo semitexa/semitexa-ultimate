@@ -95,7 +95,7 @@ final class E2eOwnDatabaseTest extends TestCase
         $start = strpos($phase, 'e2e_app_start "$_compose" "$_overlays" || exit 1');
         self::assertStringNotContainsString('$(e2e_app_start', $phase);
         self::assertStringContainsString('curl -fsS --connect-timeout 1 --max-time 2', $this->function('e2e_app_start'), 'one probe cannot hang the wait');
-        $trap = strpos($phase, 'trap "docker rm -f');
+        $trap = strpos($phase, 'trap "e2e_lock_end \'$_e2e_cleanup\'" EXIT');
         $preflight = strpos($phase, 'e2e_runner_preflight "$_compose" "$_e2e_runner_overlays"');
         self::assertNotFalse($start);
         self::assertNotFalse($trap);
@@ -131,6 +131,11 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertSame(1, preg_match('/^E2E_RUNTIME_DIRS=.*$/m', $this->script, $dirs));
         $script = "PROJECT_ROOT=" . escapeshellarg($root) . "\ncd \"\$PROJECT_ROOT\"\n" . ($dirs[0] ?? '') . "\nC_RED=''; C_RESET=''\n"
             . implode('', $all[0])
+            // The reset now runs under the trap, after the lock (installer#89); it is not what this
+            // test is about, and the compose stub has no database to answer it.
+            . "e2e_database_reset() { return 0; }\n"
+            // The phase takes the lock before this block; only its holder removes the container.
+            . "e2e_lock_acquire || exit 1\n"
             . "_compose=" . escapeshellarg($bin . '/compose') . "; _overlays='-f docker-compose.yml'\n"
             . $block[1] . "echo STARTED\n";
         file_put_contents($root . '/harness.sh', $script);
@@ -209,6 +214,75 @@ final class E2eOwnDatabaseTest extends TestCase
      *
      * @param array{overlays?: string, e2eFile?: bool, updateHelp?: string, env?: array<string, string>, shell?: array<string, string>} $o
      */
+    /** Review, installer#89: a run that does not hold the lock never removes the holder's container. */
+    #[Test]
+    public function only_the_lock_holder_removes_the_e2e_container_and_the_lock(): void
+    {
+        $root = $this->root([], true);
+        $out = $this->sh($root, <<<'SH'
+            docker() { echo "docker $*" >> calls; }
+            mkdir -p var/run
+            sleep 30 & other=$!
+            ln -s "$other" var/run/e2e.lock
+            e2e_lock_end semitexa-e2e-x
+            [ -L var/run/e2e.lock ] && echo "other's lock kept"
+            kill "$other"
+            rm var/run/e2e.lock && ln -s "$$" var/run/e2e.lock
+            e2e_lock_end semitexa-e2e-x
+            [ -L var/run/e2e.lock ] || echo "own lock gone"
+            e2e_lock_end semitexa-e2e-x
+            cat calls
+            SH);
+
+        self::assertSame("other's lock kept\nown lock gone\ndocker rm -f semitexa-e2e-x\n", $out, 'one removal, by the holder, and none once its turn ended');
+    }
+
+    /**
+     * Review, installer#89, and Fable: the lock names its holder in the one step that makes it, so
+     * there is no pidless lock to guess about; a dead holder's lock is taken over; a guard left
+     * behind is not guessed away either, and the run that times out says which two paths to remove.
+     */
+    #[Test]
+    public function a_dead_holder_is_taken_over_and_a_stuck_guard_is_named_at_the_timeout(): void
+    {
+        $root = $this->root([], true);
+        $out = $this->sh($root, <<<'SH'
+            # One-line helpers the function list leaves out; on a host, `info` would be texinfo's.
+            error() { echo "$*" >&2; }
+            info() { echo "$*"; }
+            mkdir -p var/run
+            sleep 30 & dead=$!; kill "$dead"; wait "$dead" 2>/dev/null || true
+            ln -s "$dead" var/run/e2e.lock
+            E2E_LOCK_TIMEOUT=10 e2e_lock_acquire 2>/dev/null
+            [ "$(readlink var/run/e2e.lock)" = "$$" ] && echo "dead holder taken over"
+            [ -d var/run/e2e.lock.takeover ] || echo "guard released"
+            rm var/run/e2e.lock
+            sleep 30 & dead=$!; kill "$dead"; wait "$dead" 2>/dev/null || true
+            ln -s "$dead" var/run/e2e.lock
+            mkdir var/run/e2e.lock.takeover
+            E2E_LOCK_TIMEOUT=0 e2e_lock_acquire 2>err || echo "stuck guard: timed out"
+            grep -q 'remove .*var/run/e2e.lock and .*var/run/e2e.lock.takeover' err && echo "both paths named"
+            rm -rf var/run/e2e.lock var/run/e2e.lock.takeover
+            mkdir var/run/e2e.lock
+            e2e_lock_acquire 2>/dev/null || echo "a directory there: refused"
+            rmdir var/run/e2e.lock
+            # Review, update#93: a lock that cannot be made fails at once, never spins.
+            ln() { return 1; }
+            E2E_LOCK_TIMEOUT=0 e2e_lock_acquire 2>err || echo "cannot make it: failed"
+            grep -q 'Could not create the E2E lock' err && echo "said why"
+            # Review, ultimate#146: a dead holder's lock this run cannot remove fails, never spins.
+            unset -f ln
+            sleep 30 & dead=$!; kill "$dead"; wait "$dead" 2>/dev/null || true
+            ln -s "$dead" var/run/e2e.lock
+            rm() { return 1; }
+            E2E_LOCK_TIMEOUT=0 e2e_lock_acquire 2>err || echo "cannot remove it: failed"
+            unset -f rm
+            grep -q 'Could not remove the dead E2E lock' err && [ ! -d var/run/e2e.lock.takeover ] && echo "said why, guard released"
+            SH);
+
+        self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\ncannot make it: failed\nsaid why\ncannot remove it: failed\nsaid why, guard released\n", $out);
+    }
+
     private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);

@@ -3366,12 +3366,13 @@ ${_url_clean}/tests"
     _e2e_isolated=''
     _e2e_why="$(e2e_isolation_unavailable "$_compose" "$_overlays" || true)"
     if [ -z "$_e2e_why" ]; then
-        e2e_database_reset "$_compose" "$_overlays" || exit 1
+        e2e_lock_acquire || exit 1
         # Removed on every way out from here: a failed step, Ctrl-C or a kill,
         # the 90 s the app takes to answer included (review, ultimate#135).
         _e2e_cleanup="$(e2e_container_name)"
         # shellcheck disable=SC2064
-        trap "docker rm -f '$_e2e_cleanup' >/dev/null 2>&1 || true" EXIT
+        trap "e2e_lock_end '$_e2e_cleanup'" EXIT
+        e2e_database_reset "$_compose" "$_overlays" || exit 1
         trap 'exit 130' INT
         trap 'exit 143' TERM
         e2e_app_start "$_compose" "$_overlays" || exit 1
@@ -4020,6 +4021,75 @@ e2e_container_name() {
 # within a second (the trap runs as the current sleep or probe ends) instead
 # of once a command substitution returns (review, installer#80).
 #   $1 compose binary   $2 compose -f arguments
+# One E2E app and one E2E database per project: test:run and ai:verify take turns at them, so a
+# second run cannot reset the database under the first one's specs, or remove its container
+# (review, installer#89). The lock is a symlink whose target is the holder's pid: `ln -s` makes it
+# and names its holder in one atomic step. A dead holder's lock is taken over under a guard, inside
+# which it is read again, so two waiters that saw the same dead pid cannot both take it. Nothing
+# guesses from ages (Fable): a guard left by a killed waiter makes the next runs time out, and the
+# error names both paths. Holders are assumed to be this user's processes in one pid namespace:
+# `kill -0` cannot see a live holder run under another user or in another container.
+e2e_lock_path() {
+    printf '%s' "$PROJECT_ROOT/var/run/e2e.lock"
+}
+
+e2e_lock_acquire() {
+    _e2e_lock="$(e2e_lock_path)"
+    mkdir -p "$PROJECT_ROOT/var/run"
+    _e2e_lock_wait="${E2E_LOCK_TIMEOUT:-900}"
+    case "$_e2e_lock_wait" in ''|*[!0-9]*) _e2e_lock_wait=900 ;; esac
+    _e2e_lock_deadline=$(( $(date +%s) + _e2e_lock_wait ))
+    _e2e_lock_said=''
+    # A directory there would take the link inside it (ln succeeds): not a lock this code made.
+    if [ -e "$_e2e_lock" ] && [ ! -L "$_e2e_lock" ]; then
+        error "$_e2e_lock is not an E2E lock (a symlink to a pid): remove it."
+        return 1
+    fi
+    until ln -sn "$$" "$_e2e_lock" 2>/dev/null; do
+        _e2e_holder="$(readlink "$_e2e_lock" 2>/dev/null || true)"
+        if [ -z "$_e2e_holder" ] && [ ! -L "$_e2e_lock" ]; then
+            # Released between the two calls, or never makeable (var/run not writable): one more
+            # try tells them apart, so the second cannot spin past the deadline (review, update#93).
+            ln -sn "$$" "$_e2e_lock" 2>/dev/null && break
+            if [ ! -L "$_e2e_lock" ]; then
+                error "Could not create the E2E lock $_e2e_lock: is $PROJECT_ROOT/var/run writable?"
+                return 1
+            fi
+            continue
+        fi
+        if [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null && mkdir "$_e2e_lock.takeover" 2>/dev/null; then
+            if [ "$(readlink "$_e2e_lock" 2>/dev/null || true)" = "$_e2e_holder" ] && ! rm -f "$_e2e_lock"; then
+                # Not ours to remove (a sticky var/run, another user's link): retrying would spin.
+                rmdir "$_e2e_lock.takeover" 2>/dev/null || true
+                error "Could not remove the dead E2E lock $_e2e_lock: remove it."
+                return 1
+            fi
+            rmdir "$_e2e_lock.takeover" 2>/dev/null || true
+            continue
+        fi
+        if [ "$(date +%s)" -ge "$_e2e_lock_deadline" ]; then
+            error "Another E2E run (pid ${_e2e_holder:-unknown}) still holds $_e2e_lock after ${_e2e_lock_wait} s."
+            info "If no E2E run is going on, remove $_e2e_lock and $_e2e_lock.takeover." >&2
+            return 1
+        fi
+        if [ -z "$_e2e_lock_said" ]; then
+            info "Waiting for the E2E run in pid ${_e2e_holder:-unknown} to finish (one E2E app per project)..." >&2
+            _e2e_lock_said=1
+        fi
+        sleep 2
+    done
+}
+
+# Ends this run's turn: its E2E container removed, then the lock, only while this run holds it. A
+# run still waiting, or one whose turn already ended, has another run's container under that name
+# (review, installer#89).
+e2e_lock_end() {
+    if [ "$(readlink "$(e2e_lock_path)" 2>/dev/null || true)" = "$$" ]; then
+        docker rm -f "$1" >/dev/null 2>&1 || true
+        rm -f "$(e2e_lock_path)"
+    fi
+}
+
 e2e_app_start() {
     E2E_APP_CONTAINER=
     _e2e_container="$(e2e_container_name)"
@@ -4129,6 +4199,38 @@ cmd_ai_verify() {
         fi
         _vcompose="$(compose_bin)"
         _voverlays="$(test_compose_overlays)"
+        # A changed spec runs where test:run runs it: on the E2E phase's own app and database, not
+        # the developer's (tk-verify-e2e-runs-against-dev-app: a spec green in test:run timed out
+        # here on the developer's data). Without that app, as before, said out loud.
+        _vrunner="$_voverlays"
+        _visolated=''
+        if printf '%s\n' "$_vspecs" | grep -q '/tests/E2E/.*\.spec\.ts$'; then
+            _vwhy="$(e2e_isolation_unavailable "$_vcompose" "$_voverlays" || true)"
+            # Removed on every way out, Ctrl-C and the app's start-up wait included (as test:run).
+            _vcleanup="$(e2e_container_name)"
+            # shellcheck disable=SC2064
+            trap "e2e_lock_end '$_vcleanup'" EXIT
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
+            if [ -n "$_vwhy" ]; then
+                :
+            elif ! e2e_lock_acquire; then
+                _vwhy="another E2E run held the project's E2E app past the wait"
+            elif ! { e2e_database_reset "$_vcompose" "$_voverlays" >&2 && e2e_app_start "$_vcompose" "$_voverlays" >&2; }; then
+                _vwhy="the E2E app could not start"
+                # Not held through a run on the developer's app (Fable, installer#89).
+                e2e_lock_end "$_vcleanup"
+            fi
+            if [ -z "$_vwhy" ]; then
+                _visolated="$E2E_APP_CONTAINER"
+                SEMITEXA_E2E_APP_CONTAINER="$_visolated"
+                export SEMITEXA_E2E_APP_CONTAINER
+                _vrunner="$_voverlays -f docker-compose.e2e.yml"
+                info "Changed E2E specs run on their own app ($_visolated) and database ($(e2e_db_name)), not the one you work in." >&2
+            else
+                warn "The changed E2E specs run against your app and its database: $_vwhy." >&2
+            fi
+        fi
         # One path per line, taken literally: no splitting on spaces, no globbing.
         _vifs="$IFS"
         IFS='
@@ -4155,12 +4257,13 @@ cmd_ai_verify() {
                 set +f
                 env_export_compose_context
                 # shellcheck disable=SC2086
-                $_vcompose $_voverlays run --rm --no-deps -T e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
+                $_vcompose $_vrunner run --rm --no-deps -T e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
             ) > "$_vdir/$_vsha.log" 2>&1 < /dev/null || _vrc=$?
             printf '%s\n' "$_vrc" > "$_vdir/$_vsha.exit"
         done
         set +f
         IFS="$_vifs"
+        e2e_lock_end "$_vcleanup"
 
         # The pages a changed template or stylesheet shows on (ai:verify --list-pages),
         # opened in light and dark by the page check semitexa/dev ships. Filed under
