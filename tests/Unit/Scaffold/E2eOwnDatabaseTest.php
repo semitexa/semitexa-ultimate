@@ -265,9 +265,14 @@ final class E2eOwnDatabaseTest extends TestCase
             rm -rf var/run/e2e.lock var/run/e2e.lock.takeover
             mkdir var/run/e2e.lock
             e2e_lock_acquire 2>/dev/null || echo "a directory there: refused"
+            rmdir var/run/e2e.lock
+            # Review, update#93: a lock that cannot be made fails at once, never spins.
+            ln() { return 1; }
+            E2E_LOCK_TIMEOUT=0 e2e_lock_acquire 2>err || echo "cannot make it: failed"
+            grep -q 'Could not create the E2E lock' err && echo "said why"
             SH);
 
-        self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\n", $out);
+        self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\ncannot make it: failed\nsaid why\n", $out);
     }
 
     private function unavailable(array $o, bool $status = false): string

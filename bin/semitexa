@@ -4048,7 +4048,14 @@ e2e_lock_acquire() {
     until ln -sn "$$" "$_e2e_lock" 2>/dev/null; do
         _e2e_holder="$(readlink "$_e2e_lock" 2>/dev/null || true)"
         if [ -z "$_e2e_holder" ] && [ ! -L "$_e2e_lock" ]; then
-            continue # released between the two calls: try again
+            # Released between the two calls, or never makeable (var/run not writable): one more
+            # try tells them apart, so the second cannot spin past the deadline (review, update#93).
+            ln -sn "$$" "$_e2e_lock" 2>/dev/null && break
+            if [ ! -L "$_e2e_lock" ]; then
+                error "Could not create the E2E lock $_e2e_lock: is $PROJECT_ROOT/var/run writable?"
+                return 1
+            fi
+            continue
         fi
         if [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null && mkdir "$_e2e_lock.takeover" 2>/dev/null; then
             if [ "$(readlink "$_e2e_lock" 2>/dev/null || true)" = "$_e2e_holder" ]; then
