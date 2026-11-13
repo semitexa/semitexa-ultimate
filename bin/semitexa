@@ -4034,9 +4034,19 @@ e2e_lock_acquire() {
     _e2e_lock_said=''
     until mkdir "$_e2e_lock" 2>/dev/null; do
         _e2e_holder="$(cat "$_e2e_lock/pid" 2>/dev/null || true)"
-        if [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null; then
-            rm -rf "$_e2e_lock"
-            continue
+        # A dead holder, or a lock left without a pid for a minute (killed between mkdir and the
+        # pid write). Taken over under a lock of its own, re-read inside it, so two waiters that
+        # saw the same dead pid cannot both take it, one removing the other's live lock (Fable).
+        if { [ -n "$_e2e_holder" ] && ! kill -0 "$_e2e_holder" 2>/dev/null; } \
+            || { [ -z "$_e2e_holder" ] && [ -n "$(find "$_e2e_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
+            if mkdir "$_e2e_lock.takeover" 2>/dev/null; then
+                _e2e_again="$(cat "$_e2e_lock/pid" 2>/dev/null || true)"
+                if [ "$_e2e_again" = "$_e2e_holder" ]; then
+                    rm -rf "$_e2e_lock"
+                fi
+                rmdir "$_e2e_lock.takeover" 2>/dev/null || true
+                continue
+            fi
         fi
         if [ "$(date +%s)" -ge "$_e2e_lock_deadline" ]; then
             error "Another E2E run (pid ${_e2e_holder:-unknown}) still holds $_e2e_lock after ${_e2e_lock_wait} s."
@@ -4179,14 +4189,23 @@ cmd_ai_verify() {
             trap "docker rm -f '$_vcleanup' >/dev/null 2>&1 || true; e2e_lock_release" EXIT
             trap 'exit 130' INT
             trap 'exit 143' TERM
-            if [ -z "$_vwhy" ] && e2e_lock_acquire && e2e_database_reset "$_vcompose" "$_voverlays" >&2 && e2e_app_start "$_vcompose" "$_voverlays" >&2; then
+            if [ -n "$_vwhy" ]; then
+                :
+            elif ! e2e_lock_acquire; then
+                _vwhy="another E2E run held the project's E2E app past the wait"
+            elif ! { e2e_database_reset "$_vcompose" "$_voverlays" >&2 && e2e_app_start "$_vcompose" "$_voverlays" >&2; }; then
+                _vwhy="the E2E app could not start"
+                # Not held through a run on the developer's app (Fable, installer#89).
+                e2e_lock_release
+            fi
+            if [ -z "$_vwhy" ]; then
                 _visolated="$E2E_APP_CONTAINER"
                 SEMITEXA_E2E_APP_CONTAINER="$_visolated"
                 export SEMITEXA_E2E_APP_CONTAINER
                 _vrunner="$_voverlays -f docker-compose.e2e.yml"
                 info "Changed E2E specs run on their own app ($_visolated) and database ($(e2e_db_name)), not the one you work in." >&2
             else
-                warn "The changed E2E specs run against your app and its database: ${_vwhy:-the E2E app could not start}." >&2
+                warn "The changed E2E specs run against your app and its database: $_vwhy." >&2
             fi
         fi
         # One path per line, taken literally: no splitting on spaces, no globbing.
