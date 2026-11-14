@@ -2918,6 +2918,11 @@ cmd_test_run() {
                 _test_spec="${_test_spec#./}"
                 case "$_test_spec" in
                     *[[:space:]]*) error "An E2E spec path with a space cannot be passed to Playwright here: $_test_arg"; exit 1 ;;
+                    # Playwright matches the path it collected, never ./ or ../ in it (review, installer#91).
+                    /*|*//*|*/./*|./*|*/../*|../*)
+                        error "Name the spec by its plain project-relative path (no ./, ../ or //): $_test_arg"
+                        exit 1
+                        ;;
                 esac
                 if [ ! -f "$PROJECT_ROOT/$_test_spec" ]; then
                     error "No such E2E spec: $_test_arg (paths are relative to the project root)."

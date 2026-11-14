@@ -37,6 +37,10 @@ final class TestRunOneSpecTest extends TestCase
         self::assertStringContainsString('test:run has no --e2e option: name the spec itself', $this->run_('--e2e', 'tests/E2E/a.spec.ts'));
         self::assertStringContainsString('An E2E spec runs on its own, without PHPUnit: drop --filter X', $this->run_('tests/E2E/a.spec.ts', '--filter', 'X'));
         self::assertStringContainsString('No such E2E spec: tests/E2E/missing.spec.ts', $this->run_('tests/E2E/missing.spec.ts'));
+        // Review, installer#91: Playwright matches the collected path, which has no ./ or ../ in it.
+        foreach (['tests/E2E/./a.spec.ts', 'tests/../tests/E2E/a.spec.ts', 'tests//E2E/a.spec.ts', '../x/tests/E2E/a.spec.ts'] as $odd) {
+            self::assertStringContainsString('Name the spec by its plain project-relative path', $this->run_($odd), $odd);
+        }
     }
 
     #[Test]
