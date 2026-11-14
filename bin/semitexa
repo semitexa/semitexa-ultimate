@@ -2506,6 +2506,7 @@ cmd_list() {
     printf "  %-32s %s\n" "lint:skin-legacy"        "Regression guard for the unified frontend skin-mode contract"
     printf "  %-32s %s\n" "lint:skin-tokens"        "Regression guard for the canonical skin token format (skin.json + tokens.css)"
     printf "  %-32s %s\n" "test:run [-- phpunit-args]" "Run PHPUnit then E2E (Playwright) inside Docker (APP_ENV=dev)"
+    printf "  %-32s %s\n" "test:run <path>.spec.ts..." "Run only the named E2E spec(s), on the E2E phase's own app"
     printf "  %-32s %s\n" "mcp"                   "MCP server on stdio for a coding agent (dev only)"
     printf "  %-32s %s\n" "mcp:config"            "Print how to connect Claude Code, Cursor or Claude Desktop to it"
     printf "  %-32s %s\n" "self-test"             "Verify setup"
@@ -2902,6 +2903,35 @@ phpunit_option_takes_value() {
 
 cmd_test_run() {
     [ "${1:-}" != "--" ] || shift
+    # A spec path runs the E2E phase on that spec alone, PHPUnit skipped: an agent writing one
+    # spec ran the whole suite to see it (tk-test-run-one-e2e-spec). Paths are project-relative.
+    _e2e_only_specs=''
+    _e2e_other=''
+    for _test_arg in "$@"; do
+        case "$_test_arg" in
+            --e2e|--e2e=*)
+                error "test:run has no $_test_arg option: name the spec itself, e.g. bin/semitexa test:run src/modules/Foo/tests/E2E/foo.spec.ts"
+                exit 1
+                ;;
+            *.spec.ts)
+                _test_spec="${_test_arg#"$PROJECT_ROOT"/}"
+                _test_spec="${_test_spec#./}"
+                case "$_test_spec" in
+                    *[[:space:]]*) error "An E2E spec path with a space cannot be passed to Playwright here: $_test_arg"; exit 1 ;;
+                esac
+                if [ ! -f "$PROJECT_ROOT/$_test_spec" ]; then
+                    error "No such E2E spec: $_test_arg (paths are relative to the project root)."
+                    exit 1
+                fi
+                _e2e_only_specs="${_e2e_only_specs:+$_e2e_only_specs }$_test_spec"
+                ;;
+            *) _e2e_other="${_e2e_other:+$_e2e_other }$_test_arg" ;;
+        esac
+    done
+    if [ -n "$_e2e_only_specs" ] && [ -n "$_e2e_other" ]; then
+        error "An E2E spec runs on its own, without PHPUnit: drop $_e2e_other, or run PHPUnit separately."
+        exit 1
+    fi
     _test_information=0
     for _test_arg in "$@"; do
         case "$_test_arg" in
@@ -2951,6 +2981,11 @@ cmd_test_run() {
 
     _compose="$(compose_bin)"
     _files_display="$(printf '%s' "$_overlays" | sed 's/-f //g' | awk '{$1=$1; print}' | tr ' ' ',' | sed 's/,/, /g')"
+
+    if [ -n "$_e2e_only_specs" ]; then
+        info "E2E spec(s) named: only the E2E phase runs, on them ($_e2e_only_specs); PHPUnit is skipped."
+        test_run_e2e_phase
+    fi
 
     # ── Phase 1: PHPUnit ────────────────────────────────────────────────
     printf "\n%s%s Phase 1/2 — PHPUnit (Docker) %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
@@ -3339,6 +3374,13 @@ ${_url_clean}/tests"
         exit 0
     fi
 
+    test_run_e2e_phase
+}
+
+# Phase 2 of test:run, on its own so a named spec can run it without Phase 1
+# (tk-test-run-one-e2e-spec). Reads cmd_test_run's $_compose, $_overlays and
+# $_e2e_only_specs; it ends the script, as the end of test:run always did.
+test_run_e2e_phase() {
     printf "\n%s%s Phase 2/2 — E2E tests (Playwright in Docker) %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
 
     _e2e_dirs="$(discover_e2e_dirs)"
@@ -3401,6 +3443,10 @@ ${_url_clean}/tests"
     # installed. Passing the discovered dirs as path filters keeps the two
     # in agreement.
     _e2e_spec_args="$(printf '%s' "$_e2e_dirs" | tr '\n' ' ')"
+    # Named specs narrow the run to themselves (tk-test-run-one-e2e-spec).
+    if [ -n "${_e2e_only_specs:-}" ]; then
+        _e2e_spec_args="$_e2e_only_specs"
+    fi
     # The runner writes test-results as the host user now; a directory an
     # earlier root run left behind would refuse it (EACCES on .last-run.json).
     project_ownership_reclaim || exit 1
