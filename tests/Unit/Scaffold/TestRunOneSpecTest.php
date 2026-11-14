@@ -57,7 +57,9 @@ final class TestRunOneSpecTest extends TestCase
         $phase = (string) strstr($this->script, 'test_run_e2e_phase() {');
         $override = strpos($phase, 'for _e2e_named in $_e2e_only_specs; do');
         self::assertNotFalse($override, 'the named specs replace the discovered dirs');
-        self::assertLessThan(strpos($phase, 'playwright test --config=playwright.config.ts $_e2e_spec_args'), $override, 'before the runner is called');
+        $runner = strpos($phase, 'playwright test --config=playwright.config.ts $_e2e_spec_args');
+        self::assertIsInt($runner, 'the runner is called with the filters');
+        self::assertLessThan($runner, $override, 'before the runner is called');
     }
 
     /** Review, installer#91 and update#95. */
@@ -69,9 +71,15 @@ final class TestRunOneSpecTest extends TestCase
         self::assertStringContainsString('if [ -z "$_e2e_dirs" ] && [ -z "${_e2e_only_specs:-}" ]; then', $phase);
         // MySQL is started by the reset itself, before the drop: Phase 1 is not there to do it.
         $reset = (string) strstr($this->script, 'e2e_database_reset() {');
-        self::assertLessThan(strpos($reset, 'DROP DATABASE'), strpos($reset, 'ensure_test_database "$1" "$2" "$_e2e_name"'));
-        // So is Redis when the app uses it: the E2E app starts with --no-deps.
-        self::assertLessThan(strpos($reset, 'DROP DATABASE'), strpos($reset, '$1 $2 up -d redis'));
+        // A position that is not there is false, which compares below any number (review, ultimate#147).
+        $drop = strpos($reset, 'DROP DATABASE');
+        $mysql = strpos($reset, 'ensure_test_database "$1" "$2" "$_e2e_name"');
+        $redis = strpos($reset, '$1 $2 up -d redis');
+        self::assertIsInt($drop);
+        self::assertIsInt($mysql, 'MySQL is started by the reset');
+        self::assertIsInt($redis, 'Redis is started by the reset when the app uses it: the E2E app starts with --no-deps');
+        self::assertLessThan($drop, $mysql);
+        self::assertLessThan($drop, $redis);
         self::assertStringContainsString("redis-cli ping 2>&1 < /dev/null ) | grep -qE 'PONG|NOAUTH'", $reset);
 
         // The filter Playwright gets is a regular expression over the absolute path.
@@ -83,6 +91,7 @@ final class TestRunOneSpecTest extends TestCase
         self::assertSame(0, preg_match('~' . $parts[0] . '~i', '/var/www/html/src/m/tests/E2E/user1.spec.ts'), 'brackets are literal');
         self::assertSame(0, preg_match('~' . $parts[1] . '~i', '/var/www/html/src/m/tests/E2E/b.spec.ts.bak'), 'anchored at the end');
         self::assertSame(0, preg_match('~' . $parts[1] . '~i', '/var/www/html/src/m/tests/E2E/xb.spec.ts'), 'anchored at a path segment');
+        self::assertSame(0, preg_match('~' . $parts[1] . '~i', '/var/www/html/packages/x/src/m/tests/E2E/b.spec.ts'), 'anchored at the project root: the same path deeper is another spec');
     }
 
     private function run_(string ...$args): string

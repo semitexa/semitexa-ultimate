@@ -3456,7 +3456,9 @@ test_run_e2e_phase() {
         _e2e_spec_args=''
         set -f # split on spaces only: a [1] in a name is not a glob
         for _e2e_named in $_e2e_only_specs; do
-            _e2e_spec_args="${_e2e_spec_args:+$_e2e_spec_args }/$(printf '%s' "$_e2e_named" | sed 's/[][\\.^$*+?(){}|]/\\&/g')\$"
+            # Anchored at the runner's project root (working_dir in docker-compose.test.yml), so
+            # tests/E2E/x.spec.ts is not also src/modules/Foo/tests/E2E/x.spec.ts (review, ultimate#147).
+            _e2e_spec_args="${_e2e_spec_args:+$_e2e_spec_args }^/var/www/html/$(printf '%s' "$_e2e_named" | sed 's/[][\\.^$*+?(){}|]/\\&/g')\$"
         done
         set +f
     fi
