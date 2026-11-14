@@ -315,10 +315,10 @@ final class E2eOwnDatabaseTest extends TestCase
 
         // Independent review, installer#94: a list entry is a dependency too, and a config compose
         // cannot resolve fails the start instead of reading as "no sidecar".
-        file_put_contents($root . '/test.yml', "services:\n  app:\n    depends_on:\n      - llm-stub\n      - \"mysql\"\n");
+        file_put_contents($root . '/test.yml', "services:\n  app:\n    depends_on:\n      - llm-stub\n      - \"mysql\"\n      \"on\":\n        condition: service_healthy\n");
         file_put_contents($root . '/runtime.yml', "services:\n  app:\n    depends_on:\n      - mysql\n");
         $listed = $this->sh($root, "error() { echo \"\$*\" >&2; }\ne2e_test_sidecars ./compose \"\$(compose_args) -f docker-compose.test.yml\"\n");
-        self::assertSame("llm-stub service_started\n", $listed);
+        self::assertSame("llm-stub service_started\non service_healthy\n", $listed, 'a key Compose v1 quotes is the service it names');
         file_put_contents($root . '/compose', "#!/bin/sh\necho 'yaml: line 3: bad indentation' >&2; exit 15\n");
         $broken = $this->sh($root, "error() { echo \"\$*\" >> err; }\ne2e_test_sidecars ./compose \"\$(compose_args) -f docker-compose.test.yml\" || echo refused\ncat err\n");
         self::assertStringContainsString('docker compose config failed', $broken);

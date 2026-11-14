@@ -4189,7 +4189,8 @@ e2e_app_depends_on() {
         /^[^ ]/ || /^  [^ ]/ { flush(); in_app = ($0 == "  app:"); deps = 0; next }
         in_app && /^    [^ ]/ { flush(); deps = ($0 == "    depends_on:"); next }
         in_app && deps && /^      - / { flush(); dep = $0; sub(/^ +- +/, "", dep); gsub(/["\047]/, "", dep); flush(); next }
-        in_app && deps && /^      [^ ]/ { flush(); dep = $0; sub(/^ +/, "", dep); sub(/:.*$/, "", dep); next }
+        # A key Compose v1 quotes because it reads like a boolean ("on":) is the service on (review, update#97).
+        in_app && deps && /^      [^ ]/ { flush(); dep = $0; sub(/^ +/, "", dep); sub(/:[^:]*$/, "", dep); gsub(/["\047]/, "", dep); next }
         in_app && deps && dep != "" && /^        condition:/ { cond = $2 }
         END { flush() }'
 }
