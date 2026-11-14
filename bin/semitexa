@@ -4026,6 +4026,25 @@ e2e_database_reset() {
     # MySQL up and answering before the drop: Phase 1 used to start it, and a run with
     # no Phase 1 (a named spec, ai:verify) met a stopped one (review, update#95).
     ensure_test_database "$1" "$2" "$_e2e_name"
+    # Redis too, when the app is configured for it: the E2E app starts with --no-deps
+    # (review, update#95). Asked in its own container, the developer's app may be down.
+    case " $2 " in
+        *docker-compose.redis.yml*)
+            # shellcheck disable=SC2086
+            ( env_export_compose_context; $1 $2 up -d redis >/dev/null 2>&1 < /dev/null ) \
+                || { error "Could not start Redis for the E2E app."; return 1; }
+            _e2e_try=1
+            # shellcheck disable=SC2086
+            until ( env_export_compose_context; $1 $2 exec -T redis redis-cli ping 2>&1 < /dev/null ) | grep -qE 'PONG|NOAUTH'; do
+                if [ "$_e2e_try" -ge 15 ]; then
+                    error "Redis did not answer within 15 s for the E2E app."
+                    return 1
+                fi
+                _e2e_try=$((_e2e_try + 1))
+                sleep 1
+            done
+            ;;
+    esac
     # shellcheck disable=SC2086
     ( env_export_compose_context; $1 $2 exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e 'DROP DATABASE IF EXISTS $_e2e_name;'" >/dev/null 2>&1 < /dev/null ) \
         || { error "Could not drop the E2E database '$_e2e_name'."; return 1; }

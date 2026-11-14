@@ -66,6 +66,9 @@ final class TestRunOneSpecTest extends TestCase
         // MySQL is started by the reset itself, before the drop: Phase 1 is not there to do it.
         $reset = (string) strstr($this->script, 'e2e_database_reset() {');
         self::assertLessThan(strpos($reset, 'DROP DATABASE'), strpos($reset, 'ensure_test_database "$1" "$2" "$_e2e_name"'));
+        // So is Redis when the app uses it: the E2E app starts with --no-deps.
+        self::assertLessThan(strpos($reset, 'DROP DATABASE'), strpos($reset, '$1 $2 up -d redis'));
+        self::assertStringContainsString("redis-cli ping 2>&1 < /dev/null ) | grep -qE 'PONG|NOAUTH'", $reset);
 
         // The filter Playwright gets is a regular expression over the absolute path.
         self::assertSame(1, preg_match('/^        _e2e_spec_args=\'\'\n.*?^        set \+f\n/ms', $phase, $loop));
