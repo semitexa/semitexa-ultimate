@@ -308,7 +308,10 @@ final class E2eOwnDatabaseTest extends TestCase
             e2e_test_sidecars ./compose "$(compose_args) -f docker-compose.test.yml" | tr '\n' ' '; echo
             e2e_app_depends_on ./compose "$(compose_args)" | tr '\n' ' '; echo
             SH);
-        self::assertSame("llm-stub \nmysql setup \n", $out, 'only what the test files add; another service\'s depends_on is not the app\'s');
+        // The waits come after the up, before the run (review, update#97).
+        $start = $this->function('e2e_app_start');
+        self::assertLessThan((int) strpos($start, 'run -d --no-deps'), (int) strpos($start, 'e2e_sidecar_ready'));
+        self::assertSame("llm-stub service_started \nmysql service_healthy setup service_completed_successfully \n", $out, 'only what the test files add, with its condition; another service\'s depends_on is not the app\'s');
 
         $start = $this->function('e2e_app_start');
         $up = strpos($start, 'up -d --no-recreate $_e2e_sidecars');
@@ -316,6 +319,37 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertNotFalse($up, 'the sidecars are started with up -d --no-recreate');
         self::assertNotFalse($run);
         self::assertLessThan($run, $up, 'before the app that depends on them');
+    }
+
+    /**
+     * Review, update#97: --no-deps skips the depends_on conditions and up -d returns once a
+     * container runs, so the app could start before a healthy-gated sidecar was ready.
+     */
+    #[Test]
+    public function a_sidecar_is_waited_for_as_its_condition_says(): void
+    {
+        $root = $this->root([], true);
+        // compose ps answers a container id; docker inspect answers from a file the test changes.
+        file_put_contents($root . '/compose', "#!/bin/sh\necho cid-\$5\n");
+        chmod($root . '/compose', 0755);
+        $out = $this->sh($root, <<<'SH'
+            error() { echo "$*" >&2; }
+            sleep() { n=$(cat polls 2>/dev/null || echo 0); echo $((n + 1)) > polls; [ "$(cat polls)" -ge 2 ] && [ -f becomes ] && mv becomes state; }
+            docker() { cat state; }
+            e2e_sidecar_ready ./compose '' stub service_started && echo "started: no wait"
+            echo starting > state; echo healthy > becomes
+            E2E_SIDECAR_TIMEOUT=5 e2e_sidecar_ready ./compose '' stub service_healthy && echo "healthy: waited $(cat polls) poll(s)"
+            rm -f polls; echo starting > state
+            E2E_SIDECAR_TIMEOUT=2 e2e_sidecar_ready ./compose '' stub service_healthy 2>err || echo "never healthy: failed"
+            grep -q 'stub did not become healthy within 2 s' err && echo "said why"
+            echo 'exited 0' > state
+            e2e_sidecar_ready ./compose '' setup service_completed_successfully && echo "completed: ok"
+            echo 'exited 3' > state
+            e2e_sidecar_ready ./compose '' setup service_completed_successfully 2>err || echo "failed setup: failed"
+            grep -q 'setup exited with an error' err && echo "said why"
+            SH);
+
+        self::assertSame("started: no wait\nhealthy: waited 2 poll(s)\nnever healthy: failed\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\n", $out);
     }
 
     private function unavailable(array $o, bool $status = false): string

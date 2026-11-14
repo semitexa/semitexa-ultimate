@@ -4173,15 +4173,19 @@ e2e_lock_end() {
     fi
 }
 
-# The services the app depends on, one per line, as compose resolves them
-# (its normalised config: two-space services, depends_on entries at six).
+# The services the app depends on, one per line as "<service> <condition>", as
+# compose resolves them (its normalised config: two-space services, depends_on
+# entries at six, their condition at eight; service_started when none is given).
 #   $1 compose binary   $2 compose -f arguments
 e2e_app_depends_on() {
     # shellcheck disable=SC2086
     ( env_export_compose_context; $1 $2 config 2>/dev/null < /dev/null ) | awk '
-        /^[^ ]/ || /^  [^ ]/ { in_app = ($0 == "  app:"); deps = 0; next }
-        in_app && /^    [^ ]/ { deps = ($0 == "    depends_on:"); next }
-        in_app && deps && /^      [^ ]/ { sub(/^ +/, ""); sub(/:.*$/, ""); print }'
+        function flush() { if (dep != "") print dep, (cond != "" ? cond : "service_started"); dep = ""; cond = "" }
+        /^[^ ]/ || /^  [^ ]/ { flush(); in_app = ($0 == "  app:"); deps = 0; next }
+        in_app && /^    [^ ]/ { flush(); deps = ($0 == "    depends_on:"); next }
+        in_app && deps && /^      [^ ]/ { flush(); dep = $0; sub(/^ +/, "", dep); sub(/:.*$/, "", dep); next }
+        in_app && deps && dep != "" && /^        condition:/ { cond = $2 }
+        END { flush() }'
 }
 
 # What the test files make the app depend on and the runtime files do not: a
@@ -4190,24 +4194,59 @@ e2e_app_depends_on() {
 # nobody served; the ones the runtime files declare (MySQL, Redis, a one-shot
 # setup) are the developer's, already up, and are left alone.
 #   $1 compose binary   $2 compose -f arguments (the test set)
+# One per line as "<service> <condition>".
 e2e_test_sidecars() {
-    _e2e_runtime=" $(e2e_app_depends_on "$1" "$(compose_args)" | tr '\n' ' ')"
-    for _e2e_dep in $(e2e_app_depends_on "$1" "$2"); do
-        case "$_e2e_runtime" in *" $_e2e_dep "*) ;; *) printf '%s\n' "$_e2e_dep" ;; esac
+    _e2e_runtime=" $(e2e_app_depends_on "$1" "$(compose_args)" | cut -d' ' -f1 | tr '\n' ' ')"
+    e2e_app_depends_on "$1" "$2" | while read -r _e2e_dep _e2e_cond; do
+        case "$_e2e_runtime" in *" $_e2e_dep "*) ;; *) printf '%s %s\n' "$_e2e_dep" "$_e2e_cond" ;; esac
     done
+}
+
+# Waits until a sidecar meets the condition the app's depends_on gives it, as
+# compose would have before starting the app: --no-deps skips that check, and
+# up -d returns once a container runs (review, update#97). No `up --wait`: the
+# script still serves Compose v1, which has none.
+#   $1 compose binary   $2 compose -f arguments   $3 service   $4 condition
+e2e_sidecar_ready() {
+    case "$4" in service_healthy|service_completed_successfully) ;; *) return 0 ;; esac
+    _e2e_try=0
+    while [ "$_e2e_try" -lt "${E2E_SIDECAR_TIMEOUT:-60}" ]; do
+        # shellcheck disable=SC2086
+        _e2e_cid="$( ( env_export_compose_context; $1 $2 ps -a -q "$3" 2>/dev/null < /dev/null ) | head -n 1)"
+        if [ -n "$_e2e_cid" ]; then
+            if [ "$4" = service_healthy ]; then
+                [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$_e2e_cid" 2>/dev/null)" = healthy ] && return 0
+            else
+                case "$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$_e2e_cid" 2>/dev/null)" in
+                    'exited 0') return 0 ;;
+                    exited*) error "$3 exited with an error, and the E2E app needs it to complete successfully."; return 1 ;;
+                esac
+            fi
+        fi
+        _e2e_try=$((_e2e_try + 1))
+        sleep 1
+    done
+    error "$3 did not become ${4#service_} within ${E2E_SIDECAR_TIMEOUT:-60} s; the E2E app depends on it."
+    return 1
 }
 
 e2e_app_start() {
     E2E_APP_CONTAINER=
     _e2e_container="$(e2e_container_name)"
     docker rm -f "$_e2e_container" >/dev/null 2>&1 || true
-    _e2e_sidecars="$(e2e_test_sidecars "$1" "$2" | tr '\n' ' ')"
+    _e2e_needs="$(e2e_test_sidecars "$1" "$2")"
+    _e2e_sidecars="$(printf '%s\n' "$_e2e_needs" | cut -d' ' -f1 | tr '\n' ' ')"
     if [ -n "${_e2e_sidecars% }" ]; then
         info "Starting what the test files make the E2E app depend on: ${_e2e_sidecars% }"
         # --no-recreate: a sidecar a previous run left up is kept, never restarted under it.
         # shellcheck disable=SC2086
         ( env_export_compose_context; $1 $2 up -d --no-recreate $_e2e_sidecars >/dev/null 2>&1 < /dev/null ) \
             || { error "Could not start ${_e2e_sidecars% }, which docker-compose.test.yml makes the E2E app depend on."; return 1; }
+        # Each as its depends_on condition says, before the app that needs it.
+        printf '%s\n' "$_e2e_needs" | while read -r _e2e_dep _e2e_cond; do
+            [ -n "$_e2e_dep" ] || continue
+            e2e_sidecar_ready "$1" "$2" "$_e2e_dep" "$_e2e_cond" || exit 1
+        done || return 1
     fi
     # shellcheck disable=SC2046,SC2086
     ( env_export_compose_context; $1 $2 run -d --no-deps --name "$_e2e_container" $(e2e_app_args) app >/dev/null < /dev/null ) \
