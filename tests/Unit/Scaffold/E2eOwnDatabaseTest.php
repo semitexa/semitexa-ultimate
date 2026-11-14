@@ -283,6 +283,41 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\ncannot make it: failed\nsaid why\ncannot remove it: failed\nsaid why, guard released\n", $out);
     }
 
+    /**
+     * tk-e2e-app-starts-its-test-deps: a consumer's docker-compose.test.yml gives the app a
+     * scripted model (llm-stub) it depends on. The E2E app starts with --no-deps, so the stub
+     * never ran and 9 specs failed. What the test files add is started; what the runtime files
+     * declare (MySQL, a one-shot setup) is the developer's and is left alone.
+     */
+    #[Test]
+    public function the_e2e_app_gets_the_sidecars_the_test_files_add_and_nothing_the_runtime_files_declare(): void
+    {
+        $root = $this->root([], true);
+        file_put_contents($root . '/docker-compose.test.yml', "services: {}\n");
+        $runtime = "services:\n  app:\n    image: x\n    depends_on:\n      mysql:\n        condition: service_healthy\n        required: true\n      setup:\n        condition: service_completed_successfully\n        required: true\n    environment:\n      A: b\n  mysql:\n    image: m\nnetworks:\n  default:\n    name: x\n";
+        $test = "services:\n  app:\n    depends_on:\n      llm-stub:\n        condition: service_started\n        required: true\n      mysql:\n        condition: service_healthy\n        required: true\n      setup:\n        condition: service_completed_successfully\n        required: true\n  e2e-runner:\n    depends_on:\n      mail-catcher:\n        condition: service_started\n  llm-stub:\n    depends_on:\n      cache:\n        condition: service_started\n";
+        file_put_contents($root . '/runtime.yml', $runtime);
+        file_put_contents($root . '/test.yml', $test);
+        $compose = "#!/bin/sh\ncase \" \$* \" in *' config '*) case \" \$* \" in *docker-compose.test.yml*) cat test.yml ;; *) cat runtime.yml ;; esac ;; *) echo \"\$*\" >> calls ;; esac\n";
+        file_put_contents($root . '/compose', $compose);
+        chmod($root . '/compose', 0755);
+
+        $out = $this->sh($root, <<<'SH'
+            error() { echo "$*" >&2; }
+            info() { :; }
+            e2e_test_sidecars ./compose "$(compose_args) -f docker-compose.test.yml" | tr '\n' ' '; echo
+            e2e_app_depends_on ./compose "$(compose_args)" | tr '\n' ' '; echo
+            SH);
+        self::assertSame("llm-stub \nmysql setup \n", $out, 'only what the test files add; another service\'s depends_on is not the app\'s');
+
+        $start = $this->function('e2e_app_start');
+        $up = strpos($start, 'up -d --no-recreate $_e2e_sidecars');
+        $run = strpos($start, 'run -d --no-deps');
+        self::assertNotFalse($up, 'the sidecars are started with up -d --no-recreate');
+        self::assertNotFalse($run);
+        self::assertLessThan($run, $up, 'before the app that depends on them');
+    }
+
     private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);

@@ -4173,10 +4173,42 @@ e2e_lock_end() {
     fi
 }
 
+# The services the app depends on, one per line, as compose resolves them
+# (its normalised config: two-space services, depends_on entries at six).
+#   $1 compose binary   $2 compose -f arguments
+e2e_app_depends_on() {
+    # shellcheck disable=SC2086
+    ( env_export_compose_context; $1 $2 config 2>/dev/null < /dev/null ) | awk '
+        /^[^ ]/ || /^  [^ ]/ { in_app = ($0 == "  app:"); deps = 0; next }
+        in_app && /^    [^ ]/ { deps = ($0 == "    depends_on:"); next }
+        in_app && deps && /^      [^ ]/ { sub(/^ +/, ""); sub(/:.*$/, ""); print }'
+}
+
+# What the test files make the app depend on and the runtime files do not: a
+# scripted model, a mail catcher (tk-e2e-app-starts-its-test-deps). The E2E app
+# starts with --no-deps, so these never ran and its specs failed against a host
+# nobody served; the ones the runtime files declare (MySQL, Redis, a one-shot
+# setup) are the developer's, already up, and are left alone.
+#   $1 compose binary   $2 compose -f arguments (the test set)
+e2e_test_sidecars() {
+    _e2e_runtime=" $(e2e_app_depends_on "$1" "$(compose_args)" | tr '\n' ' ')"
+    for _e2e_dep in $(e2e_app_depends_on "$1" "$2"); do
+        case "$_e2e_runtime" in *" $_e2e_dep "*) ;; *) printf '%s\n' "$_e2e_dep" ;; esac
+    done
+}
+
 e2e_app_start() {
     E2E_APP_CONTAINER=
     _e2e_container="$(e2e_container_name)"
     docker rm -f "$_e2e_container" >/dev/null 2>&1 || true
+    _e2e_sidecars="$(e2e_test_sidecars "$1" "$2" | tr '\n' ' ')"
+    if [ -n "${_e2e_sidecars% }" ]; then
+        info "Starting what the test files make the E2E app depend on: ${_e2e_sidecars% }"
+        # --no-recreate: a sidecar a previous run left up is kept, never restarted under it.
+        # shellcheck disable=SC2086
+        ( env_export_compose_context; $1 $2 up -d --no-recreate $_e2e_sidecars >/dev/null 2>&1 < /dev/null ) \
+            || { error "Could not start ${_e2e_sidecars% }, which docker-compose.test.yml makes the E2E app depend on."; return 1; }
+    fi
     # shellcheck disable=SC2046,SC2086
     ( env_export_compose_context; $1 $2 run -d --no-deps --name "$_e2e_container" $(e2e_app_args) app >/dev/null < /dev/null ) \
         || { error "Could not start the E2E app."; return 1; }
