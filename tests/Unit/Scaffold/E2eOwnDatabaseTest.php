@@ -283,6 +283,108 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertSame("dead holder taken over\nguard released\nstuck guard: timed out\nboth paths named\na directory there: refused\ncannot make it: failed\nsaid why\ncannot remove it: failed\nsaid why, guard released\n", $out);
     }
 
+    /**
+     * tk-e2e-app-starts-its-test-deps: a consumer's docker-compose.test.yml gives the app a
+     * scripted model (llm-stub) it depends on. The E2E app starts with --no-deps, so the stub
+     * never ran and 9 specs failed. What the test files add is started; what the runtime files
+     * declare (MySQL, a one-shot setup) is the developer's and is left alone.
+     */
+    #[Test]
+    public function the_e2e_app_gets_the_sidecars_the_test_files_add_and_nothing_the_runtime_files_declare(): void
+    {
+        $root = $this->root([], true);
+        file_put_contents($root . '/docker-compose.test.yml', "services: {}\n");
+        $runtime = "services:\n  app:\n    image: x\n    depends_on:\n      mysql:\n        condition: service_healthy\n        required: true\n      setup:\n        condition: service_completed_successfully\n        required: true\n    environment:\n      A: b\n  mysql:\n    image: m\nnetworks:\n  default:\n    name: x\n";
+        $test = "services:\n  app:\n    depends_on:\n      llm-stub:\n        condition: service_started\n        required: true\n      mysql:\n        condition: service_healthy\n        required: true\n      setup:\n        condition: service_completed_successfully\n        required: true\n  e2e-runner:\n    depends_on:\n      mail-catcher:\n        condition: service_started\n  llm-stub:\n    depends_on:\n      cache:\n        condition: service_started\n";
+        file_put_contents($root . '/runtime.yml', $runtime);
+        file_put_contents($root . '/test.yml', $test);
+        $compose = "#!/bin/sh\ncase \" \$* \" in *' config '*) case \" \$* \" in *docker-compose.test.yml*) cat test.yml ;; *) cat runtime.yml ;; esac ;; *) echo \"\$*\" >> calls ;; esac\n";
+        file_put_contents($root . '/compose', $compose);
+        chmod($root . '/compose', 0755);
+
+        $out = $this->sh($root, <<<'SH'
+            error() { echo "$*" >&2; }
+            info() { :; }
+            e2e_test_sidecars ./compose "$(compose_args) -f docker-compose.test.yml" | tr '\n' ' '; echo
+            e2e_app_depends_on ./compose "$(compose_args)" | tr '\n' ' '; echo
+            SH);
+        // The waits come after the up, before the run (review, update#97).
+        $start = $this->function('e2e_app_start');
+        $wait = strpos($start, 'e2e_sidecar_ready');
+        $run = strpos($start, 'run -d --no-deps');
+        self::assertNotFalse($wait, 'e2e_app_start waits for the sidecars (review, ultimate#148)');
+        self::assertNotFalse($run);
+        self::assertLessThan($run, $wait);
+        self::assertSame("llm-stub service_started \nmysql service_healthy setup service_completed_successfully \n", $out, 'only what the test files add, with its condition; another service\'s depends_on is not the app\'s');
+
+        // Independent review, installer#94: a list entry is a dependency too, and a config compose
+        // cannot resolve fails the start instead of reading as "no sidecar".
+        file_put_contents($root . '/test.yml', "services:\n  app:\n    depends_on:\n      - llm-stub\n      - \"mysql\"\n      \"on\":\n        condition: service_healthy\n");
+        file_put_contents($root . '/runtime.yml', "services:\n  app:\n    depends_on:\n      - mysql\n");
+        $listed = $this->sh($root, "error() { echo \"\$*\" >&2; }\ne2e_test_sidecars ./compose \"\$(compose_args) -f docker-compose.test.yml\"\n");
+        self::assertSame("llm-stub service_started\non service_healthy\n", $listed, 'a key Compose v1 quotes is the service it names');
+        file_put_contents($root . '/compose', "#!/bin/sh\necho 'yaml: line 3: bad indentation' >&2; exit 15\n");
+        $broken = $this->sh($root, "error() { echo \"\$*\" >> err; }\ne2e_test_sidecars ./compose \"\$(compose_args) -f docker-compose.test.yml\" || echo refused\ncat err\n");
+        self::assertStringContainsString('docker compose config failed', $broken);
+        self::assertStringContainsString('bad indentation', $broken);
+        self::assertStringStartsWith("refused\n", $broken);
+
+        $start = $this->function('e2e_app_start');
+        $up = strpos($start, 'up -d --no-recreate $_e2e_sidecars');
+        $run = strpos($start, 'run -d --no-deps');
+        self::assertNotFalse($up, 'the sidecars are started with up -d --no-recreate');
+        self::assertNotFalse($run);
+        self::assertLessThan($run, $up, 'before the app that depends on them');
+    }
+
+    /**
+     * Review, update#97 and installer#94: --no-deps skips the depends_on conditions and up -d
+     * returns once a container runs, so the app could start before a healthy-gated sidecar was
+     * ready. Every regular replica counts, a one-off a `run` left behind does not, and the
+     * timeout is a deadline in seconds.
+     */
+    #[Test]
+    public function a_sidecar_is_waited_for_as_its_condition_says(): void
+    {
+        $root = $this->root([], true);
+        // compose ps lists the ids in `ids`; docker inspect answers each from `<id>.oneoff` and `<id>.state`.
+        file_put_contents($root . '/compose', "#!/bin/sh\ncat ids\n");
+        chmod($root . '/compose', 0755);
+        $out = $this->sh($root, <<<'SH'
+            error() { echo "$*" >&2; }
+            docker() { for a; do id=$a; done; case "$*" in *oneoff*) cat "$id.oneoff" 2>/dev/null ;; *) cat "$id.state" ;; esac; }
+            # One poll later the replica in `becomes` turns healthy.
+            sleep() { n=$(cat polls 2>/dev/null || echo 0); echo $((n + 1)) > polls; [ -f becomes ] && mv becomes b.state; }
+            e2e_sidecar_ready ./compose '' stub service_started && echo "started: no wait"
+            printf 'a\nb\n' > ids; echo 'running healthy' > a.state; echo 'running starting' > b.state; echo 'running healthy' > becomes
+            E2E_SIDECAR_TIMEOUT=5 e2e_sidecar_ready ./compose '' stub service_healthy && echo "every replica healthy after $(cat polls) poll(s)"
+            rm -f polls; printf 'aaa-probe\nb\n' > ids; echo True > aaa-probe.oneoff; echo 'exited 1' > aaa-probe.state; echo 'running healthy' > b.state
+            e2e_sidecar_ready ./compose '' stub service_healthy && echo "one-off ignored"
+            printf 'b\n' > ids; echo 'running starting' > b.state
+            started=$(date +%s)
+            E2E_SIDECAR_TIMEOUT=2 e2e_sidecar_ready ./compose '' stub service_healthy 2>err || echo "never healthy: failed"
+            [ $(( $(date +%s) - started )) -le 4 ] && echo "within the deadline"
+            grep -q 'stub did not become healthy within 2 s' err && echo "said why"
+            printf 's\n' > ids; echo 'exited 0' > s.state
+            e2e_sidecar_ready ./compose '' setup service_completed_successfully && echo "completed: ok"
+            echo 'exited 3' > s.state
+            e2e_sidecar_ready ./compose '' setup service_completed_successfully 2>err || echo "failed setup: failed"
+            grep -q 'setup exited with an error' err && echo "said why"
+            : > ids
+            E2E_SIDECAR_TIMEOUT=1 e2e_sidecar_ready ./compose '' gone service_healthy 2>/dev/null || echo "no container: failed"
+            # Independent review, installer#94: a stopped sidecar fails at once, not after the timeout.
+            printf 'b\n' > ids; echo 'exited 137' > b.state; rm -f polls
+            E2E_SIDECAR_TIMEOUT=30 e2e_sidecar_ready ./compose '' stub service_healthy 2>err || echo "stopped: failed"
+            [ ! -f polls ] && grep -q 'stub stopped before it was healthy' err && echo "at once, said why"
+            echo 'running healthy' > b.state
+            # The value itself, not a wait that ends anyway (review, ultimate#148).
+            [ "$(E2E_SIDECAR_TIMEOUT=soon e2e_sidecar_timeout)" = 60 ] && [ "$(unset E2E_SIDECAR_TIMEOUT; e2e_sidecar_timeout)" = 60 ] && [ "$(E2E_SIDECAR_TIMEOUT=7 e2e_sidecar_timeout)" = 7 ] && echo "a timeout that is no number: 60"
+            [ "$(E2E_SIDECAR_TIMEOUT=08 e2e_sidecar_timeout)" = 8 ] && [ "$(E2E_SIDECAR_TIMEOUT=000 e2e_sidecar_timeout)" = 0 ] && echo "leading zeros: decimal"
+            SH);
+
+        self::assertSame("started: no wait\nevery replica healthy after 1 poll(s)\none-off ignored\nnever healthy: failed\nwithin the deadline\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\nno container: failed\nstopped: failed\nat once, said why\na timeout that is no number: 60\nleading zeros: decimal\n", $out);
+    }
+
     private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);
