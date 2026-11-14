@@ -310,7 +310,11 @@ final class E2eOwnDatabaseTest extends TestCase
             SH);
         // The waits come after the up, before the run (review, update#97).
         $start = $this->function('e2e_app_start');
-        self::assertLessThan((int) strpos($start, 'run -d --no-deps'), (int) strpos($start, 'e2e_sidecar_ready'));
+        $wait = strpos($start, 'e2e_sidecar_ready');
+        $run = strpos($start, 'run -d --no-deps');
+        self::assertNotFalse($wait, 'e2e_app_start waits for the sidecars (review, ultimate#148)');
+        self::assertNotFalse($run);
+        self::assertLessThan($run, $wait);
         self::assertSame("llm-stub service_started \nmysql service_healthy setup service_completed_successfully \n", $out, 'only what the test files add, with its condition; another service\'s depends_on is not the app\'s');
 
         // Independent review, installer#94: a list entry is a dependency too, and a config compose
@@ -373,7 +377,8 @@ final class E2eOwnDatabaseTest extends TestCase
             E2E_SIDECAR_TIMEOUT=30 e2e_sidecar_ready ./compose '' stub service_healthy 2>err || echo "stopped: failed"
             [ ! -f polls ] && grep -q 'stub stopped before it was healthy' err && echo "at once, said why"
             echo 'running healthy' > b.state
-            E2E_SIDECAR_TIMEOUT=soon e2e_sidecar_ready ./compose '' stub service_healthy && echo "a timeout that is no number: 60"
+            # The value itself, not a wait that ends anyway (review, ultimate#148).
+            [ "$(E2E_SIDECAR_TIMEOUT=soon e2e_sidecar_timeout)" = 60 ] && [ "$(unset E2E_SIDECAR_TIMEOUT; e2e_sidecar_timeout)" = 60 ] && [ "$(E2E_SIDECAR_TIMEOUT=7 e2e_sidecar_timeout)" = 7 ] && echo "a timeout that is no number: 60"
             [ "$(E2E_SIDECAR_TIMEOUT=08 e2e_sidecar_timeout)" = 8 ] && [ "$(E2E_SIDECAR_TIMEOUT=000 e2e_sidecar_timeout)" = 0 ] && echo "leading zeros: decimal"
             SH);
 
