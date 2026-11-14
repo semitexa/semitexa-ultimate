@@ -322,34 +322,43 @@ final class E2eOwnDatabaseTest extends TestCase
     }
 
     /**
-     * Review, update#97: --no-deps skips the depends_on conditions and up -d returns once a
-     * container runs, so the app could start before a healthy-gated sidecar was ready.
+     * Review, update#97 and installer#94: --no-deps skips the depends_on conditions and up -d
+     * returns once a container runs, so the app could start before a healthy-gated sidecar was
+     * ready. Every regular replica counts, a one-off a `run` left behind does not, and the
+     * timeout is a deadline in seconds.
      */
     #[Test]
     public function a_sidecar_is_waited_for_as_its_condition_says(): void
     {
         $root = $this->root([], true);
-        // compose ps answers a container id; docker inspect answers from a file the test changes.
-        file_put_contents($root . '/compose', "#!/bin/sh\necho cid-\$5\n");
+        // compose ps lists the ids in `ids`; docker inspect answers each from `<id>.oneoff` and `<id>.state`.
+        file_put_contents($root . '/compose', "#!/bin/sh\ncat ids\n");
         chmod($root . '/compose', 0755);
         $out = $this->sh($root, <<<'SH'
             error() { echo "$*" >&2; }
-            sleep() { n=$(cat polls 2>/dev/null || echo 0); echo $((n + 1)) > polls; [ "$(cat polls)" -ge 2 ] && [ -f becomes ] && mv becomes state; }
-            docker() { cat state; }
+            docker() { for a; do id=$a; done; case "$*" in *oneoff*) cat "$id.oneoff" 2>/dev/null ;; *) cat "$id.state" ;; esac; }
+            # One poll later the replica in `becomes` turns healthy.
+            sleep() { n=$(cat polls 2>/dev/null || echo 0); echo $((n + 1)) > polls; [ -f becomes ] && mv becomes b.state; }
             e2e_sidecar_ready ./compose '' stub service_started && echo "started: no wait"
-            echo starting > state; echo healthy > becomes
-            E2E_SIDECAR_TIMEOUT=5 e2e_sidecar_ready ./compose '' stub service_healthy && echo "healthy: waited $(cat polls) poll(s)"
-            rm -f polls; echo starting > state
+            printf 'a\nb\n' > ids; echo healthy > a.state; echo starting > b.state; echo healthy > becomes
+            E2E_SIDECAR_TIMEOUT=5 e2e_sidecar_ready ./compose '' stub service_healthy && echo "every replica healthy after $(cat polls) poll(s)"
+            rm -f polls; printf 'aaa-probe\nb\n' > ids; echo True > aaa-probe.oneoff; echo 'exited 1' > aaa-probe.state; echo healthy > b.state
+            e2e_sidecar_ready ./compose '' stub service_healthy && echo "one-off ignored"
+            printf 'b\n' > ids; echo starting > b.state
+            started=$(date +%s)
             E2E_SIDECAR_TIMEOUT=2 e2e_sidecar_ready ./compose '' stub service_healthy 2>err || echo "never healthy: failed"
+            [ $(( $(date +%s) - started )) -le 4 ] && echo "within the deadline"
             grep -q 'stub did not become healthy within 2 s' err && echo "said why"
-            echo 'exited 0' > state
+            printf 's\n' > ids; echo 'exited 0' > s.state
             e2e_sidecar_ready ./compose '' setup service_completed_successfully && echo "completed: ok"
-            echo 'exited 3' > state
+            echo 'exited 3' > s.state
             e2e_sidecar_ready ./compose '' setup service_completed_successfully 2>err || echo "failed setup: failed"
             grep -q 'setup exited with an error' err && echo "said why"
+            : > ids
+            E2E_SIDECAR_TIMEOUT=1 e2e_sidecar_ready ./compose '' gone service_healthy 2>/dev/null || echo "no container: failed"
             SH);
 
-        self::assertSame("started: no wait\nhealthy: waited 2 poll(s)\nnever healthy: failed\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\n", $out);
+        self::assertSame("started: no wait\nevery replica healthy after 1 poll(s)\none-off ignored\nnever healthy: failed\nwithin the deadline\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\nno container: failed\n", $out);
     }
 
     private function unavailable(array $o, bool $status = false): string

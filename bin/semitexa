@@ -4209,21 +4209,28 @@ e2e_test_sidecars() {
 #   $1 compose binary   $2 compose -f arguments   $3 service   $4 condition
 e2e_sidecar_ready() {
     case "$4" in service_healthy|service_completed_successfully) ;; *) return 0 ;; esac
-    _e2e_try=0
-    while [ "$_e2e_try" -lt "${E2E_SIDECAR_TIMEOUT:-60}" ]; do
+    # A deadline, not a count of probes: a slow ps or inspect must not stretch it (review, installer#94).
+    _e2e_ready_deadline=$(( $(date +%s) + ${E2E_SIDECAR_TIMEOUT:-60} ))
+    while :; do
+        # Every regular replica, as compose checks them; a one-off a `run` left behind is no replica.
+        _e2e_seen=0
+        _e2e_pending=0
         # shellcheck disable=SC2086
-        _e2e_cid="$( ( env_export_compose_context; $1 $2 ps -a -q "$3" 2>/dev/null < /dev/null ) | head -n 1)"
-        if [ -n "$_e2e_cid" ]; then
+        for _e2e_cid in $( ( env_export_compose_context; $1 $2 ps -a -q "$3" 2>/dev/null < /dev/null ) ); do
+            [ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.oneoff"}}' "$_e2e_cid" 2>/dev/null)" = True ] && continue
+            _e2e_seen=$((_e2e_seen + 1))
             if [ "$4" = service_healthy ]; then
-                [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$_e2e_cid" 2>/dev/null)" = healthy ] && return 0
+                [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$_e2e_cid" 2>/dev/null)" = healthy ] || _e2e_pending=1
             else
                 case "$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$_e2e_cid" 2>/dev/null)" in
-                    'exited 0') return 0 ;;
+                    'exited 0') ;;
                     exited*) error "$3 exited with an error, and the E2E app needs it to complete successfully."; return 1 ;;
+                    *) _e2e_pending=1 ;;
                 esac
             fi
-        fi
-        _e2e_try=$((_e2e_try + 1))
+        done
+        [ "$_e2e_seen" -gt 0 ] && [ "$_e2e_pending" -eq 0 ] && return 0
+        [ "$(date +%s)" -ge "$_e2e_ready_deadline" ] && break
         sleep 1
     done
     error "$3 did not become ${4#service_} within ${E2E_SIDECAR_TIMEOUT:-60} s; the E2E app depends on it."
