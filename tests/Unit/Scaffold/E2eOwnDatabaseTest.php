@@ -313,6 +313,18 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertLessThan((int) strpos($start, 'run -d --no-deps'), (int) strpos($start, 'e2e_sidecar_ready'));
         self::assertSame("llm-stub service_started \nmysql service_healthy setup service_completed_successfully \n", $out, 'only what the test files add, with its condition; another service\'s depends_on is not the app\'s');
 
+        // Independent review, installer#94: a list entry is a dependency too, and a config compose
+        // cannot resolve fails the start instead of reading as "no sidecar".
+        file_put_contents($root . '/test.yml', "services:\n  app:\n    depends_on:\n      - llm-stub\n      - \"mysql\"\n");
+        file_put_contents($root . '/runtime.yml', "services:\n  app:\n    depends_on:\n      - mysql\n");
+        $listed = $this->sh($root, "error() { echo \"\$*\" >&2; }\ne2e_test_sidecars ./compose \"\$(compose_args) -f docker-compose.test.yml\"\n");
+        self::assertSame("llm-stub service_started\n", $listed);
+        file_put_contents($root . '/compose', "#!/bin/sh\necho 'yaml: line 3: bad indentation' >&2; exit 15\n");
+        $broken = $this->sh($root, "error() { echo \"\$*\" >> err; }\ne2e_test_sidecars ./compose \"\$(compose_args) -f docker-compose.test.yml\" || echo refused\ncat err\n");
+        self::assertStringContainsString('docker compose config failed', $broken);
+        self::assertStringContainsString('bad indentation', $broken);
+        self::assertStringStartsWith("refused\n", $broken);
+
         $start = $this->function('e2e_app_start');
         $up = strpos($start, 'up -d --no-recreate $_e2e_sidecars');
         $run = strpos($start, 'run -d --no-deps');
@@ -340,11 +352,11 @@ final class E2eOwnDatabaseTest extends TestCase
             # One poll later the replica in `becomes` turns healthy.
             sleep() { n=$(cat polls 2>/dev/null || echo 0); echo $((n + 1)) > polls; [ -f becomes ] && mv becomes b.state; }
             e2e_sidecar_ready ./compose '' stub service_started && echo "started: no wait"
-            printf 'a\nb\n' > ids; echo healthy > a.state; echo starting > b.state; echo healthy > becomes
+            printf 'a\nb\n' > ids; echo 'running healthy' > a.state; echo 'running starting' > b.state; echo 'running healthy' > becomes
             E2E_SIDECAR_TIMEOUT=5 e2e_sidecar_ready ./compose '' stub service_healthy && echo "every replica healthy after $(cat polls) poll(s)"
-            rm -f polls; printf 'aaa-probe\nb\n' > ids; echo True > aaa-probe.oneoff; echo 'exited 1' > aaa-probe.state; echo healthy > b.state
+            rm -f polls; printf 'aaa-probe\nb\n' > ids; echo True > aaa-probe.oneoff; echo 'exited 1' > aaa-probe.state; echo 'running healthy' > b.state
             e2e_sidecar_ready ./compose '' stub service_healthy && echo "one-off ignored"
-            printf 'b\n' > ids; echo starting > b.state
+            printf 'b\n' > ids; echo 'running starting' > b.state
             started=$(date +%s)
             E2E_SIDECAR_TIMEOUT=2 e2e_sidecar_ready ./compose '' stub service_healthy 2>err || echo "never healthy: failed"
             [ $(( $(date +%s) - started )) -le 4 ] && echo "within the deadline"
@@ -356,9 +368,15 @@ final class E2eOwnDatabaseTest extends TestCase
             grep -q 'setup exited with an error' err && echo "said why"
             : > ids
             E2E_SIDECAR_TIMEOUT=1 e2e_sidecar_ready ./compose '' gone service_healthy 2>/dev/null || echo "no container: failed"
+            # Independent review, installer#94: a stopped sidecar fails at once, not after the timeout.
+            printf 'b\n' > ids; echo 'exited 137' > b.state; rm -f polls
+            E2E_SIDECAR_TIMEOUT=30 e2e_sidecar_ready ./compose '' stub service_healthy 2>err || echo "stopped: failed"
+            [ ! -f polls ] && grep -q 'stub stopped before it was healthy' err && echo "at once, said why"
+            echo 'running healthy' > b.state
+            E2E_SIDECAR_TIMEOUT=soon e2e_sidecar_ready ./compose '' stub service_healthy && echo "a timeout that is no number: 60"
             SH);
 
-        self::assertSame("started: no wait\nevery replica healthy after 1 poll(s)\none-off ignored\nnever healthy: failed\nwithin the deadline\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\nno container: failed\n", $out);
+        self::assertSame("started: no wait\nevery replica healthy after 1 poll(s)\none-off ignored\nnever healthy: failed\nwithin the deadline\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\nno container: failed\nstopped: failed\nat once, said why\na timeout that is no number: 60\n", $out);
     }
 
     private function unavailable(array $o, bool $status = false): string
