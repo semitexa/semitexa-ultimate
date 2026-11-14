@@ -51,9 +51,31 @@ final class TestRunOneSpecTest extends TestCase
         self::assertStringContainsString("test_run_e2e_phase\n    fi\n", substr($run, (int) $alone, 300));
 
         $phase = (string) strstr($this->script, 'test_run_e2e_phase() {');
-        $override = strpos($phase, '_e2e_spec_args="$_e2e_only_specs"');
+        $override = strpos($phase, 'for _e2e_named in $_e2e_only_specs; do');
         self::assertNotFalse($override, 'the named specs replace the discovered dirs');
         self::assertLessThan(strpos($phase, 'playwright test --config=playwright.config.ts $_e2e_spec_args'), $override, 'before the runner is called');
+    }
+
+    /** Review, installer#91 and update#95. */
+    #[Test]
+    public function a_named_spec_is_a_literal_anchored_filter_and_needs_no_phase_one(): void
+    {
+        $phase = (string) strstr($this->script, 'test_run_e2e_phase() {');
+        // Discovery finding nothing does not end a run that names its spec.
+        self::assertStringContainsString('if [ -z "$_e2e_dirs" ] && [ -z "${_e2e_only_specs:-}" ]; then', $phase);
+        // MySQL is started by the reset itself, before the drop: Phase 1 is not there to do it.
+        $reset = (string) strstr($this->script, 'e2e_database_reset() {');
+        self::assertLessThan(strpos($reset, 'DROP DATABASE'), strpos($reset, 'ensure_test_database "$1" "$2" "$_e2e_name"'));
+
+        // The filter Playwright gets is a regular expression over the absolute path.
+        self::assertSame(1, preg_match('/^        _e2e_spec_args=\'\'\n.*?^        set \+f\n/ms', $phase, $loop));
+        $filters = (string) shell_exec('_e2e_only_specs=' . escapeshellarg('src/m/tests/E2E/user[1].spec.ts src/m/tests/E2E/b.spec.ts') . "\n" . $loop[0] . 'printf %s "$_e2e_spec_args"');
+        $parts = explode(' ', $filters);
+        self::assertCount(2, $parts, $filters);
+        self::assertSame(1, preg_match('~' . $parts[0] . '~i', '/var/www/html/src/m/tests/E2E/user[1].spec.ts'), $parts[0]);
+        self::assertSame(0, preg_match('~' . $parts[0] . '~i', '/var/www/html/src/m/tests/E2E/user1.spec.ts'), 'brackets are literal');
+        self::assertSame(0, preg_match('~' . $parts[1] . '~i', '/var/www/html/src/m/tests/E2E/b.spec.ts.bak'), 'anchored at the end');
+        self::assertSame(0, preg_match('~' . $parts[1] . '~i', '/var/www/html/src/m/tests/E2E/xb.spec.ts'), 'anchored at a path segment');
     }
 
     private function run_(string ...$args): string

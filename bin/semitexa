@@ -3384,7 +3384,8 @@ test_run_e2e_phase() {
     printf "\n%s%s Phase 2/2 — E2E tests (Playwright in Docker) %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
 
     _e2e_dirs="$(discover_e2e_dirs)"
-    if [ -z "$_e2e_dirs" ]; then
+    # Named specs run whatever discovery finds (review, update#95).
+    if [ -z "$_e2e_dirs" ] && [ -z "${_e2e_only_specs:-}" ]; then
         info "No E2E tests discovered (looked in packages/*/tests/E2E and src/modules/*/tests/E2E)."
         success "All tests passed (no E2E specs to run)."
         exit 0
@@ -3443,9 +3444,16 @@ test_run_e2e_phase() {
     # installed. Passing the discovered dirs as path filters keeps the two
     # in agreement.
     _e2e_spec_args="$(printf '%s' "$_e2e_dirs" | tr '\n' ' ')"
-    # Named specs narrow the run to themselves (tk-test-run-one-e2e-spec).
+    # Named specs narrow the run to themselves (tk-test-run-one-e2e-spec). Playwright reads each
+    # filter as a regular expression over the absolute path: escaped and anchored, a name like
+    # user[1].spec.ts matches that file and no other (review, installer#91).
     if [ -n "${_e2e_only_specs:-}" ]; then
-        _e2e_spec_args="$_e2e_only_specs"
+        _e2e_spec_args=''
+        set -f # split on spaces only: a [1] in a name is not a glob
+        for _e2e_named in $_e2e_only_specs; do
+            _e2e_spec_args="${_e2e_spec_args:+$_e2e_spec_args }/$(printf '%s' "$_e2e_named" | sed 's/[][\\.^$*+?(){}|]/\\&/g')\$"
+        done
+        set +f
     fi
     # The runner writes test-results as the host user now; a directory an
     # earlier root run left behind would refuse it (EACCES on .last-run.json).
@@ -4015,6 +4023,9 @@ E2E_TRUNCATE_TABLES="queue_messages mail_messages mail_attempts webhook_outbox w
 e2e_database_reset() {
     _e2e_name="$(e2e_db_name)"
     _e2e_live="$(e2e_compose_val DB_DATABASE semitexa)"
+    # MySQL up and answering before the drop: Phase 1 used to start it, and a run with
+    # no Phase 1 (a named spec, ai:verify) met a stopped one (review, update#95).
+    ensure_test_database "$1" "$2" "$_e2e_name"
     # shellcheck disable=SC2086
     ( env_export_compose_context; $1 $2 exec -T mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e 'DROP DATABASE IF EXISTS $_e2e_name;'" >/dev/null 2>&1 < /dev/null ) \
         || { error "Could not drop the E2E database '$_e2e_name'."; return 1; }
