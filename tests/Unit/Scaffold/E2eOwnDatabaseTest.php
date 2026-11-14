@@ -374,9 +374,10 @@ final class E2eOwnDatabaseTest extends TestCase
             [ ! -f polls ] && grep -q 'stub stopped before it was healthy' err && echo "at once, said why"
             echo 'running healthy' > b.state
             E2E_SIDECAR_TIMEOUT=soon e2e_sidecar_ready ./compose '' stub service_healthy && echo "a timeout that is no number: 60"
+            [ "$(E2E_SIDECAR_TIMEOUT=08 e2e_sidecar_timeout)" = 8 ] && [ "$(E2E_SIDECAR_TIMEOUT=000 e2e_sidecar_timeout)" = 0 ] && echo "leading zeros: decimal"
             SH);
 
-        self::assertSame("started: no wait\nevery replica healthy after 1 poll(s)\none-off ignored\nnever healthy: failed\nwithin the deadline\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\nno container: failed\nstopped: failed\nat once, said why\na timeout that is no number: 60\n", $out);
+        self::assertSame("started: no wait\nevery replica healthy after 1 poll(s)\none-off ignored\nnever healthy: failed\nwithin the deadline\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\nno container: failed\nstopped: failed\nat once, said why\na timeout that is no number: 60\nleading zeros: decimal\n", $out);
     }
 
     private function unavailable(array $o, bool $status = false): string

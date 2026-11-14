@@ -4181,8 +4181,9 @@ e2e_lock_end() {
 # start the app with no sidecar and say nothing (independent review, installer#94).
 e2e_app_depends_on() {
     # shellcheck disable=SC2086
-    _e2e_config="$( ( env_export_compose_context; $1 $2 config 2>&1 < /dev/null ) )" \
-        || { error "docker compose config failed for $2: $(printf '%s' "$_e2e_config" | tail -n 3)"; return 1; }
+    # The YAML alone: compose's warnings go to stderr, and are read only when it fails.
+    _e2e_config="$( ( env_export_compose_context; $1 $2 config 2>/dev/null < /dev/null ) )" \
+        || { error "docker compose config failed for $2: $( ( env_export_compose_context; $1 $2 config 2>&1 >/dev/null < /dev/null ) | tail -n 3)"; return 1; }
     # A list entry (`- db`, as Compose v1 may write it) has no condition: service_started.
     printf '%s\n' "$_e2e_config" | awk '
         function flush() { if (dep != "") print dep, (cond != "" ? cond : "service_started"); dep = ""; cond = "" }
@@ -4214,7 +4215,8 @@ e2e_test_sidecars() {
 
 # E2E_SIDECAR_TIMEOUT as a whole number of seconds (60 when unset or not one).
 e2e_sidecar_timeout() {
-    case "${E2E_SIDECAR_TIMEOUT:-}" in ''|*[!0-9]*) printf '60' ;; *) printf '%s' "$E2E_SIDECAR_TIMEOUT" ;; esac
+    # Leading zeros dropped: `08` is no octal number, and $(( )) would stop on it (review).
+    case "${E2E_SIDECAR_TIMEOUT:-}" in ''|*[!0-9]*) printf '60' ;; *) printf '%s' "$E2E_SIDECAR_TIMEOUT" | sed 's/^0*//; s/^$/0/' ;; esac
 }
 
 # Waits until a sidecar meets the condition the app's depends_on gives it, as
