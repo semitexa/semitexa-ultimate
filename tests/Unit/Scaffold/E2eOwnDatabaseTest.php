@@ -437,6 +437,15 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertStringContainsString('e2e_fixtures_apply "$1" "$2" "$_e2e_name"', $this->function('e2e_database_reset'), 'the reset applies them, after the patches');
     }
 
+    /** tk-e2e-specs-own-their-data: clean is the default; copy is asked for by name. */
+    #[Test]
+    public function the_e2e_database_is_clean_unless_copy_is_asked_for(): void
+    {
+        self::assertSame('clean', $this->sh($this->root([], true), "e2e_db_mode\n"));
+        self::assertSame('copy', $this->sh($this->root(['SEMITEXA_E2E_DB' => 'copy'], true), "e2e_db_mode\n"));
+        self::assertStringContainsString('Specs that read your development data: SEMITEXA_E2E_DB=copy', $this->function('e2e_database_reset'));
+    }
+
     private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);
