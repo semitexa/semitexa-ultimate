@@ -4010,16 +4010,17 @@ e2e_app_args() {
     printf '%s' "$_e2e_args"
 }
 
-# How the E2E database is filled: copy (default) or clean.
-#   copy   a snapshot of the live database, then the schema and data patches:
-#          38 specs today read data a developer's database grew through use
-#          (pings, leads, CMS users, media rows) and no seed or patch makes;
-#          the run writes into the copy, never into the live one.
-#   clean  the schema and data patches alone: what a spec that sets up its
-#          own data needs, and the target (tk-e2e-specs-own-their-data).
+# How the E2E database is filled: clean (default) or copy.
+#   clean  the schema and data patches, then the E2E fixtures (#[AsE2eFixture]):
+#          a spec sets up its own rows, or a fixture makes them. The default
+#          since every framework spec and a consumer's whole suite passed on it
+#          (274/0 and 265/0, 15.11; tk-e2e-specs-own-their-data).
+#   copy   a snapshot of the live database, then the same: for a project whose
+#          specs still read rows its development database grew; the run writes
+#          into the copy, never into the live one.
 e2e_db_mode() {
-    _e2e_mode="${SEMITEXA_E2E_DB:-$(env_val SEMITEXA_E2E_DB copy)}"
-    printf '%s' "${_e2e_mode:-copy}"
+    _e2e_mode="${SEMITEXA_E2E_DB:-$(env_val SEMITEXA_E2E_DB clean)}"
+    printf '%s' "${_e2e_mode:-clean}"
 }
 
 # Outbound work a copy would carry: a job, mail or webhook copied from the
@@ -4066,6 +4067,9 @@ e2e_database_reset() {
     # The database is made again, so the sync history of the one before says nothing.
     rm -rf "$PROJECT_ROOT/var/e2e/migrations"
     for _e2e_dir in $E2E_RUNTIME_DIRS; do mkdir -p "$PROJECT_ROOT/var/e2e/$_e2e_dir"; done
+    if [ "$(e2e_db_mode)" = "clean" ]; then
+        info "E2E database '$_e2e_name': clean (schema, patches, fixtures). Specs that read your development data: SEMITEXA_E2E_DB=copy."
+    fi
     if [ "$(e2e_db_mode)" = "copy" ]; then
         info "E2E database '$_e2e_name': a copy of '$_e2e_live'..."
         _e2e_t0="$(date +%s)"
