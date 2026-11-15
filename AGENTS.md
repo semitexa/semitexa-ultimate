@@ -141,7 +141,7 @@ operator input
      │      sign one was missed: look again before writing it.
      ▼
 [7] edit via make:* or Edit
-[8] ai:verify
+[8] ai:verify → DOCTRINE §8
      │ └─ fail → ai:work update --status=blocked; iterate (three-strike rule)
      ▼
 [9] ai:work update --status=done
