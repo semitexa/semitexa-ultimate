@@ -423,6 +423,21 @@ Escalate only when needed.
 
 Never bypass verification.
 
+### Working rules, and why (each one learned from a failure)
+
+**A test must be able to fail.** Run a new test against the code before the fix and see it red, then green. A test written after the fix that was never red may pass on anything — and an assertion an empty value satisfies (`assertNotSame`, `assertNotFalse` on a lookup, a count cast from `false`) is green whatever the code does. `lint:test-integrity` refuses the obvious shapes; the red run is the proof.
+
+**Commit on the verdict.** `ai:verify` ends with one verdict line. A shell chain that greps for it and commits on `&&` commits on a `fail` line too, because the grep succeeded. Test the verdict itself (`grep -q '"verdict":"pass"' || stop`) before every commit and every pull request.
+
+**Check it where it will run.** What passes in one place fails in another when it depends on where it runs:
+- *Pooled connections.* Outside a transaction an ORM may hand each statement its own connection, so a `SET time_zone` and the `SELECT` after it can land on two. A test of session state runs both inside `$orm->getTransactionManager()->run(...)` through `getQueryAdapter()`, which holds one connection, and puts the state back in `finally`. Alone or in one package's suite the adapter is often a single connection and the bug does not show.
+- *The isolated E2E app.* `test:run` starts E2E on an app and database of their own. Data a spec reads must come from the spec itself or from an `#[AsE2eFixture]` class (run by `e2e:fixtures` on the E2E database only), not from rows a developer's database grew. A project whose `semitexa/testing` has no `e2e:fixtures` yet skips fixtures, and the runner says so: update it, or create the data in the spec.
+- *The image you ship.* Check a runtime-dependent fix in the project's own image, not only on the host.
+
+**Two review rounds, then decide.** When a second round of review finds a kind of problem the first did not — a new class of edge case, not a typo — the design is usually what is wrong. A third round of patches tends to find a fourth class. Stop, and write in the pull request which way you go: redesign (put the logic where a unit test can hold it; orchestration in shell is the usual suspect), or cut the scope, merge what is sound, and file the rest with reasons.
+
+**Deploy in batches.** Where pushing deploys (a hook, a pipeline), push a reviewed batch that passed the full gate. A deploy per fix multiplies the moments production can break and leaves no time between them to notice.
+
 ---
 
 ## 9. Generator Discipline (deep)
