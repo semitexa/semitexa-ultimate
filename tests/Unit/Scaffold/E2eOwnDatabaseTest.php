@@ -385,6 +385,51 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertSame("started: no wait\nevery replica healthy after 1 poll(s)\none-off ignored\nnever healthy: failed\nwithin the deadline\nsaid why\ncompleted: ok\nfailed setup: failed\nsaid why\nno container: failed\nstopped: failed\nat once, said why\na timeout that is no number: 60\nleading zeros: decimal\n", $out);
     }
 
+    /**
+     * tk-e2e-specs-own-their-data: the sign-in specs need an owner the E2E database does not have.
+     * The runner marks the database with this run's token, runs e2e:fixtures with a password made
+     * for this run, and hands that password to the specs; a project without the command goes on.
+     */
+    #[Test]
+    public function the_e2e_database_gets_its_fixtures_with_this_runs_token_and_password(): void
+    {
+        $root = $this->root([], true);
+        // compose: records each call; `--help` answers as `help` says, e2e:fixtures as `fixtures` says.
+        file_put_contents($root . '/compose', "#!/bin/sh\necho \"\$*\" >> calls\ncase \"\$*\" in *'e2e:fixtures --help'*) exit \$(cat help) ;; *'e2e:fixtures'*) exit \$(cat fixtures) ;; esac\nexit 0\n");
+        chmod($root . '/compose', 0755);
+        $out = $this->sh($root, <<<'SH'
+            error() { echo "error: $*"; }
+            info() { echo "info: $*"; }
+            echo 1 > help
+            e2e_fixtures_apply ./compose '' semitexa_e2e
+            [ -z "$E2E_FIXTURE_PASSWORD" ] && [ -z "$(e2e_runner_fixture_args)" ] && echo "no command: no sign-in handed on"
+            [ "$(grep -c . calls)" = 1 ] && echo "only the probe ran"
+            : > calls; echo 0 > help; echo 0 > fixtures
+            e2e_fixtures_apply ./compose '' semitexa_e2e >/dev/null
+            token=$(grep -o 'INSERT INTO _semitexa_e2e.*' calls | head -1)
+            grep -q 'exec -T mysql' calls && grep -q '_ semitexa_e2e [0-9a-f]\{32\}$' calls && echo "marker row written as root, a 32-hex token"
+            t=$(grep 'exec -T mysql' calls | awk '{print $NF}')
+            grep 'e2e:fixtures$' calls | grep -q -- "-e SEMITEXA_E2E_TOKEN=$t " && echo "fixtures ran with that token"
+            grep 'e2e:fixtures$' calls | grep -q -- "-e SEMITEXA_E2E_PASSWORD=$E2E_FIXTURE_PASSWORD " && echo "and with the password handed on"
+            case "$E2E_FIXTURE_PASSWORD" in e2e-????????????????????????) echo "a password made for this run" ;; esac
+            [ "$(e2e_runner_fixture_args)" = "-e CMS_E2E_EMAIL=owner@semitexa.test -e CMS_E2E_PASSWORD=$E2E_FIXTURE_PASSWORD" ] && echo "the specs get it as CMS_E2E_*"
+            first=$E2E_FIXTURE_PASSWORD; e2e_fixtures_apply ./compose '' semitexa_e2e >/dev/null
+            [ "$first" != "$E2E_FIXTURE_PASSWORD" ] && echo "another run, another password"
+            echo 1 > fixtures
+            e2e_fixtures_apply ./compose '' semitexa_e2e || echo "failed fixtures: failed"
+            [ -z "$E2E_FIXTURE_PASSWORD" ] && echo "and hand nothing on"
+            SH);
+
+        self::assertSame(
+            "info: This project's semitexa/testing has no e2e:fixtures yet (bin/semitexa update brings it): specs that sign in use their own defaults.\n"
+            . "no command: no sign-in handed on\nonly the probe ran\nmarker row written as root, a 32-hex token\nfixtures ran with that token\nand with the password handed on\n"
+            . "a password made for this run\nthe specs get it as CMS_E2E_*\nanother run, another password\n"
+            . "info: E2E database 'semitexa_e2e': fixtures...\nerror: The E2E fixtures failed on 'semitexa_e2e'.\nfailed fixtures: failed\nand hand nothing on\n",
+            $out,
+        );
+        self::assertStringContainsString('e2e_fixtures_apply "$1" "$2" "$_e2e_name"', $this->function('e2e_database_reset'), 'the reset applies them, after the patches');
+    }
+
     private function unavailable(array $o, bool $status = false): string
     {
         $root = $this->root($o['env'] ?? [], $o['e2eFile'] ?? true);

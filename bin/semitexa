@@ -3482,7 +3482,7 @@ test_run_e2e_phase() {
             # The runner joins the E2E app's network namespace (docker-compose.e2e.yml);
             # --no-deps: the developer's app is not this run's target.
             # shellcheck disable=SC2086
-            $_compose $_e2e_runner_overlays run --rm --no-deps e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args
+            $_compose $_e2e_runner_overlays run --rm --no-deps $(e2e_runner_fixture_args) e2e-runner npx --no-install playwright test --config=playwright.config.ts $_e2e_spec_args
         ) || _e2e_rc=$?
         docker rm -f "$_e2e_isolated" >/dev/null 2>&1 || true
     else
@@ -4089,6 +4089,47 @@ e2e_database_reset() {
     # shellcheck disable=SC2046,SC2086
     ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) app php vendor/bin/semitexa update --no-composer --no-scaffold < /dev/null ) \
         || { error "Seeding the E2E database '$_e2e_name' failed."; return 1; }
+    e2e_fixtures_apply "$1" "$2" "$_e2e_name"
+}
+
+# Hex from the kernel's random source, $1 bytes of it.
+e2e_random_hex() {
+    od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'
+}
+
+# What E2E specs sign in with and the rows they need, put into the E2E database
+# only (semitexa/testing's e2e:fixtures, tk-e2e-specs-own-their-data): a marker
+# row holding a token made for this run, written as root into the database just
+# made, then the fixtures, which refuse on any database without that row. The
+# owner's password is made for this run too and handed to the specs
+# (E2E_FIXTURE_*), so no fixed password is written anywhere. A project whose
+# semitexa/testing has no e2e:fixtures yet is told so and goes on without it.
+#   $1 compose binary   $2 compose -f arguments   $3 the E2E database
+e2e_fixtures_apply() {
+    E2E_FIXTURE_EMAIL=
+    E2E_FIXTURE_PASSWORD=
+    # shellcheck disable=SC2046,SC2086
+    if ! ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) app php vendor/bin/semitexa e2e:fixtures --help >/dev/null 2>&1 < /dev/null ); then
+        info "This project's semitexa/testing has no e2e:fixtures yet (bin/semitexa update brings it): specs that sign in use their own defaults."
+        return 0
+    fi
+    _e2e_token="$(e2e_random_hex 16)"
+    _e2e_password="e2e-$(e2e_random_hex 12)"
+    # shellcheck disable=SC2086
+    ( env_export_compose_context; $1 $2 exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$1" -e "CREATE TABLE IF NOT EXISTS _semitexa_e2e (token VARCHAR(64) NOT NULL PRIMARY KEY, made_at DATETIME NOT NULL); INSERT INTO _semitexa_e2e (token, made_at) VALUES (\"$2\", UTC_TIMESTAMP())"' _ "$3" "$_e2e_token" >/dev/null 2>&1 < /dev/null ) \
+        || { error "Could not mark '$3' as this run's E2E database; its fixtures were not applied."; return 1; }
+    info "E2E database '$3': fixtures..."
+    # shellcheck disable=SC2046,SC2086
+    ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) -e DB_E2E_DATABASE="$3" -e SEMITEXA_E2E_TOKEN="$_e2e_token" -e SEMITEXA_E2E_EMAIL=owner@semitexa.test -e SEMITEXA_E2E_PASSWORD="$_e2e_password" app php vendor/bin/semitexa e2e:fixtures < /dev/null ) \
+        || { error "The E2E fixtures failed on '$3'."; return 1; }
+    E2E_FIXTURE_EMAIL=owner@semitexa.test
+    E2E_FIXTURE_PASSWORD="$_e2e_password"
+}
+
+# The sign-in the fixtures made, as the specs read it (CMS_E2E_EMAIL / CMS_E2E_PASSWORD); nothing when none was made.
+e2e_runner_fixture_args() {
+    [ -n "${E2E_FIXTURE_PASSWORD:-}" ] || return 0
+    printf -- '-e CMS_E2E_EMAIL=%s -e CMS_E2E_PASSWORD=%s' "$E2E_FIXTURE_EMAIL" "$E2E_FIXTURE_PASSWORD"
 }
 
 # The E2E app's container name: unique per checkout (two with one directory
@@ -4442,7 +4483,7 @@ cmd_ai_verify() {
                 set +f
                 env_export_compose_context
                 # shellcheck disable=SC2086
-                $_vcompose $_vrunner run --rm --no-deps -T e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
+                $_vcompose $_vrunner run --rm --no-deps -T $(e2e_runner_fixture_args) e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
             ) > "$_vdir/$_vsha.log" 2>&1 < /dev/null || _vrc=$?
             printf '%s\n' "$_vrc" > "$_vdir/$_vsha.exit"
         done
