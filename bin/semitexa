@@ -3994,7 +3994,10 @@ e2e_isolation_unavailable() {
 # the rest of var/ (storage and uploads, evidence, the project graph) is the
 # project's data, which the copied database's rows point at, and stays shared:
 # with all of var/ swapped, media, the evidence view and the graph had nothing.
-E2E_RUNTIME_DIRS="run runtime cache lock log tmp"
+# migrations: the schema sync's history of the E2E database, which a project
+# may keep in git as its audit trail; each clean run wrote one there
+# (tk-e2e-run-leaves-sync-history).
+E2E_RUNTIME_DIRS="run runtime cache lock log tmp migrations"
 
 # The env and mounts the E2E app and its seeding run share.
 e2e_app_args() {
@@ -4060,6 +4063,8 @@ e2e_database_reset() {
     # shellcheck disable=SC2086
     ( env_export_compose_context; $1 $2 exec -T mysql sh -c "mysql -N -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e \"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$_e2e_name'\"" 2>/dev/null < /dev/null ) | grep -qx "$_e2e_name" \
         || { error "The E2E database '$_e2e_name' does not exist after creating it."; return 1; }
+    # The database is made again, so the sync history of the one before says nothing.
+    rm -rf "$PROJECT_ROOT/var/e2e/migrations"
     for _e2e_dir in $E2E_RUNTIME_DIRS; do mkdir -p "$PROJECT_ROOT/var/e2e/$_e2e_dir"; done
     if [ "$(e2e_db_mode)" = "copy" ]; then
         info "E2E database '$_e2e_name': a copy of '$_e2e_live'..."
