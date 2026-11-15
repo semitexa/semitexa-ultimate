@@ -72,7 +72,8 @@ final class E2eOwnDatabaseTest extends TestCase
         foreach (['CACHE_ENV=e2e', 'NATS_QUEUE_STREAM=QUEUE_E2E', 'NATS_QUEUE_SUBJECT_PREFIX=e2e.queue.', 'LEDGER_STREAM=EVENTS_E2E', 'LEDGER_SUBJECT_PREFIX=e2e.events'] as $env) {
             self::assertStringContainsString('-e ' . $env, $args);
         }
-        foreach (['run', 'runtime', 'cache', 'lock', 'log', 'tmp'] as $dir) {
+        // migrations: the E2E database's sync history stays out of the project's (tk-e2e-run-leaves-sync-history).
+        foreach (['run', 'runtime', 'cache', 'lock', 'log', 'tmp', 'migrations'] as $dir) {
             self::assertStringContainsString("-v ./var/e2e/{$dir}:/var/www/html/var/{$dir}", $args);
         }
         self::assertStringNotContainsString('/var/www/html/var/storage', $args, 'project data under var/ stays shared');
@@ -87,6 +88,7 @@ final class E2eOwnDatabaseTest extends TestCase
         self::assertMatchesRegularExpression('/set -e\n\s+mysqldump /', $reset, 'the dump runs under set -e');
         self::assertStringContainsString('|| { grep -v "Using a password" /tmp/e2e-dump.err /tmp/e2e-import.err >&2; exit 1; }', $reset);
         self::assertStringContainsString('TRUNCATE $t failed', $reset, 'an outbox left full would be sent again');
+        self::assertStringContainsString('rm -rf "$PROJECT_ROOT/var/e2e/migrations"', $reset, 'the history of the database before is dropped with it');
         self::assertStringContainsString('does not exist after creating it', $reset);
 
         $phase = (string) strstr($this->script, "Phase 2/2 — E2E tests");
