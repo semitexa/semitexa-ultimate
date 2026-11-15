@@ -120,6 +120,10 @@ final class RouterNetworkBindsLoopbackTest extends TestCase
             'network connect --gw-priority=-1 demo_default semitexa-router-proxy',
         ], $calls);
 
+        // The router's own network keeps the default priority: at -1 it would tie with the others (review, installer#99).
+        [$calls] = $this->connect(priority: '0', network: 'router_default');
+        self::assertSame(['network connect router_default semitexa-router-proxy'], $calls);
+
         // Already below the router's gateway: left as it is.
         [$calls] = $this->connect(priority: '-1');
         self::assertSame([$inspect], $calls);
@@ -129,7 +133,7 @@ final class RouterNetworkBindsLoopbackTest extends TestCase
             substr_count($this->script, 'docker network connect'),
             'every join goes through router_connect_proxy',
         );
-        self::assertSame(2, substr_count($this->function('router_connect_proxy'), 'docker network connect'));
+        self::assertSame(3, substr_count($this->function('router_connect_proxy'), 'docker network connect'));
         self::assertStringContainsString('router_connect_proxy "$_rc_net"', $this->function('router_reconnect_all'));
         self::assertStringContainsString('router_connect_proxy "$_ra_net"', $this->function('router_attach_project'));
     }
@@ -144,7 +148,9 @@ final class RouterNetworkBindsLoopbackTest extends TestCase
             $body = $this->function($caller);
             $ensure = strpos($body, 'router_ensure_loopback_network');
             self::assertNotFalse($ensure, "{$caller} makes the network");
-            self::assertLessThan($ensure, strpos($body, 'router_render'), "{$caller} renders first");
+            $render = strpos($body, 'router_render');
+            self::assertNotFalse($render, "{$caller} renders");
+            self::assertLessThan($ensure, $render, "{$caller} renders first");
             self::assertLessThan(strpos($body, 'router_compose up -d'), $ensure, "{$caller} makes it before up -d, which needs it");
         }
     }
@@ -169,14 +175,14 @@ final class RouterNetworkBindsLoopbackTest extends TestCase
      * @param string $priority what docker inspect prints for the proxy's GwPriority on demo_default; '': not joined
      * @return array{list<string>, string}
      */
-    private function connect(string $priority, bool $gwPriorityKnown = true): array
+    private function connect(string $priority, bool $gwPriorityKnown = true, string $network = 'demo_default'): array
     {
         $docker = "echo \"\$*\" >>\"\$LOG\"\n"
             . '[ "$1" = inspect ] && { printf ' . escapeshellarg('%s') . ' ' . escapeshellarg($priority) . "; exit 0; }\n"
             . ($gwPriorityKnown ? '' : "case \"\$*\" in *--gw-priority*) echo 'unknown flag: --gw-priority' >&2; exit 125 ;; esac\n")
             . "exit 0\n";
 
-        return $this->runFunctions($docker, 'router_connect_proxy demo_default');
+        return $this->runFunctions($docker, 'router_connect_proxy ' . $network);
     }
 
     /** @return array{list<string>, string} */

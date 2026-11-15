@@ -1192,6 +1192,13 @@ $_rd_net"
 # tk-router-loopback-network). --gw-priority is Docker 28; an older engine has no
 # GwPriority to read and joins without the flag.
 router_connect_proxy() {
+    # router_default is the gateway the others stay below: joined at -1 it would
+    # tie with them, and the name that sorts first would take it back (review,
+    # installer#99). An app reached over it falls back here from router_attach_project.
+    if [ "$1" = router_default ]; then
+        docker network connect "$1" semitexa-router-proxy >/dev/null 2>&1
+        return
+    fi
     _cp_prio="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$1\"}}{{.GwPriority}}{{end}}" semitexa-router-proxy 2>/dev/null || true)"
     # Only a number is a priority; anything else is not read, and joins as before.
     case "$_cp_prio" in
