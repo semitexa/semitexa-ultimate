@@ -4108,11 +4108,18 @@ e2e_random_hex() {
 e2e_fixtures_apply() {
     E2E_FIXTURE_EMAIL=
     E2E_FIXTURE_PASSWORD=
+    # Only a command the console says it does not know is skipped; a probe that failed otherwise
+    # (a killed container, a broken autoloader) fails the run with what it said (review, update#98).
     # shellcheck disable=SC2046,SC2086
-    if ! ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) app php vendor/bin/semitexa e2e:fixtures --help >/dev/null 2>&1 < /dev/null ); then
-        info "This project's semitexa/testing has no e2e:fixtures yet (bin/semitexa update brings it): specs that sign in use their own defaults."
-        return 0
-    fi
+    _e2e_probe="$( ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) app php vendor/bin/semitexa e2e:fixtures --help 2>&1 < /dev/null ) )" || {
+        case "$_e2e_probe" in
+            *'not defined'*|*'no commands defined'*)
+                info "This project's semitexa/testing has no e2e:fixtures yet (bin/semitexa update brings it): specs that sign in use their own defaults."
+                return 0 ;;
+        esac
+        error "Asking the E2E app for e2e:fixtures failed: $(printf '%s' "$_e2e_probe" | tail -n 3)"
+        return 1
+    }
     _e2e_token="$(e2e_random_hex 16)"
     _e2e_password="e2e-$(e2e_random_hex 12)"
     # shellcheck disable=SC2086
@@ -4444,6 +4451,9 @@ cmd_ai_verify() {
                 _vwhy="another E2E run held the project's E2E app past the wait"
             elif ! { e2e_database_reset "$_vcompose" "$_voverlays" >&2 && e2e_app_start "$_vcompose" "$_voverlays" >&2; }; then
                 _vwhy="the E2E app could not start"
+                # The sign-in the fixtures made is the E2E database's, not the developer's (review, ultimate#149).
+                E2E_FIXTURE_EMAIL=
+                E2E_FIXTURE_PASSWORD=
                 # Not held through a run on the developer's app (Fable, installer#89).
                 e2e_lock_end "$_vcleanup"
             fi
@@ -4483,7 +4493,7 @@ cmd_ai_verify() {
                 set +f
                 env_export_compose_context
                 # shellcheck disable=SC2086
-                $_vcompose $_vrunner run --rm --no-deps -T $(e2e_runner_fixture_args) e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
+                $_vcompose $_vrunner run --rm --no-deps -T $([ -n "$_visolated" ] && e2e_runner_fixture_args) e2e-runner npx --no-install playwright test --config=playwright.config.ts --reporter=line --output=/tmp/pw "$_vspec"
             ) > "$_vdir/$_vsha.log" 2>&1 < /dev/null || _vrc=$?
             printf '%s\n' "$_vrc" > "$_vdir/$_vsha.exit"
         done

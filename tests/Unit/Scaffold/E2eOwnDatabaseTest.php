@@ -395,15 +395,20 @@ final class E2eOwnDatabaseTest extends TestCase
     {
         $root = $this->root([], true);
         // compose: records each call; `--help` answers as `help` says, e2e:fixtures as `fixtures` says.
-        file_put_contents($root . '/compose', "#!/bin/sh\necho \"\$*\" >> calls\ncase \"\$*\" in *'e2e:fixtures --help'*) exit \$(cat help) ;; *'e2e:fixtures'*) exit \$(cat fixtures) ;; esac\nexit 0\n");
+        file_put_contents($root . '/compose', "#!/bin/sh\necho \"\$*\" >> calls\ncase \"\$*\" in *'e2e:fixtures --help'*) cat said 2>/dev/null; exit \$(cat help) ;; *'e2e:fixtures'*) exit \$(cat fixtures) ;; esac\nexit 0\n");
         chmod($root . '/compose', 0755);
         $out = $this->sh($root, <<<'SH'
             error() { echo "error: $*"; }
             info() { echo "info: $*"; }
-            echo 1 > help
+            echo 1 > help; echo 'Command "e2e:fixtures" is not defined.' > said
             e2e_fixtures_apply ./compose '' semitexa_e2e
             [ -z "$E2E_FIXTURE_PASSWORD" ] && [ -z "$(e2e_runner_fixture_args)" ] && echo "no command: no sign-in handed on"
             [ "$(grep -c . calls)" = 1 ] && echo "only the probe ran"
+            # Review, update#98: a probe that failed for another reason is no missing command.
+            : > calls; echo 137 > help; echo 'Killed' > said
+            e2e_fixtures_apply ./compose '' semitexa_e2e || echo "probe killed: failed"
+            [ "$(grep -c . calls)" = 1 ] && echo "and nothing more ran"
+            rm -f said
             : > calls; echo 0 > help; echo 0 > fixtures
             e2e_fixtures_apply ./compose '' semitexa_e2e >/dev/null
             token=$(grep -o 'INSERT INTO _semitexa_e2e.*' calls | head -1)
@@ -422,7 +427,7 @@ final class E2eOwnDatabaseTest extends TestCase
 
         self::assertSame(
             "info: This project's semitexa/testing has no e2e:fixtures yet (bin/semitexa update brings it): specs that sign in use their own defaults.\n"
-            . "no command: no sign-in handed on\nonly the probe ran\nmarker row written as root, a 32-hex token\nfixtures ran with that token\nand with the password handed on\n"
+            . "no command: no sign-in handed on\nonly the probe ran\nerror: Asking the E2E app for e2e:fixtures failed: Killed\nprobe killed: failed\nand nothing more ran\nmarker row written as root, a 32-hex token\nfixtures ran with that token\nand with the password handed on\n"
             . "a password made for this run\nthe specs get it as CMS_E2E_*\nanother run, another password\n"
             . "info: E2E database 'semitexa_e2e': fixtures...\nerror: The E2E fixtures failed on 'semitexa_e2e'.\nfailed fixtures: failed\nand hand nothing on\n",
             $out,
