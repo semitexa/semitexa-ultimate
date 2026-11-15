@@ -85,7 +85,7 @@ final class RouterContainerRouteTest extends TestCase
         $this->runScript('router_attach_project');
 
         $calls = (string) file_get_contents($this->log);
-        self::assertStringContainsString("network connect shop_default semitexa-router-proxy\n", $calls);
+        self::assertStringContainsString("network connect --gw-priority=-1 shop_default semitexa-router-proxy\n", $calls);
         $entry = (string) file_get_contents($this->root . '/home/.semitexa/router/registry/domains/shop.test.env');
         self::assertStringContainsString("UPSTREAM_CONTAINER=shop-app-1\nUPSTREAM_NETWORK=shop_default\nUPSTREAM_CONTAINER_PORT=9507\n", $entry);
         // What an older renderer and the port checks read is left as it was.
@@ -161,8 +161,8 @@ final class RouterContainerRouteTest extends TestCase
         $this->runScript('router_reconnect_all');
 
         $calls = (string) file_get_contents($this->log);
-        self::assertStringContainsString("network connect shop_default semitexa-router-proxy\n", $calls);
-        self::assertStringContainsString("network connect blog_default semitexa-router-proxy\n", $calls);
+        self::assertStringContainsString("network connect --gw-priority=-1 shop_default semitexa-router-proxy\n", $calls);
+        self::assertStringContainsString("network connect --gw-priority=-1 blog_default semitexa-router-proxy\n", $calls);
     }
 
     /**
