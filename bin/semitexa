@@ -1124,7 +1124,7 @@ router_attach_project() {
     _ra_net="$(printf '%s\n' "$_ra_nets" | grep -Fx -- "${_ra_proj}_default" | head -n 1)"
     [ -n "$_ra_net" ] || _ra_net="$(printf '%s\n' "$_ra_nets" | head -n 1)"
     [ -n "$_ra_name" ] && [ -n "$_ra_net" ] || return 0
-    docker network connect "$_ra_net" semitexa-router-proxy >/dev/null 2>&1 || true
+    router_connect_proxy "$_ra_net" || true
     if ! router_proxy_networks | grep -Fx -- "$_ra_net" >/dev/null 2>&1; then
         # The host port is published on SWOOLE_BIND, 127.0.0.1 by default, where the
         # router's host.docker.internal route cannot reach it (tk-app-port-binds-every-interface).
@@ -1182,13 +1182,75 @@ $_rd_net"
     return 0
 }
 
+# Joins the router proxy to a project network below router_default's gateway
+# priority. At an equal priority Docker takes the gateway from the network whose
+# name sorts first, and a port published without an address ("80:80", written
+# by a script from before 2026-11-09) is bound on that network's terms at the
+# next restart: an "apartmens_default" before "router_default" put it back on
+# 0.0.0.0 and [::] (measured 2026-11-15, Docker 29.8.1). A join a script from
+# 2026-11-11 to 11-14 made at priority 0 is made again at -1 (Fable review,
+# tk-router-loopback-network). --gw-priority is Docker 28; an older engine has no
+# GwPriority to read and joins without the flag.
+router_connect_proxy() {
+    # router_default is the gateway the others stay below: joined at -1 it would
+    # tie with them, and the name that sorts first would take it back (review,
+    # installer#99). An app reached over it falls back here from router_attach_project.
+    if [ "$1" = router_default ]; then
+        docker network connect "$1" semitexa-router-proxy >/dev/null 2>&1
+        return
+    fi
+    _cp_prio="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$1\"}}{{.GwPriority}}{{end}}" semitexa-router-proxy 2>/dev/null || true)"
+    # Only a number is a priority; anything else is not read, and joins as before.
+    case "$_cp_prio" in
+        0) docker network disconnect "$1" semitexa-router-proxy >/dev/null 2>&1 || return 0 ;;
+        -[0-9]*|[1-9]*) return 0 ;;
+    esac
+    docker network connect --gw-priority=-1 "$1" semitexa-router-proxy >/dev/null 2>&1 \
+        || docker network connect "$1" semitexa-router-proxy >/dev/null 2>&1
+}
+
 # A recreated router container is on its own network only: put it back on
 # every network a registered project's app is reached over.
 router_reconnect_all() {
     docker inspect semitexa-router-proxy >/dev/null 2>&1 || return 0
     for _rc_net in $(sed -n "s/^UPSTREAM_NETWORK=//p" "$ROUTER_REGISTRY_DIR"/*.env 2>/dev/null | sort -u); do
-        docker network connect "$_rc_net" semitexa-router-proxy >/dev/null 2>&1 || true
+        router_connect_proxy "$_rc_net" || true
     done
+    return 0
+}
+
+# router_default publishes a port given without an address on 127.0.0.1, so a
+# project whose older bin/semitexa renders "80:80" and starts the router still
+# gets loopback (tk-router-loopback-network). It carries no Compose labels on
+# purpose: an older `local-router:stop` (compose down) deletes a network Compose
+# labelled, and the next older start would make it again without the option; an
+# unlabelled one is left in place, with a warning that it was not created by
+# Compose. Measured 2026-11-15 on a scratch project and on the router itself: up
+# -d, restart and down+up from a compose with a bare port all stayed on
+# 127.0.0.1, a LAN address was refused.
+#
+# Only a network Compose made is replaced, with the router down. One this
+# function made without the option (an engine that refused it, Podman say) is
+# kept, so the router is not taken down on every start; the router's own port is
+# 127.0.0.1:80 either way. A create that fails falls back to a plain network:
+# the external network has to exist or up -d stops the router from starting.
+router_ensure_loopback_network() {
+    if _rn_info="$(docker network inspect -f '{{index .Options "com.docker.network.bridge.host_binding_ipv4"}}|{{index .Labels "com.docker.compose.network"}}' router_default 2>/dev/null)"; then
+        case "$_rn_info" in
+            *'|') return 0 ;;
+        esac
+        info "Recreating the router_default network so that every port on it is published on 127.0.0.1."
+        router_compose down >/dev/null 2>&1 || true
+        if ! _rn_err="$(docker network rm router_default 2>&1 >/dev/null)"; then
+            warn "Could not remove the router_default network: ${_rn_err:-docker network rm failed}"
+            warn "A router started by an older bin/semitexa may answer beyond this machine until it is removed."
+            return 0
+        fi
+    fi
+    docker network create -o com.docker.network.bridge.host_binding_ipv4=127.0.0.1 router_default >/dev/null 2>&1 && return 0
+    warn "This engine would not make router_default publish on 127.0.0.1 by default: a router started by an older bin/semitexa may answer beyond this machine."
+    docker network create router_default >/dev/null \
+        || warn "Could not create the router_default network: the router cannot start."
     return 0
 }
 
@@ -1328,6 +1390,13 @@ services:
     volumes:
       - $ROUTER_NGINX_DEFAULT:/etc/nginx/conf.d/default.conf:ro
       - $ROUTER_NGINX_DOMAINS:/etc/nginx/conf.d/semitexa-domains.conf:ro
+
+# Made by router_ensure_loopback_network, outside Compose, so that a down
+# leaves it (and its 127.0.0.1 default) in place.
+networks:
+  default:
+    name: router_default
+    external: true
 EOF
 }
 
@@ -1606,6 +1675,7 @@ router_start_for_mode() {
     _mode="$(router_mode_get)"
     router_check_before_rebind
     router_render
+    router_ensure_loopback_network
     case "$_mode" in
         dns)
             router_apply_name_resolution
@@ -1657,6 +1727,7 @@ cmd_local_router_restart() {
     cmd_local_router_init >/dev/null
     router_check_before_rebind
     router_render
+    router_ensure_loopback_network
     _mode="$(router_mode_get)"
     # up -d first: `restart` keeps a container's old configuration, so a
     # rendered compose with new ports (127.0.0.1:80, 2026-11-09) never reached
