@@ -46,6 +46,27 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
         self::assertSame([], $carried, 'these would ship to every new project; export-ignore them in .gitattributes');
     }
 
+    /**
+     * A test a new project gets runs in its first test:run, so it must not need
+     * what the project does not get. Four did (review, ultimate#154): the CI and
+     * soak tooling's tests read .github/ and tools/.
+     */
+    public function test_no_test_a_new_project_gets_reads_what_it_does_not_get(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $tests = array_values(array_filter(
+            $this->archivedPaths(),
+            static fn (string $path): bool => str_starts_with($path, 'tests/') && str_ends_with($path, '.php'),
+        ));
+        self::assertNotSame([], $tests, 'the archive carries the project\'s tests: an empty list would pass the check below');
+
+        $reading = array_values(array_filter(
+            $tests,
+            static fn (string $path): bool => preg_match('#\.github/|[\'"/]tools/|install\.sh|SECURITY\.md#', (string) file_get_contents($root . '/' . $path)) === 1,
+        ));
+        self::assertSame([], $reading, 'these tests read framework files a new project does not get; export-ignore them too');
+    }
+
     /** @return list<string> */
     private function archivedPaths(): array
     {

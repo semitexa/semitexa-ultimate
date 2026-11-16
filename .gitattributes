@@ -19,3 +19,7 @@
 /install.sh export-ignore
 /SECURITY.md export-ignore
 /tests/Unit/Scaffold/ANewProjectGetsOnlyItsOwnFilesTest.php export-ignore
+# The tests of the framework's CI and soak tooling read .github/ and tools/,
+# which a new project does not get: shipped, its first test run would be red.
+/tests/Unit/Ci export-ignore
+/tests/Unit/Soak export-ignore
