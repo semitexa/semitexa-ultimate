@@ -136,6 +136,17 @@ services:
           printf '[%s] [BOOTSTRAP] %s\n' "$$ts" "$$*" >> "$$LOG_PATH" 2>/dev/null || true
         }
         fail() { log "ERROR: $$*"; rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"; exit 2; }
+        write_marker() {
+          mkdir -p "$$TARGET_DIR/var/install"
+          printf '{\n  "status": "ok",\n  "installed_package": "%s",\n  "installed_at": "%s",\n  "bootstrap_version": %s\n}\n' \
+            "$$PACKAGE_NAME" \
+            "$$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            "$$BOOTSTRAP_VERSION" > "$$MARKER_PATH" \
+            || fail "marker write failed"
+          # Handed to the directory's owner: a root-owned var/install would
+          # outlive the install until the next start.
+          chown -R "$$(stat -c '%u:%g' "$$TARGET_DIR")" "$$TARGET_DIR/var/install" 2>/dev/null || true
+        }
 
         [ -d "$$TARGET_DIR" ] || fail "$$TARGET_DIR does not exist"
         [ -w "$$TARGET_DIR" ] || fail "$$TARGET_DIR is not writable"
@@ -143,8 +154,38 @@ services:
           command -v "$$b" >/dev/null 2>&1 || fail "missing required binary: $$b"
         done
 
-        if [ -f "$$TARGET_DIR/composer.json" ] && [ -f "$$MARKER_PATH" ]; then
-          log "already bootstrapped (marker $$MARKER_PATH)"
+        # A project is already here: the skeleton never goes over it. A clone
+        # has composer.json but no vendor/ (vendor/ is not committed), so only
+        # its own dependencies are installed, in place; the skeleton is fetched
+        # only into a directory without a composer.json. The marker used to
+        # decide: a clone that carried it never got vendor/ (the app
+        # crash-looped), and a project without it had the skeleton copied over
+        # its composer.json, composer.lock and README.
+        if [ -f "$$TARGET_DIR/composer.json" ]; then
+          if [ -f "$$TARGET_DIR/vendor/autoload.php" ]; then
+            log "already bootstrapped: composer.json and vendor/ are here"
+          else
+            log "install this project's own dependencies (composer.json, no vendor/)"
+            had_lock=0
+            [ -f "$$TARGET_DIR/composer.lock" ] && had_lock=1
+            owner="$$(stat -c '%u:%g' "$$TARGET_DIR")"
+            # What the install wrote as root goes to the directory's owner,
+            # a failed install included: a root-owned lock outlives the retry.
+            hand_back() {
+              chown -R "$$owner" "$$TARGET_DIR/vendor" 2>/dev/null || true
+              [ "$$had_lock" = 1 ] || chown "$$owner" "$$TARGET_DIR/composer.lock" 2>/dev/null || true
+            }
+            if ! composer install --working-dir="$$TARGET_DIR" \
+              --no-interaction --prefer-dist --optimize-autoloader; then
+              # Composer writes the autoloader before the scripts that can fail
+              # it: left behind, the next start would read the install as done.
+              rm -f "$$TARGET_DIR/vendor/autoload.php"
+              hand_back
+              fail "composer install failed"
+            fi
+            hand_back
+          fi
+          [ -f "$$MARKER_PATH" ] || write_marker
           exit 0
         fi
 
@@ -205,15 +246,7 @@ services:
         chmod +x "$$TARGET_DIR/bin/semitexa" 2>/dev/null || true
 
         log "step 5/6 write success marker"
-        mkdir -p "$$TARGET_DIR/var/install"
-        printf '{\n  "status": "ok",\n  "installed_package": "%s",\n  "installed_at": "%s",\n  "bootstrap_version": %s\n}\n' \
-          "$$PACKAGE_NAME" \
-          "$$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-          "$$BOOTSTRAP_VERSION" > "$$MARKER_PATH" \
-          || fail "marker write failed"
-        # Written after step 4's chown, so hand it over too: a root-owned
-        # var/install would outlive the install until the next start.
-        chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/var/install" 2>/dev/null || true
+        write_marker
 
         # A fresh project is a git repository with one commit, so the first
         # `bin/semitexa ai:verify --dirty` sees the developer's own changes
