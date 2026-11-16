@@ -121,6 +121,7 @@ services:
         TEMP_DIR=/tmp/semitexa-bootstrap
         BACKUP_DIR=/tmp/semitexa-bootstrap-backup
         MARKER_PATH="$$TARGET_DIR/var/install/bootstrap-complete.json"
+        COPYING_PATH="$$TARGET_DIR/var/install/bootstrap-copying"
         LOG_PATH="$$TARGET_DIR/var/log/install-bootstrap.log"
         PACKAGE_NAME=semitexa/ultimate
         # Empty: the latest stable release. A version pins the install to that
@@ -153,6 +154,12 @@ services:
         for b in composer php cp rm mkdir date; do
           command -v "$$b" >/dev/null 2>&1 || fail "missing required binary: $$b"
         done
+        # The first log line makes var/log, as root: what this run makes goes
+        # to the directory's owner, and nothing that was there before it.
+        made_here=''
+        for d in var var/log; do
+          [ -d "$$TARGET_DIR/$$d" ] || made_here="$$made_here $$d"
+        done
 
         # A project is already here: the skeleton never goes over it. A clone
         # has composer.json but no vendor/ (vendor/ is not committed), so only
@@ -160,15 +167,17 @@ services:
         # only into a directory without a composer.json. The marker used to
         # decide: a clone that carried it never got vendor/ (the app
         # crash-looped), and a project without it had the skeleton copied over
-        # its composer.json, composer.lock and README.
-        if [ -f "$$TARGET_DIR/composer.json" ]; then
+        # its composer.json, composer.lock and README. A skeleton copy cut off
+        # midway (an interrupted container, a failed cp) also leaves a
+        # composer.json: COPYING_PATH says so, and the bootstrap runs again.
+        if [ -f "$$TARGET_DIR/composer.json" ] && [ ! -e "$$COPYING_PATH" ]; then
+          owner="$$(stat -c '%u:%g' "$$TARGET_DIR")"
           if [ -f "$$TARGET_DIR/vendor/autoload.php" ]; then
             log "already bootstrapped: composer.json and vendor/ are here"
           else
             log "install this project's own dependencies (composer.json, no vendor/)"
             had_lock=0
             [ -f "$$TARGET_DIR/composer.lock" ] && had_lock=1
-            owner="$$(stat -c '%u:%g' "$$TARGET_DIR")"
             # What the install wrote as root goes to the directory's owner,
             # a failed install included: a root-owned lock outlives the retry.
             hand_back() {
@@ -186,6 +195,9 @@ services:
             hand_back
           fi
           [ -f "$$MARKER_PATH" ] || write_marker
+          for d in $$made_here; do
+            chown -R "$$owner" "$$TARGET_DIR/$$d" 2>/dev/null || true
+          done
           exit 0
         fi
 
@@ -227,6 +239,10 @@ services:
           cp -a "$$TARGET_DIR/bin/semitexa" "$$BACKUP_DIR/bin/semitexa"
         fi
 
+        # Until the marker is written, a composer.json here is the skeleton's,
+        # not a project's: a copy cut off midway is done again on the next start.
+        mkdir -p "$$TARGET_DIR/var/install" && : > "$$COPYING_PATH" \
+          || fail "cannot mark the copy as in progress"
         cp -a "$$TEMP_DIR/." "$$TARGET_DIR/" || fail "copy into bind mount failed"
 
         for f in .env.default .env .gitignore Dockerfile \
@@ -247,6 +263,7 @@ services:
 
         log "step 5/6 write success marker"
         write_marker
+        rm -f "$$COPYING_PATH"
 
         # A fresh project is a git repository with one commit, so the first
         # `bin/semitexa ai:verify --dirty` sees the developer's own changes
