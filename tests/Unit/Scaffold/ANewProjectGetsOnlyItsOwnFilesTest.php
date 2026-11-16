@@ -60,10 +60,17 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
         ));
         self::assertNotSame([], $tests, 'the archive carries the project\'s tests: an empty list would pass the check below');
 
-        $reading = array_values(array_filter(
-            $tests,
-            static fn (string $path): bool => preg_match('#\.github/|[\'"/]tools/|install\.sh|SECURITY\.md#', (string) file_get_contents($root . '/' . $path)) === 1,
-        ));
+        $reading = [];
+        foreach ($tests as $path) {
+            // A test that cannot be read was not checked: it fails, never passes.
+            $source = file_get_contents($root . '/' . $path);
+            if ($source === false || $source === '') {
+                self::fail("cannot read {$path}, which the archive carries");
+            }
+            if (preg_match('#\.github/|[\'"/]tools/|install\.sh|SECURITY\.md#', $source) === 1) {
+                $reading[] = $path;
+            }
+        }
         self::assertSame([], $reading, 'these tests read framework files a new project does not get; export-ignore them too');
     }
 
