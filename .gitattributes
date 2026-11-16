@@ -6,3 +6,16 @@
 /tests/Unit/Scaffold/RuntimeScaffoldConsistencyTest.php export-ignore
 /tests/Unit/Scaffold/InstallerGivesTheE2eRunnerTest.php export-ignore
 /tests/Unit/Scaffold/InstallerCheckoutTestsStayOutOfTheArchiveTest.php export-ignore
+
+# The framework's own CI, its maintainer tools, its one-line installer and its
+# security policy. A project made from this skeleton lives on a host we do not
+# know (decision dec-projects-are-host-neutral, 2026-11-16) and has its own
+# policy; carried along, these were dead files on GitLab, OUR release gates in a
+# GitHub project's CI, and a security policy sending a product's reports to us.
+# The repository keeps them: a workflow_call reads them from here, not from an
+# archive.
+/.github export-ignore
+/tools export-ignore
+/install.sh export-ignore
+/SECURITY.md export-ignore
+/tests/Unit/Scaffold/ANewProjectGetsOnlyItsOwnFilesTest.php export-ignore
