@@ -2383,27 +2383,47 @@ server_start_config_warnings() {
     fi
 }
 
-# Waits, bounded, for the app container to answer on its own port, and says what
-# it last logged when it does not. server:start said "started!" right after
+# 0 when the app answers GET /health with 200, asked inside its container. Core
+# holds every request, /health included, at its worker boot gate, so a 200 means a
+# worker booted: an open port alone does not (review, ultimate#158). Each probe is
+# bounded (default_socket_timeout and the request timeout, 2 s): a full accept
+# queue made a bare connect wait for minutes (review, update#106). A container that
+# is restarting refuses the exec, which is an answer too. Its input is /dev/null:
+# compose exec forwards the caller's, and a `while read` around server:start would
+# lose its lines.
+app_answers_health() {
+    run_compose exec -T app php -d default_socket_timeout=2 -r '
+        $context = stream_context_create(["http" => ["timeout" => 2, "ignore_errors" => true]]);
+        @file_get_contents("http://127.0.0.1:" . $argv[1] . "/health", false, $context);
+        exit(preg_match("#^HTTP/\S+ 200\b#", http_get_last_response_headers()[0] ?? "") === 1 ? 0 : 1);
+    ' "$1" </dev/null >/dev/null 2>&1
+}
+
+# Waits, bounded, for the app to answer (app_answers_health), and says what it
+# last logged when it does not. server:start said "started!" right after
 # `compose up -d`, while the app crash-looped: nothing checked it stayed up or
 # answered, and an agent took the deploy for done (the Guard project,
-# tk-server-start-says-ok-while-the-app-crash-loops). The probe is
-# wait_for_service's, run inside the app container; a container that is
-# restarting refuses the exec, which is the answer too.
+# tk-server-start-says-ok-while-the-app-crash-loops).
 server_start_wait_for_app() {
     _wait_port="$(env_val SWOOLE_PORT 9502)"
+    # Tries and the seconds between them; a slow first boot can ask for more
+    # (SEMITEXA_START_WAIT_ATTEMPTS=90 bin/semitexa server:start). Anything but a
+    # positive whole number is the default.
     _wait_attempts="${SEMITEXA_START_WAIT_ATTEMPTS:-30}"
     _wait_delay="${SEMITEXA_START_WAIT_DELAY:-2}"
+    case "$_wait_attempts" in ''|*[!0-9]*) _wait_attempts=30 ;; esac
+    [ "$_wait_attempts" -ge 1 ] || _wait_attempts=30
+    case "$_wait_delay" in ''|*[!0-9]*) _wait_delay=2 ;; esac
     info "Waiting for the app to answer on port $_wait_port..."
     _wait_try=1
     while [ "$_wait_try" -le "$_wait_attempts" ]; do
-        if run_compose exec -T app sh -c "(echo > /dev/tcp/127.0.0.1/$_wait_port) 2>/dev/null || nc -z 127.0.0.1 $_wait_port 2>/dev/null" >/dev/null 2>&1; then
+        if app_answers_health "$_wait_port"; then
             return 0
         fi
         _wait_try=$((_wait_try + 1))
         [ "$_wait_try" -le "$_wait_attempts" ] && sleep "$_wait_delay"
     done
-    error "The app did not answer on port $_wait_port within $((_wait_attempts * _wait_delay))s: it is not running, or it is restarting."
+    error "The app did not answer on port $_wait_port after $_wait_attempts tries, ${_wait_delay}s apart: it is not running, still booting, or restarting."
     info "Its last log lines (all of them: docker compose logs app):"
     run_compose logs --no-color --tail 20 app 2>&1 | sed 's/^/    /'
     return 1
@@ -2597,7 +2617,11 @@ cmd_server_restart() {
     # between the first pass and its own stop.
     project_ownership_reclaim
 
-    server_start_wait_for_app || exit 1
+    # A full restart or the app's own waits for it; restarting redis alone does not
+    # depend on whether the app is up (review, installer#103).
+    if [ -z "$_service" ] || [ "$_service" = "app" ]; then
+        server_start_wait_for_app || exit 1
+    fi
     success "Semitexa environment restarted!"
     printf "\n"
 }
