@@ -137,6 +137,8 @@ final class WorkerEnvShellTest extends TestCase
             . 'env_merged_lines(){ cat "$PROJECT_ROOT/.env"; }' . "\n"
             . 'compose_bin(){ echo "$FAKE_DOCKER"; }; compose_all_args(){ echo "-f docker-compose.yml"; }' . "\n"
             . 'stack_warn_live_agents(){ :; }; stack_event(){ :; }; project_ownership_reclaim(){ :; }' . "\n"
+            // The wait for the app to answer is ServerStartWaitsForTheAppTest's: here it answers.
+            . 'server_start_wait_for_app(){ :; }' . "\n"
             . 'server_restart_build_or_warn(){ echo build >> "$RAN_LOG"; }; run_compose(){ echo "run_compose $*" >> "$RAN_LOG"; }' . "\n"
             . implode("\n", $m[0]) . "\n(cmd_server_restart); echo \"status=\$?\"";
         $out = (string) shell_exec(sprintf(

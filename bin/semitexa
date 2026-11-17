@@ -2383,6 +2383,32 @@ server_start_config_warnings() {
     fi
 }
 
+# Waits, bounded, for the app container to answer on its own port, and says what
+# it last logged when it does not. server:start said "started!" right after
+# `compose up -d`, while the app crash-looped: nothing checked it stayed up or
+# answered, and an agent took the deploy for done (the Guard project,
+# tk-server-start-says-ok-while-the-app-crash-loops). The probe is
+# wait_for_service's, run inside the app container; a container that is
+# restarting refuses the exec, which is the answer too.
+server_start_wait_for_app() {
+    _wait_port="$(env_val SWOOLE_PORT 9502)"
+    _wait_attempts="${SEMITEXA_START_WAIT_ATTEMPTS:-30}"
+    _wait_delay="${SEMITEXA_START_WAIT_DELAY:-2}"
+    info "Waiting for the app to answer on port $_wait_port..."
+    _wait_try=1
+    while [ "$_wait_try" -le "$_wait_attempts" ]; do
+        if run_compose exec -T app sh -c "(echo > /dev/tcp/127.0.0.1/$_wait_port) 2>/dev/null || nc -z 127.0.0.1 $_wait_port 2>/dev/null" >/dev/null 2>&1; then
+            return 0
+        fi
+        _wait_try=$((_wait_try + 1))
+        [ "$_wait_try" -le "$_wait_attempts" ] && sleep "$_wait_delay"
+    done
+    error "The app did not answer on port $_wait_port within $((_wait_attempts * _wait_delay))s: it is not running, or it is restarting."
+    info "Its last log lines (all of them: docker compose logs app):"
+    run_compose logs --no-color --tail 20 app 2>&1 | sed 's/^/    /'
+    return 1
+}
+
 cmd_server_start() {
     printf "\n%s%s Semitexa — Starting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
 
@@ -2439,6 +2465,7 @@ cmd_server_start() {
     # app has no network to join yet.
     router_attach_project
 
+    server_start_wait_for_app || exit 1
     _port="$(env_val SWOOLE_PORT 8080)"
     printf "\n"
     success "Semitexa environment started!"
@@ -2570,6 +2597,7 @@ cmd_server_restart() {
     # between the first pass and its own stop.
     project_ownership_reclaim
 
+    server_start_wait_for_app || exit 1
     success "Semitexa environment restarted!"
     printf "\n"
 }
