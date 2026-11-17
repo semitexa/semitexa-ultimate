@@ -36,10 +36,24 @@ final class InitIsRetiredTest extends TestCase
         self::assertSame(0, $exit, 'a script that still calls init after an install asked for what is already there');
     }
 
-    #[Test]
-    public function server_start_outside_a_project_no_longer_sends_you_to_init(): void
+    /**
+     * The restore command names the root, quoted for the shell: run from another
+     * repository, a bare `git checkout -- docker-compose.yml` restored that one's
+     * file (review, core#249; tk-restore-hint-names-the-project-root).
+     *
+     * @return iterable<string, array{string}>
+     */
+    public static function roots(): iterable
     {
-        $empty = sys_get_temp_dir() . '/no-project-' . bin2hex(random_bytes(6));
+        yield 'a plain root' => ['no-project-'];
+        yield 'a root with a quote and a space' => ["it's a project-"];
+    }
+
+    #[Test]
+    #[\PHPUnit\Framework\Attributes\DataProvider('roots')]
+    public function server_start_outside_a_project_no_longer_sends_you_to_init(string $name): void
+    {
+        $empty = sys_get_temp_dir() . '/' . $name . bin2hex(random_bytes(6));
         mkdir($empty);
         try {
             [$out, $exit] = $this->runCommand('cmd_server_start', $empty);
@@ -49,7 +63,7 @@ final class InitIsRetiredTest extends TestCase
 
         self::assertSame([
             'ERROR docker-compose.yml not found in ' . $empty . '.',
-            'INFO Run bin/semitexa in a Semitexa project. A file removed by mistake comes back with: git checkout -- docker-compose.yml',
+            "INFO Run bin/semitexa in a Semitexa project. A file removed by mistake comes back with: git -C '" . str_replace("'", "'\\''", $empty) . "' checkout -- docker-compose.yml",
             'INFO A new project is made by the installer: curl -fsSL https://semitexa.com/install.sh | bash -s my-project',
         ], $out);
         self::assertSame(1, $exit);

@@ -151,6 +151,46 @@ final class StackEventsShellTest extends TestCase
         self::assertSame('|0', $identity('SEMITEXA_AGENT_IMPLICIT=0 CLAUDE_CODE_SESSION_ID=x'), 'and the agent can turn derivation off');
     }
 
+    /**
+     * tk-inherited-session-id-takes-another-agents-identity: an agent started
+     * from a Claude Code session's shell inherits CLAUDE_CODE_SESSION_ID, and
+     * took that session's identity. The nearest agent CLI among the ancestors
+     * names the agent; the session id names it only when that agent is Claude.
+     */
+    #[Test]
+    public function the_nearest_agent_among_the_ancestors_names_the_agent_not_an_inherited_claude_session(): void
+    {
+        // A process tree as ps reports it: this shell's parent, then $1 (the agent CLI), then init.
+        $tree = static fn (string $agent): string => <<<SH
+            ps() {
+                _pid=''; _want=''
+                while [ \$# -gt 0 ]; do case "\$1" in -p) _pid="\$2"; shift 2 ;; -o) _want="\$_want \$2"; shift 2 ;; *) shift ;; esac; done
+                case "\$_want" in *lstart=*) printf 'Mon Nov 17 22:00:00 2026\\n'; return 0 ;; esac
+                case "\$_pid" in
+                    "\$PPID") printf '  4242 bash\\n' ;;
+                    4242) printf '  4343 {$agent}\\n' ;;
+                    4343) printf '  1 systemd\\n' ;;
+                    *) return 1 ;;
+                esac
+            }
+            SH;
+        $identity = function (string $env, string $stubs = ''): string {
+            $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+            self::assertSame(1, preg_match('/^agent_identity\(\) \{\n.*?^\}$/ms', $script, $m), 'agent_identity must still exist in bin/semitexa');
+            $sh = $stubs . "\n" . ($m[0] ?? '') . "\nagent_identity\nprintf '%s|%s' \"\${SEMITEXA_AGENT_SESSION:-}\" \"\${SEMITEXA_AGENT_IMPLICIT:-}\"";
+
+            return (string) shell_exec('env -i PATH=/usr/bin:/bin ' . $env . ' sh -c ' . escapeshellarg($sh));
+        };
+        $claudeSession = 'CLAUDE_CODE_SESSION_ID=dac88658-d35d-4cde-8520-5f4a1db5be9f';
+
+        $codex = $identity('', $tree('codex'));
+        self::assertMatchesRegularExpression('/^codex-[0-9a-f]{6}\|codex$/', $codex);
+        self::assertSame($codex, $identity($claudeSession, $tree('codex')), 'codex under a Claude session is codex, as if the variable were not there');
+
+        // Claude Code as the nearest agent keeps its session id as the key: its forks share it.
+        self::assertSame($identity($claudeSession), $identity($claudeSession, $tree('claude')));
+    }
+
     #[Test]
     public function compose_always_gets_an_absolute_store_and_a_rejected_one_falls_back_to_the_project(): void
     {
