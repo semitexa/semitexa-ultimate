@@ -22,7 +22,14 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
 {
     // tests/Unit/Scaffold: the skeleton's own tests, which went red in a project
     // whenever bin/semitexa update changed a file they assert (tk-skeleton-tests-go-red-after-update).
-    private const FRAMEWORK_OWN = ['.github/', 'tools/', 'install.sh', 'SECURITY.md', 'tests/Unit/Scaffold/'];
+    // src/Application/Console/, src/Console/, src/Capabilities.php: the skeleton's
+    // own code. Its init command sat in every project's src/
+    // (tk-init-command-lands-in-every-projects-src). src/infrastructure/: a folder
+    // nothing reads, removed by ep-update-dev-orm-ownership.
+    private const FRAMEWORK_OWN = [
+        '.github/', 'tools/', 'install.sh', 'SECURITY.md', 'tests/Unit/Scaffold/',
+        'src/Application/Console/', 'src/Console/', 'src/Capabilities.php', 'src/infrastructure/',
+    ];
 
     public function test_the_archive_a_new_project_unpacks_carries_none_of_the_frameworks_own_files(): void
     {
@@ -75,6 +82,33 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
             }
         }
         self::assertSame([], $reading, 'these tests read framework files a new project does not get; export-ignore them too');
+    }
+
+    // verify:accept-test-change NoInfrastructureScaffoldTest and InstallerSyncAllowListTest read InitCommand::SCAFFOLD_FILE_MAP, which is gone with init; what they guarded (no src/infrastructure/, no src/Console/, no skeleton namespace in a project's src/) is asked of the archive here
+    /**
+     * A project's src/ is App\: no file a new project gets there may declare the
+     * skeleton's own namespace, or the class lands in the project's PSR-4 tree.
+     */
+    public function test_no_file_in_a_new_projects_src_declares_the_skeletons_namespace(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $php = array_values(array_filter(
+            $this->archivedPaths(),
+            static fn (string $path): bool => str_starts_with($path, 'src/') && str_ends_with($path, '.php'),
+        ));
+        self::assertContains('src/modules/Hello/src/Application/Handler/PayloadHandler/HelloHandler.php', $php, 'the archive carries the sample module: an empty list would pass the check below');
+
+        $declaring = [];
+        foreach ($php as $path) {
+            $source = @file_get_contents($root . '/' . $path);
+            if ($source === false) {
+                self::fail("cannot read {$path}, which the archive carries");
+            }
+            if (preg_match('/^namespace\s+Semitexa\\\\Ultimate\b/m', $source) === 1) {
+                $declaring[] = $path;
+            }
+        }
+        self::assertSame([], $declaring, 'these declare Semitexa\Ultimate inside a new project\'s src/');
     }
 
     /** @return list<string> */
