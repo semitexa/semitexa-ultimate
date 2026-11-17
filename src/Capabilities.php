@@ -9,11 +9,12 @@ use Semitexa\Core\Attribute\Capability;
 /**
  * What this package offers, for the capability catalog.
  *
- * Unusual placement, on purpose: this is a project skeleton, so the file lands
- * in every project created from it and describes what that project was built
- * out of. It is the one declaration a reader normally already has installed by
- * the time they can read it — kept so that the set of packages carrying a
- * `Capabilities` class is the whole set, with no exception to remember.
+ * It sits at src/Capabilities.php like every package's, so the set of packages
+ * carrying one is the whole set, with no exception to remember; the capability
+ * catalog requires it by that path from the workspace checkout. This package is
+ * a project skeleton, though, and a project's src/ is its own: .gitattributes
+ * keeps the file out of the archive a new project is made from
+ * (tk-init-command-lands-in-every-projects-src).
  *
  * Nothing reads this at runtime.
  */
