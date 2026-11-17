@@ -2429,8 +2429,12 @@ cmd_server_start() {
     printf "\n%s%s Semitexa — Starting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
 
     if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        # The root in the command, quoted: the shell may stand in another
+        # repository, whose own file a bare git checkout would restore
+        # (review, core#249; tk-restore-hint-names-the-project-root).
+        _root_q="'$(printf '%s' "$PROJECT_ROOT" | sed "s/'/'\\\\''/g")'"
         error "docker-compose.yml not found in $PROJECT_ROOT."
-        info  "Run bin/semitexa in a Semitexa project. A file removed by mistake comes back with: git checkout -- docker-compose.yml"
+        info  "Run bin/semitexa in a Semitexa project. A file removed by mistake comes back with: git -C $_root_q checkout -- docker-compose.yml"
         info  "A new project is made by the installer: curl -fsSL https://semitexa.com/install.sh | bash -s my-project"
         exit 1
     fi
@@ -4003,30 +4007,35 @@ agent_env_args() {
 # Claude Code's subagents and forks carry the very same environment (session
 # id, CLAUDE_PID, socket — measured 2026-10-17), so they share their parent's
 # session: one Claude Code session is one agent here. Nothing tells them apart.
+#
+# The nearest agent CLI among the ancestors names the agent, and Claude Code's
+# session id only when that nearest agent is Claude Code (or none is seen). An
+# agent started from a Claude Code session's shell inherits CLAUDE_CODE_SESSION_ID
+# and took that session's identity: its writes and its leave were the Claude
+# session's (tk-inherited-session-id-takes-another-agents-identity).
 agent_identity() {
     [ -z "${SEMITEXA_AGENT_SESSION:-}" ] || return 0
     [ "${SEMITEXA_AGENT_IMPLICIT:-}" != "0" ] || return 0
     _ai_name=""; _ai_key=""
-    if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+    # One ps per hop. CLIs run under node (gemini, older codex) show up as
+    # node and are not recognised; they can still export a session.
+    _ai_pid="$PPID"; _ai_hops=0
+    while [ -n "$_ai_pid" ] && [ "$_ai_pid" -gt 1 ] 2>/dev/null && [ "$_ai_hops" -lt 12 ]; do
+        _ai_row="$(ps -o ppid= -o comm= -p "$_ai_pid" 2>/dev/null)" || break
+        _ai_parent="$(printf '%s' "$_ai_row" | awk '{print $1}')"
+        _ai_comm="$(printf '%s' "$_ai_row" | awk '{print $2}' | sed 's#.*/##')"
+        case "$_ai_comm" in
+            claude|codex|gemini|aider|opencode|cursor-agent|copilot|amp|goose|qwen)
+                _ai_name="$_ai_comm"
+                _ai_key="$_ai_pid:$(ps -o lstart= -p "$_ai_pid" 2>/dev/null)"
+                break
+                ;;
+        esac
+        _ai_pid="$_ai_parent"
+        _ai_hops=$((_ai_hops + 1))
+    done
+    if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && { [ -z "$_ai_name" ] || [ "$_ai_name" = "claude" ]; }; then
         _ai_name="claude"; _ai_key="$CLAUDE_CODE_SESSION_ID"
-    else
-        # One ps per hop. CLIs run under node (gemini, older codex) show up as
-        # node and are not recognised; they can still export a session.
-        _ai_pid="$PPID"; _ai_hops=0
-        while [ -n "$_ai_pid" ] && [ "$_ai_pid" -gt 1 ] 2>/dev/null && [ "$_ai_hops" -lt 12 ]; do
-            _ai_row="$(ps -o ppid= -o comm= -p "$_ai_pid" 2>/dev/null)" || break
-            _ai_parent="$(printf '%s' "$_ai_row" | awk '{print $1}')"
-            _ai_comm="$(printf '%s' "$_ai_row" | awk '{print $2}' | sed 's#.*/##')"
-            case "$_ai_comm" in
-                claude|codex|gemini|aider|opencode|cursor-agent|copilot|amp|goose|qwen)
-                    _ai_name="$_ai_comm"
-                    _ai_key="$_ai_pid:$(ps -o lstart= -p "$_ai_pid" 2>/dev/null)"
-                    break
-                    ;;
-            esac
-            _ai_pid="$_ai_parent"
-            _ai_hops=$((_ai_hops + 1))
-        done
     fi
     [ -n "$_ai_name" ] || return 0
     _ai_name="$(printf '%s' "$_ai_name" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' | cut -c1-16)"
