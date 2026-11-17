@@ -105,6 +105,8 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
         self::assertTrue(self::declaresTheSkeletonsNamespace('<?php namespace Semitexa\Ultimate; final class Example {}'));
         self::assertTrue(self::declaresTheSkeletonsNamespace("<?php\n\ndeclare(strict_types=1);\n\nnamespace Semitexa\\Ultimate\\Application\\Console\\Command;\n"));
         self::assertTrue(self::declaresTheSkeletonsNamespace('<?php namespace Semitexa\Ultimate { final class Example {} }'));
+        self::assertTrue(self::declaresTheSkeletonsNamespace('<?php namespace /* the skeleton */ Semitexa\Ultimate;'));
+        self::assertTrue(self::declaresTheSkeletonsNamespace("<?php\n\nnamespace semitexa\\ultimate\\Tools;\n"));
         self::assertFalse(self::declaresTheSkeletonsNamespace("<?php\n\nnamespace App\\Modules\\Hello;\n"));
         self::assertFalse(self::declaresTheSkeletonsNamespace("<?php\n// namespace Semitexa\\Ultimate;\nnamespace App;\n"));
         self::assertFalse(self::declaresTheSkeletonsNamespace("<?php\n\nnamespace Semitexa\\UltimateTools;\n"));
@@ -120,10 +122,12 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
             }
             for ($j = $i + 1; isset($tokens[$j]); $j++) {
                 $next = $tokens[$j];
-                if (is_array($next) && $next[0] === T_WHITESPACE) {
+                if (is_array($next) && in_array($next[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
                     continue;
                 }
-                if (is_array($next) && ($next[1] === 'Semitexa\Ultimate' || str_starts_with($next[1], 'Semitexa\Ultimate\\'))) {
+                // Namespaces are case-insensitive in PHP.
+                $name = is_array($next) ? strtolower($next[1]) : '';
+                if ($name === 'semitexa\ultimate' || str_starts_with($name, 'semitexa\ultimate\\')) {
                     return true;
                 }
                 break;
