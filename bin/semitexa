@@ -2429,8 +2429,9 @@ cmd_server_start() {
     printf "\n%s%s Semitexa — Starting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
 
     if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
-        error "docker-compose.yml not found."
-        info  "Run: bin/semitexa init"
+        error "docker-compose.yml not found in $PROJECT_ROOT."
+        info  "Run bin/semitexa in a Semitexa project. A file removed by mistake comes back with: git checkout -- docker-compose.yml"
+        info  "A new project is made by the installer: curl -fsSL https://semitexa.com/install.sh | bash -s my-project"
         exit 1
     fi
 
@@ -2835,20 +2836,15 @@ cmd_demo_install() {
     printf "\n"
 }
 
+# Retired (tk-init-command-lands-in-every-projects-src, with Fable 16.11). The PHP
+# init command it ran lived in the skeleton's own src/, so it landed in every
+# project created from it; a project is made by the installer and its scaffold
+# files are kept current by bin/semitexa update. Exit 0: a script that still calls
+# init after an install asked for what is already there.
 cmd_init() {
-    if ! has_compose; then error "Docker is required. Install Docker Desktop."; exit 1; fi
-    if [ ! -f "$PROJECT_ROOT/Dockerfile" ]; then error "Dockerfile not found."; exit 1; fi
-    if [ ! -f "$PROJECT_ROOT/.env.default" ]; then
-        if command -v php >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/vendor/bin/semitexa" ]; then
-            warn ".env.default not found. Falling back to local PHP so init can scaffold it."
-            php "$PROJECT_ROOT/vendor/bin/semitexa" init "$@"
-            return
-        fi
-        error ".env.default not found. Run init once with local PHP so the scaffold can create it."
-        exit 1
-    fi
-    info "Running init via Docker..."
-    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app php vendor/bin/semitexa init "$@"
+    info "Nothing to init: a Semitexa project is made by the installer, and bin/semitexa update keeps its scaffold files current."
+    info "New project:      curl -fsSL https://semitexa.com/install.sh | bash -s my-project"
+    info "This project's:   bin/semitexa update"
 }
 
 # Discover module-level E2E spec dirs. Every Semitexa package and local module

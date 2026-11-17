@@ -24,6 +24,11 @@
 # consumer's SwoolePinnedTest after 2026.11.16.2053). They test the skeleton,
 # not the product; the product keeps tests/Unit/Hello and tests/Integration.
 /tests/Unit/Scaffold export-ignore
+# This package's capability declaration: the workspace's capability catalog reads
+# it from this repository (packages/semitexa-*/src/Capabilities.php). A project's
+# src/ is its own: shipped, the skeleton's class sat in every project's src/
+# (tk-init-command-lands-in-every-projects-src).
+/src/Capabilities.php export-ignore
 # The tests of the framework's CI and soak tooling read .github/ and tools/,
 # which a new project does not get: shipped, its first test run would be red.
 /tests/Unit/Ci export-ignore
