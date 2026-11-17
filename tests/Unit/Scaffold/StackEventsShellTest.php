@@ -138,7 +138,10 @@ final class StackEventsShellTest extends TestCase
         $identity = function (string $env): string {
             $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
             self::assertSame(1, preg_match('/^agent_identity\(\) \{\n.*?^\}$/ms', $script, $m), 'agent_identity must still exist in bin/semitexa');
-            $sh = $m[0] . "\nagent_identity\nprintf '%s|%s' \"\${SEMITEXA_AGENT_SESSION:-}\" \"\${SEMITEXA_AGENT_IMPLICIT:-}\"";
+            // No agent among the ancestors: env -i clears the environment, not the
+            // process tree, and the nearest agent CLI now names the agent first
+            // (review, ultimate#161).
+            $sh = "ps() { return 1; }\n" . ($m[0] ?? '') . "\nagent_identity\nprintf '%s|%s' \"\${SEMITEXA_AGENT_SESSION:-}\" \"\${SEMITEXA_AGENT_IMPLICIT:-}\"";
 
             return (string) shell_exec('env -i PATH=/usr/bin:/bin ' . $env . ' sh -c ' . escapeshellarg($sh));
         };
@@ -174,7 +177,8 @@ final class StackEventsShellTest extends TestCase
                 esac
             }
             SH;
-        $identity = function (string $env, string $stubs = ''): string {
+        // Without a tree, no agent among the ancestors, whatever runs the suite (review, ultimate#161).
+        $identity = function (string $env, string $stubs = 'ps() { return 1; }'): string {
             $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
             self::assertSame(1, preg_match('/^agent_identity\(\) \{\n.*?^\}$/ms', $script, $m), 'agent_identity must still exist in bin/semitexa');
             $sh = $stubs . "\n" . ($m[0] ?? '') . "\nagent_identity\nprintf '%s|%s' \"\${SEMITEXA_AGENT_SESSION:-}\" \"\${SEMITEXA_AGENT_IMPLICIT:-}\"";
