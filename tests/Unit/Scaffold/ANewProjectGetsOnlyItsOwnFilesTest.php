@@ -20,7 +20,9 @@ use PHPUnit\Framework\TestCase;
  */
 final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
 {
-    private const FRAMEWORK_OWN = ['.github/', 'tools/', 'install.sh', 'SECURITY.md'];
+    // tests/Unit/Scaffold: the skeleton's own tests, which went red in a project
+    // whenever bin/semitexa update changed a file they assert (tk-skeleton-tests-go-red-after-update).
+    private const FRAMEWORK_OWN = ['.github/', 'tools/', 'install.sh', 'SECURITY.md', 'tests/Unit/Scaffold/'];
 
     public function test_the_archive_a_new_project_unpacks_carries_none_of_the_frameworks_own_files(): void
     {
@@ -30,6 +32,7 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
         self::assertContains('composer.json', $paths);
         self::assertContains('bin/semitexa', $paths);
         self::assertContains('docker-compose.yml', $paths);
+        self::assertContains('tests/Unit/Hello/HelloDeferredAttributesTest.php', $paths, "the product keeps its own sample tests");
 
         $carried = array_values(array_filter(
             $paths,
