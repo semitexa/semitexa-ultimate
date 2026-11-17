@@ -22,7 +22,7 @@ final class ServerStartWaitsForTheAppTest extends TestCase
         env_val() { case "$1" in SWOOLE_PORT) printf '9517' ;; *) printf '%s' "$2" ;; esac; }
         app_answers_health() { n=$(cat "$T_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$T_COUNT"; [ "$n" -ge "$T_ANSWER_AT" ]; }
         run_compose() { [ "$1" = logs ] && printf 'PHP Fatal error:  Uncaught Error: Class "App\\Missing" not found\nWorker exited with code 255\n'; }
-        sleep() { :; }
+        sleep() { printf '%s\n' "$1" >> "$T_SLEPT"; }
         info() { printf 'INFO %s\n' "$*"; }
         error() { printf 'ERROR %s\n' "$*"; }
         SH;
@@ -81,6 +81,39 @@ final class ServerStartWaitsForTheAppTest extends TestCase
         self::assertLessThan(5.0, $took, 'one probe gives up after its 2 s timeout');
     }
 
+    /**
+     * Review, installer#103: a socket timeout bounds each read, so an answer that
+     * keeps coming and never ends (a header line every half second here) held a
+     * probe for as long as it went on. The whole probe ends within 3 s.
+     */
+    #[Test]
+    public function a_probe_of_an_answer_that_never_ends_gives_up_in_seconds(): void
+    {
+        $drip = <<<'PHP'
+            $server = stream_socket_server('tcp://127.0.0.1:0');
+            $name = (string) stream_socket_get_name($server, false);
+            echo substr($name, strrpos($name, ':') + 1), "\n";
+            $client = stream_socket_accept($server, 30);
+            fwrite($client, "HTTP/1.1 200 OK\r\n");
+            for ($i = 0; $i < 60; $i++) {
+                fwrite($client, "X-Drip: $i\r\n");
+                usleep(500000);
+            }
+            PHP;
+        $server = proc_open([PHP_BINARY, '-r', $drip], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+        self::assertIsResource($server);
+        $this->server = $server;
+        $port = (int) fgets($pipes[1]);
+        self::assertGreaterThan(0, $port, 'the dripping server says its port');
+
+        $started = microtime(true);
+        $exit = $this->probe($port);
+        $took = microtime(true) - $started;
+
+        self::assertSame(1, $exit, 'an answer whose headers never end is no answer');
+        self::assertLessThan(6.0, $took, 'the whole probe is bounded, not each read');
+    }
+
     /** Independent review: compose exec forwards the caller's input, and a `while read` loop lost its lines. */
     #[Test]
     public function the_probe_leaves_the_callers_input_alone(): void
@@ -95,36 +128,28 @@ final class ServerStartWaitsForTheAppTest extends TestCase
     #[Test]
     public function an_app_that_answers_lets_the_start_go_on(): void
     {
-        [$out, $exit, $tries] = $this->wait(answerAt: 3);
+        [$out, $exit, $tries, $slept] = $this->wait(answerAt: 3);
 
         self::assertSame(['INFO Waiting for the app to answer on port 9517...'], $out);
         self::assertSame([0, 3], [$exit, $tries]);
+        self::assertSame(['2', '2'], $slept, '2 s between tries, none after the answer');
     }
 
+    // verify:accept-test-change the wait overrides that a_wait_that_is_not_a_positive_whole_number_is_thirty_tries_two_seconds_apart checked are removed from bin/semitexa (two-round cap, installer#103); the fixed 30 tries, 2 s apart, are pinned here
     #[Test]
     public function an_app_that_never_answers_fails_the_start_with_what_it_last_logged(): void
     {
-        [$out, $exit, $tries] = $this->wait(answerAt: 999, attempts: '4', delay: '5');
+        [$out, $exit, $tries, $slept] = $this->wait(answerAt: 999);
 
         self::assertSame([
             'INFO Waiting for the app to answer on port 9517...',
-            'ERROR The app did not answer on port 9517 after 4 tries, 5s apart: it is not running, still booting, or restarting.',
+            'ERROR The app did not answer on port 9517 after 30 tries, 2s apart: it is not running, still booting, or restarting.',
             'INFO Its last log lines (all of them: docker compose logs app):',
             '    PHP Fatal error:  Uncaught Error: Class "App\Missing" not found',
             '    Worker exited with code 255',
         ], $out);
-        self::assertSame([1, 4], [$exit, $tries], 'it gives up after the tries it was given');
-    }
-
-    #[Test]
-    public function a_wait_that_is_not_a_positive_whole_number_is_thirty_tries_two_seconds_apart(): void
-    {
-        foreach ([['abc', '1.5'], ['0', ''], ['', 'x']] as [$attempts, $delay]) {
-            [$out, $exit, $tries] = $this->wait(answerAt: 999, attempts: $attempts, delay: $delay);
-
-            self::assertSame('ERROR The app did not answer on port 9517 after 30 tries, 2s apart: it is not running, still booting, or restarting.', $out[1] ?? '', $attempts . ' / ' . $delay);
-            self::assertSame([1, 30], [$exit, $tries], $attempts . ' / ' . $delay);
-        }
+        self::assertSame([1, 30], [$exit, $tries], 'it gives up after 30 tries');
+        self::assertSame(array_fill(0, 29, '2'), $slept, '2 s between tries, none after the last');
     }
 
     #[Test]
@@ -188,30 +213,31 @@ final class ServerStartWaitsForTheAppTest extends TestCase
         return (int) shell_exec(sprintf('env -i PATH=%s sh -c %s', escapeshellarg(dirname(PHP_BINARY) . ':/usr/bin:/bin'), escapeshellarg($sh)));
     }
 
-    /** @return array{list<string>, int, int} the lines printed, the exit code, the probes made */
-    private function wait(int $answerAt, ?string $attempts = null, ?string $delay = null): array
+    /** @return array{list<string>, int, int, list<string>} the lines printed, the exit code, the probes made, the sleeps asked for */
+    private function wait(int $answerAt): array
     {
         $count = sys_get_temp_dir() . '/start-wait-' . bin2hex(random_bytes(6));
-        $knobs = ($attempts === null ? '' : ' SEMITEXA_START_WAIT_ATTEMPTS=' . escapeshellarg($attempts))
-            . ($delay === null ? '' : ' SEMITEXA_START_WAIT_DELAY=' . escapeshellarg($delay));
+        $sleeps = $count . '.slept';
         try {
             $sh = self::WAIT_STUBS . "\n" . $this->function('server_start_wait_for_app') . "\nserver_start_wait_for_app; printf 'EXIT %s\\n' \"\$?\"";
             $raw = (string) shell_exec(sprintf(
-                'env -i PATH=/usr/bin:/bin T_COUNT=%s T_ANSWER_AT=%d%s sh -c %s',
+                'env -i PATH=/usr/bin:/bin T_COUNT=%s T_SLEPT=%s T_ANSWER_AT=%d sh -c %s',
                 escapeshellarg($count),
+                escapeshellarg($sleeps),
                 $answerAt,
-                $knobs,
                 escapeshellarg($sh),
             ));
             $tries = (int) @file_get_contents($count);
+            $slept = is_file($sleeps) ? (file($sleeps, FILE_IGNORE_NEW_LINES) ?: []) : [];
         } finally {
             @unlink($count);
+            @unlink($sleeps);
         }
         $lines = array_values(array_filter(explode("\n", $raw), static fn (string $line): bool => $line !== ''));
         $exitLine = array_pop($lines) ?? '';
         self::assertMatchesRegularExpression('/^EXIT \d+$/', $exitLine);
 
-        return [$lines, (int) substr($exitLine, 5), $tries];
+        return [$lines, (int) substr($exitLine, 5), $tries, array_values($slept)];
     }
 
     private function function(string $name): string

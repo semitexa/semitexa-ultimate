@@ -2383,20 +2383,22 @@ server_start_config_warnings() {
     fi
 }
 
-# 0 when the app answers GET /health with 200, asked inside its container. Core
-# holds every request, /health included, at its worker boot gate, so a 200 means a
-# worker booted: an open port alone does not (review, ultimate#158). Each probe is
-# bounded (default_socket_timeout and the request timeout, 2 s): a full accept
-# queue made a bare connect wait for minutes (review, update#106). A container that
-# is restarting refuses the exec, which is an answer too. Its input is /dev/null:
+# 0 when the app answers GET /health with 200, asked inside its container; 1
+# otherwise. Core holds every request, /health included, at its worker boot gate,
+# so a 200 means a worker booted: an open port alone does not (review,
+# ultimate#158). Only the status line is read. The whole probe ends within 3 s
+# (the image's `timeout`): a full accept queue held a bare connect for minutes
+# (review, update#106), and a socket timeout bounds each read only, so an answer
+# that never finishes held it too (review, installer#103). A container that is
+# restarting refuses the exec, which is no answer either. Its input is /dev/null:
 # compose exec forwards the caller's, and a `while read` around server:start would
 # lose its lines.
 app_answers_health() {
-    run_compose exec -T app php -d default_socket_timeout=2 -r '
+    run_compose exec -T app timeout 3 php -d default_socket_timeout=2 -r '
         $context = stream_context_create(["http" => ["timeout" => 2, "ignore_errors" => true]]);
-        @file_get_contents("http://127.0.0.1:" . $argv[1] . "/health", false, $context);
+        @fopen("http://127.0.0.1:" . $argv[1] . "/health", "r", false, $context);
         exit(preg_match("#^HTTP/\S+ 200\b#", http_get_last_response_headers()[0] ?? "") === 1 ? 0 : 1);
-    ' "$1" </dev/null >/dev/null 2>&1
+    ' "$1" </dev/null >/dev/null 2>&1 || return 1
 }
 
 # Waits, bounded, for the app to answer (app_answers_health), and says what it
@@ -2406,14 +2408,8 @@ app_answers_health() {
 # tk-server-start-says-ok-while-the-app-crash-loops).
 server_start_wait_for_app() {
     _wait_port="$(env_val SWOOLE_PORT 9502)"
-    # Tries and the seconds between them; a slow first boot can ask for more
-    # (SEMITEXA_START_WAIT_ATTEMPTS=90 bin/semitexa server:start). Anything but a
-    # positive whole number is the default.
-    _wait_attempts="${SEMITEXA_START_WAIT_ATTEMPTS:-30}"
-    _wait_delay="${SEMITEXA_START_WAIT_DELAY:-2}"
-    case "$_wait_attempts" in ''|*[!0-9]*) _wait_attempts=30 ;; esac
-    [ "$_wait_attempts" -ge 1 ] || _wait_attempts=30
-    case "$_wait_delay" in ''|*[!0-9]*) _wait_delay=2 ;; esac
+    _wait_attempts=30
+    _wait_delay=2
     info "Waiting for the app to answer on port $_wait_port..."
     _wait_try=1
     while [ "$_wait_try" -le "$_wait_attempts" ]; do
