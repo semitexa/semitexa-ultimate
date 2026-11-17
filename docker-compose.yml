@@ -160,6 +160,10 @@ services:
         for d in var var/log; do
           [ -d "$$TARGET_DIR/$$d" ] || made_here="$$made_here $$d"
         done
+        owner="$$(stat -c '%u:%g' "$$TARGET_DIR")"
+        # On every way out, a failed install included: on the next start these
+        # are no longer new, so a root-owned one would never be handed back.
+        trap 'for d in $$made_here; do chown -R "$$owner" "$$TARGET_DIR/$$d" 2>/dev/null || true; done' EXIT
 
         # A project is already here: the skeleton never goes over it. A clone
         # has composer.json but no vendor/ (vendor/ is not committed), so only
@@ -171,7 +175,6 @@ services:
         # midway (an interrupted container, a failed cp) also leaves a
         # composer.json: COPYING_PATH says so, and the bootstrap runs again.
         if [ -f "$$TARGET_DIR/composer.json" ] && [ ! -e "$$COPYING_PATH" ]; then
-          owner="$$(stat -c '%u:%g' "$$TARGET_DIR")"
           if [ -f "$$TARGET_DIR/vendor/autoload.php" ]; then
             log "already bootstrapped: composer.json and vendor/ are here"
           else
@@ -195,9 +198,6 @@ services:
             hand_back
           fi
           [ -f "$$MARKER_PATH" ] || write_marker
-          for d in $$made_here; do
-            chown -R "$$owner" "$$TARGET_DIR/$$d" 2>/dev/null || true
-          done
           exit 0
         fi
 
