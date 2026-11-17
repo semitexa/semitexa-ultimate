@@ -210,7 +210,11 @@ final class ServerStartWaitsForTheAppTest extends TestCase
         $sh = 'run_compose() { shift 3; "$@"; }' . "\n" . $this->function('app_answers_health')
             . "\napp_answers_health " . $port . "; printf '%s' \"\$?\"";
 
-        return (int) shell_exec(sprintf('env -i PATH=%s sh -c %s', escapeshellarg(dirname(PHP_BINARY) . ':/usr/bin:/bin'), escapeshellarg($sh)));
+        $status = (string) shell_exec(sprintf('env -i PATH=%s sh -c %s', escapeshellarg(dirname(PHP_BINARY) . ':/usr/bin:/bin'), escapeshellarg($sh)));
+        // Review, ultimate#158: a shell that died before printing would read as 0, an answer.
+        self::assertMatchesRegularExpression('/^[01]$/', $status, 'the probe said 0 or 1');
+
+        return (int) $status;
     }
 
     /** @return array{list<string>, int, int, list<string>} the lines printed, the exit code, the probes made, the sleeps asked for */
