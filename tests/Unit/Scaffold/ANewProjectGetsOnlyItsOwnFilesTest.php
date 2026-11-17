@@ -63,7 +63,6 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
      */
     public function test_no_test_a_new_project_gets_reads_what_it_does_not_get(): void
     {
-        $root = dirname(__DIR__, 3);
         $tests = array_values(array_filter(
             $this->archivedPaths(),
             static fn (string $path): bool => str_starts_with($path, 'tests/') && str_ends_with($path, '.php'),
@@ -72,11 +71,7 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
 
         $reading = [];
         foreach ($tests as $path) {
-            // A test that cannot be read was not checked: it fails, never passes.
-            $source = file_get_contents($root . '/' . $path);
-            if ($source === false || $source === '') {
-                self::fail("cannot read {$path}, which the archive carries");
-            }
+            $source = $this->archivedSource($path);
             if (preg_match('#\.github/|[\'"/]tools/|install\.sh|SECURITY\.md#', $source) === 1) {
                 $reading[] = $path;
             }
@@ -91,24 +86,67 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
      */
     public function test_no_file_in_a_new_projects_src_declares_the_skeletons_namespace(): void
     {
-        $root = dirname(__DIR__, 3);
         $php = array_values(array_filter(
             $this->archivedPaths(),
             static fn (string $path): bool => str_starts_with($path, 'src/') && str_ends_with($path, '.php'),
         ));
         self::assertContains('src/modules/Hello/src/Application/Handler/PayloadHandler/HelloHandler.php', $php, 'the archive carries the sample module: an empty list would pass the check below');
 
-        $declaring = [];
-        foreach ($php as $path) {
-            $source = @file_get_contents($root . '/' . $path);
-            if ($source === false) {
-                self::fail("cannot read {$path}, which the archive carries");
+        $declaring = array_values(array_filter(
+            $php,
+            fn (string $path): bool => self::declaresTheSkeletonsNamespace($this->archivedSource($path)),
+        ));
+        self::assertSame([], $declaring, 'these declare Semitexa\Ultimate inside a new project\'s src/');
+    }
+
+    /** Review, ultimate#159: a declaration need not start its line, and a comment or a longer name is not one. */
+    public function test_a_namespace_declaration_is_found_wherever_it_stands(): void
+    {
+        self::assertTrue(self::declaresTheSkeletonsNamespace('<?php namespace Semitexa\Ultimate; final class Example {}'));
+        self::assertTrue(self::declaresTheSkeletonsNamespace("<?php\n\ndeclare(strict_types=1);\n\nnamespace Semitexa\\Ultimate\\Application\\Console\\Command;\n"));
+        self::assertTrue(self::declaresTheSkeletonsNamespace('<?php namespace Semitexa\Ultimate { final class Example {} }'));
+        self::assertFalse(self::declaresTheSkeletonsNamespace("<?php\n\nnamespace App\\Modules\\Hello;\n"));
+        self::assertFalse(self::declaresTheSkeletonsNamespace("<?php\n// namespace Semitexa\\Ultimate;\nnamespace App;\n"));
+        self::assertFalse(self::declaresTheSkeletonsNamespace("<?php\n\nnamespace Semitexa\\UltimateTools;\n"));
+    }
+
+    /** True when the PHP source declares Semitexa\Ultimate or a namespace inside it, read by its tokens. */
+    private static function declaresTheSkeletonsNamespace(string $source): bool
+    {
+        $tokens = token_get_all($source);
+        foreach ($tokens as $i => $token) {
+            if (!is_array($token) || $token[0] !== T_NAMESPACE) {
+                continue;
             }
-            if (preg_match('/^namespace\s+Semitexa\\\\Ultimate\b/m', $source) === 1) {
-                $declaring[] = $path;
+            for ($j = $i + 1; isset($tokens[$j]); $j++) {
+                $next = $tokens[$j];
+                if (is_array($next) && $next[0] === T_WHITESPACE) {
+                    continue;
+                }
+                if (is_array($next) && ($next[1] === 'Semitexa\Ultimate' || str_starts_with($next[1], 'Semitexa\Ultimate\\'))) {
+                    return true;
+                }
+                break;
             }
         }
-        self::assertSame([], $declaring, 'these declare Semitexa\Ultimate inside a new project\'s src/');
+
+        return false;
+    }
+
+    /**
+     * A file as the archive has it: read from the tree the archive is made from,
+     * not from the checkout, which may carry edits (review, ultimate#159).
+     */
+    private function archivedSource(string $path): string
+    {
+        $root = dirname(__DIR__, 3);
+        exec(sprintf('git -C %s show %s 2>&1', escapeshellarg($root), escapeshellarg('HEAD:' . $path)), $lines, $exit);
+        // A file that cannot be read was not checked: it fails, never passes.
+        self::assertSame(0, $exit, "cannot read {$path}, which the archive carries:\n" . implode("\n", $lines));
+        $source = implode("\n", $lines);
+        self::assertNotSame('', $source, "{$path}, which the archive carries, is empty");
+
+        return $source;
     }
 
     /** @return list<string> */
