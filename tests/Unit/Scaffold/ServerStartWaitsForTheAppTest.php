@@ -237,7 +237,7 @@ final class ServerStartWaitsForTheAppTest extends TestCase
         $exitLine = array_pop($lines) ?? '';
         self::assertMatchesRegularExpression('/^EXIT \d+$/', $exitLine);
 
-        return [$lines, (int) substr($exitLine, 5), $tries, array_values($slept)];
+        return [$lines, (int) substr($exitLine, 5), $tries, $slept];
     }
 
     private function function(string $name): string
