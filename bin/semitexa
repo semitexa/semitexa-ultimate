@@ -997,6 +997,8 @@ local_app_register_logic() {
     _id="$1"
     _requested="${2:-}"
     _project_root_arg="${3:-$PROJECT_ROOT}"
+    # "pin": a server's port, recorded and routed as it is, never reallocated.
+    _pin="${4:-}"
 
     if ! app_validate_app_id "$_id"; then
         error "Invalid SEMITEXA_APP_ID: '$_id' (expected 6-64 chars, [a-z0-9-])."
@@ -1032,6 +1034,13 @@ local_app_register_logic() {
         else
             _assigned="$(allocate_free_port "$_id" || true)"
         fi
+    elif [ "$_pin" = "pin" ]; then
+        # Kept whatever the range: the proxy in front of a server expects it. Recorded
+        # all the same, so no local app takes it while this one is stopped.
+        if port_owned_by_other_app "$_requested" "$_id"; then
+            warn "Port $_requested is also registered to another local Semitexa app; kept, since APP_ENV=prod."
+        fi
+        _assigned="$_requested"
     else
         if ! port_in_range "$_requested"; then
             warn "Port $_requested is outside the allowed range ($(port_range_start)-$(port_range_end))."
@@ -1086,18 +1095,20 @@ local_app_reconcile() {
     # A server's port is the one its proxy was configured with: the workstation
     # registry never moves it. It rewrote a production SWOOLE_PORT outside
     # 9501-9599, and nginx proxied a port nothing listened on
-    # (tk-server-start-rewrites-a-servers-port).
-    if [ "$(env_val APP_ENV '')" = "prod" ] && [ -n "$_current_port" ]; then
-        return 0
+    # (tk-server-start-rewrites-a-servers-port). Pinned, it is still recorded and
+    # routed; "auto" or no port is allocated as anywhere else.
+    _pin=""
+    if [ "$(env_val APP_ENV '')" = "prod" ]; then
+        case "$_current_port" in ''|auto|*[!0-9]*) ;; *) _pin="pin" ;; esac
     fi
-    _assigned="$(local_app_register_logic "$_app_id" "$_current_port" "$PROJECT_ROOT" || true)"
+    _assigned="$(local_app_register_logic "$_app_id" "$_current_port" "$PROJECT_ROOT" "$_pin" || true)"
     if [ -z "$_assigned" ]; then
         warn "Local app registry could not assign a Swoole port; keeping existing value."
         return 1
     fi
 
     if [ "$_assigned" != "$_current_port" ]; then
-        if [ -n "$_current_port" ]; then
+        if [ -n "$_current_port" ] && [ "$_current_port" != "auto" ]; then
             if port_in_range "$_current_port"; then
                 _why="it is taken by another app or process"
             else
