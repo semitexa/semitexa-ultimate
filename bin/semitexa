@@ -1083,6 +1083,13 @@ local_app_reconcile() {
     fi
 
     _current_port="$(env_val SWOOLE_PORT '')"
+    # A server's port is the one its proxy was configured with: the workstation
+    # registry never moves it. It rewrote a production SWOOLE_PORT outside
+    # 9501-9599, and nginx proxied a port nothing listened on
+    # (tk-server-start-rewrites-a-servers-port).
+    if [ "$(env_val APP_ENV '')" = "prod" ] && [ -n "$_current_port" ]; then
+        return 0
+    fi
     _assigned="$(local_app_register_logic "$_app_id" "$_current_port" "$PROJECT_ROOT" || true)"
     if [ -z "$_assigned" ]; then
         warn "Local app registry could not assign a Swoole port; keeping existing value."
@@ -1091,7 +1098,12 @@ local_app_reconcile() {
 
     if [ "$_assigned" != "$_current_port" ]; then
         if [ -n "$_current_port" ]; then
-            warn "Swoole port for app $_app_id changed from $_current_port to $_assigned (conflict or out-of-range)."
+            if port_in_range "$_current_port"; then
+                _why="it is taken by another app or process"
+            else
+                _why="it is outside the local range $(port_range_start)-$(port_range_end)"
+            fi
+            warn "SWOOLE_PORT in .env changed from $_current_port to $_assigned: $_why. The range is SEMITEXA_LOCAL_PORT_RANGE_START/END in $ROUTER_CONFIG_FILE; under APP_ENV=prod the port is never moved."
         else
             info "Swoole port for app $_app_id assigned to $_assigned."
         fi
