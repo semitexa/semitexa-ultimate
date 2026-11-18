@@ -206,7 +206,7 @@ Each command's role (`ai:agent`, `ai:quality`, `ai:report`, `ai:verify:receipt`,
 
 **`ai:verify` is the one check.** It picks its layers (lints, tests, module structure, page checks) by the kind of file changed and names the one that failed. Run no lint beside it; rerun one layer (`bin/semitexa lint:<name>`, or the failing test) only to recheck what it reported.
 
-**`ai:verify` needs NO restart**: each check is a new CLI process reading from disk; E2E get their own stack. If it cannot start, E2E hit your app: `server:restart` (~16s) first, as before browser or curl use (workers cache code).
+**Restart before what uses the running app** (workers cache code): after a change, `server:restart` (~16s) before a browser, curl, or an `ai:verify` that checks pages or E2E. Its other checks are new CLI processes: no restart.
 
 **Most `ai:*` commands emit `next_command: [{cmd, args, why}]`** in JSON: **follow it; don't memorize tools.**
 
