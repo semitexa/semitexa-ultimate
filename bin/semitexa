@@ -1458,13 +1458,20 @@ router_detach_project() {
         _rd_nets="$_rd_nets
 $_rd_net"
     done
-    for _rd_net in $(router_proxy_networks || true); do
+    # One a line too, in this shell (a here-document, not a pipe, so what is
+    # collected stays): Docker's own names were split at a blank before the
+    # Compose label was asked (review, update#114 and ultimate#166).
+    _rd_proxy_nets="$(router_proxy_networks || true)"
+    while IFS= read -r _rd_net; do
+        [ -n "$_rd_net" ] || continue
         [ "$_rd_net" = "router_default" ] && continue
         if [ -n "$_rd_proj" ] && [ "$(docker network inspect -f '{{index .Labels "com.docker.compose.project"}}' "$_rd_net" 2>/dev/null || true)" = "$_rd_proj" ]; then
             _rd_nets="$_rd_nets
 $_rd_net"
         fi
-    done
+    done <<RD_NETS
+$_rd_proxy_nets
+RD_NETS
     # One name a line, never split or globbed. A hand-edited "a b" was split
     # into two disconnects, of networks the entry never named (review,
     # update#113), and Docker accepts names a charset guard refused

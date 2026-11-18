@@ -185,6 +185,25 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
         self::assertSame([], array_merge(glob($this->tmp . '/apps/*.new.*') ?: [], glob($this->tmp . '/domains/*.new.*') ?: []), 'nothing is left beside them');
     }
 
+    /**
+     * Review, update#114 and ultimate#166: the networks the proxy is on were
+     * split at a blank before the Compose label was asked, so detach left a
+     * network named with one connected.
+     */
+    #[Test]
+    public function detach_asks_about_each_network_the_proxy_is_on_whole(): void
+    {
+        $this->shell(['registry_entry_load', 'router_detach_project'],
+            'PROJECT_ROOT=/home/dev/shop' . "\n"
+            . 'compose_bin() { echo compose_stub; }; compose_args() { :; }; compose_stub() { echo cid-1; }' . "\n"
+            . 'router_proxy_networks() { printf "router_default\napp dev\nother_net\n"; }' . "\n"
+            // network inspect names the network as its fifth word; the container's own label is "shop".
+            . 'docker() { case "$1 $2" in "network disconnect") printf "%s\n" "$4" >> disconnected; return 0 ;; "inspect semitexa-router-proxy") return 0 ;; "network inspect") case "$5" in "app dev") echo shop ;; *) echo other ;; esac; return 0 ;; esac; case "$*" in *com.docker.compose.project*) echo shop ;; esac; }' . "\n"
+            . 'router_detach_project');
+
+        self::assertSame("app dev\n", @file_get_contents($this->tmp . '/disconnected'), "this project's network, whole; router_default and another project's left");
+    }
+
     /** The script from one line up to, not including, another. */
     private function region(string $from, string $to): string
     {
