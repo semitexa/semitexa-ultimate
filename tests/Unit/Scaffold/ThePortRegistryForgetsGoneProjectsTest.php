@@ -64,6 +64,27 @@ final class ThePortRegistryForgetsGoneProjectsTest extends TestCase
         self::assertSame(['a-no-root.env', 'b-relative.env'], $this->entries());
     }
 
+    /**
+     * The independent review of installer#110: a root this run may not look
+     * into is not gone. Only "no such file" counts as gone. Other lookup
+     * failures keep the entry, such as a parent this run cannot read
+     * (EACCES), or a folder macOS keeps from a terminal it has not allowed in
+     * (EPERM). Here the lookup fails through a file on the way (ENOTDIR). It
+     * takes the same branch and needs no permissions, so it runs as root too.
+     */
+    #[Test]
+    public function an_entry_this_run_cannot_look_up_is_kept(): void
+    {
+        file_put_contents($this->tmp . '/a-file', "not a directory\n");
+        $this->entry('a-unreadable', $this->tmp . '/a-file/app', 'unreadable-app');
+        $this->entry('b-gone', $this->tmp . '/gone', 'gone-app');
+
+        [$out] = $this->runShell('router_app_prune_gone_projects');
+
+        self::assertSame(['gone-app'], $out, 'only the one that is not there');
+        self::assertSame(['a-unreadable.env'], $this->entries());
+    }
+
     #[Test]
     public function a_registry_that_was_never_made_is_left_alone(): void
     {

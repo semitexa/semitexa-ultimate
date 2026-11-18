@@ -658,8 +658,11 @@ router_lock_acquire() {
     router_ensure_app_dirs
     _lock="$ROUTER_LOCK_DIR/registry.lock"
     ROUTER_LOCK_HELD=''
+    # Tries, 0.1 s apart: 50 by default. Pruning, which can wait for the next
+    # start, tries once.
+    _tries="${1:-50}"
     _waited=0
-    while [ "$_waited" -lt 50 ]; do
+    while [ "$_waited" -lt "$_tries" ]; do
         if mkdir "$_lock" 2>/dev/null; then
             ROUTER_LOCK_HELD=1
             return 0
@@ -909,6 +912,11 @@ router_app_prune_gone_projects() {
         _pg_root="$(sed -n 's/^PROJECT_ROOT=//p' "$_pg_entry" | head -n 1)"
         case "$_pg_root" in /*) ;; *) continue ;; esac
         [ -d "$_pg_root" ] && continue
+        # Gone only when the system says there is no such file: a root this
+        # run may not look into is not gone. Examples are one under a parent
+        # it cannot read, or one in a folder macOS keeps from this terminal
+        # (Documents, Desktop) (independent review, installer#110).
+        LC_ALL=C ls -d -- "$_pg_root" 2>&1 >/dev/null | grep -q 'No such file or directory' || continue
         _pg_name="$(sed -n 's/^PROJECT_NAME=//p' "$_pg_entry" | head -n 1)"
         rm -f "$_pg_entry" && printf '%s\n' "${_pg_name:-${_pg_root##*/}}"
     done
@@ -1134,11 +1142,12 @@ local_app_reconcile() {
 
     # Only under the lock: an allocation reading an entry while it is removed
     # would stop on the file that went away, and one whose entry was just
-    # replaced would lose it. Not taken in time, the pruning waits for the
-    # next start, and the lock is left to whoever holds it (review,
-    # installer#110).
+    # replaced would lose it. Tried once: when it is held, by another start
+    # or a run that was killed, the pruning waits for the next start and the
+    # lock is left to whoever holds it, rather than this start waiting 5 s
+    # (review and independent review, installer#110).
     _gone=''
-    router_lock_acquire
+    router_lock_acquire 1
     if [ -n "${ROUTER_LOCK_HELD:-}" ]; then
         _gone="$(router_app_prune_gone_projects)"
         router_lock_release
