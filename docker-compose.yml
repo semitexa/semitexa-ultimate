@@ -119,11 +119,6 @@ services:
       - |
         TARGET_DIR=/var/www/html
         TEMP_DIR=/tmp/semitexa-bootstrap
-        # On the bind mount, so a first install cut off midway keeps the
-        # installer's own files for the retry: in the container's /tmp the copy
-        # was gone, and the retry backed up what the cut-off copy had written
-        # over them (tk-setup-retry-keeps-the-first-backup).
-        BACKUP_DIR="$$TARGET_DIR/var/install/bootstrap-backup"
         MARKER_PATH="$$TARGET_DIR/var/install/bootstrap-complete.json"
         COPYING_PATH="$$TARGET_DIR/var/install/bootstrap-copying"
         LOG_PATH="$$TARGET_DIR/var/log/install-bootstrap.log"
@@ -155,7 +150,7 @@ services:
 
         [ -d "$$TARGET_DIR" ] || fail "$$TARGET_DIR does not exist"
         [ -w "$$TARGET_DIR" ] || fail "$$TARGET_DIR is not writable"
-        for b in composer php cp cmp rm mkdir date; do
+        for b in composer php cp rm mkdir date; do
           command -v "$$b" >/dev/null 2>&1 || fail "missing required binary: $$b"
         done
         # The first log line makes var/log, as root: what this run makes goes
@@ -228,21 +223,16 @@ services:
         log "step 4/6 sync project files"
         host_uid="$$(stat -c '%u' "$$TARGET_DIR")"
         host_gid="$$(stat -c '%g' "$$TARGET_DIR")"
-        # After a copy cut off midway, a file that now reads as the skeleton's
-        # was written over by that copy: the first try's backup of it is kept.
-        # Any other file is taken as it stands, so an edit made between the
-        # tries (a pinned SEMITEXA_ULTIMATE_VERSION) is not undone.
-        retry=''
-        if [ -e "$$COPYING_PATH" ] && [ -d "$$BACKUP_DIR" ]; then
-          retry=1
-          log "a copy was cut off midway: keeping the first try's copy of each file it wrote over"
-        else
-          if [ -e "$$COPYING_PATH" ]; then
-            log "WARN: a copy was cut off midway and kept nothing of the first try; the installer's files may be the skeleton's now (bin/semitexa update restores them)"
-          fi
-          rm -rf "$$BACKUP_DIR"
+        # The installer's own files never go through the copy: the skeleton's
+        # copy of each one the target has is dropped from the fetched skeleton
+        # first. They used to be backed up and put back, and a copy cut off
+        # midway left them written over, half written, or from another release
+        # for the retry to "restore" (tk-setup-retry-keeps-the-first-backup;
+        # review, installer#107). Kept out, they stay as they are, an edit
+        # made between the tries included.
+        if [ -e "$$COPYING_PATH" ]; then
+          log "a copy was cut off midway: copying the skeleton again, the installer's own files left out"
         fi
-        mkdir -p "$$BACKUP_DIR/bin"
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
@@ -250,11 +240,9 @@ services:
                  docker-compose.override.yml.example \
                  bin/semitexa
         do
-          [ -e "$$TARGET_DIR/$$f" ] || continue
-          if [ -n "$$retry" ] && [ -e "$$BACKUP_DIR/$$f" ] && cmp -s "$$TARGET_DIR/$$f" "$$TEMP_DIR/$$f"; then
-            continue
+          if [ -e "$$TARGET_DIR/$$f" ]; then
+            rm -f "$$TEMP_DIR/$$f"
           fi
-          cp -a "$$TARGET_DIR/$$f" "$$BACKUP_DIR/$$f"
         done
 
         # Until the marker is written, a composer.json here is the skeleton's,
@@ -263,28 +251,11 @@ services:
           || fail "cannot mark the copy as in progress"
         cp -a "$$TEMP_DIR/." "$$TARGET_DIR/" || fail "copy into bind mount failed"
 
-        for f in .env.default .env .gitignore Dockerfile \
-                 docker-compose.yml docker-compose.mysql.yml \
-                 docker-compose.redis.yml docker-compose.nats.yml \
-                 docker-compose.ollama.yml docker-compose.worker.yml \
-                 docker-compose.override.yml.example \
-                 bin/semitexa
-        do
-          if [ -e "$$BACKUP_DIR/$$f" ]; then
-            mkdir -p "$$TARGET_DIR/$$(dirname "$$f")"
-            cp -a "$$BACKUP_DIR/$$f" "$$TARGET_DIR/$$f"
-          fi
-        done
-
         chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/" 2>/dev/null || true
         chmod +x "$$TARGET_DIR/bin/semitexa" 2>/dev/null || true
 
         log "step 5/6 write success marker"
         write_marker
-        # The backup before the in-progress mark: a run stopped between the two
-        # leaves the mark, and the next run takes the restored files again,
-        # rather than a backup nothing removes.
-        rm -rf "$$BACKUP_DIR"
         rm -f "$$COPYING_PATH"
 
         # A fresh project is a git repository with one commit, so the first
