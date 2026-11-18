@@ -3897,6 +3897,27 @@ proxy_diagnose_port_conflict() {
         "$_runtime_line" "$_registry_line" "$_host_proc"
 }
 
+# The commands that read and write the project's own files and nothing else:
+# who is here, what comes next, the backlog. A one-off container runs them
+# alone. Without --no-deps, asking who is here on a stopped stack started
+# MySQL, Redis, NATS and setup, and left them running
+# (tk-a-cli-command-starts-the-whole-stack); each command here was run in a
+# container with no network. Any other command gets the services the app
+# depends on, as before. Leading options are skipped. A word that is not a
+# command, such as the value of an option, is taken as one: that command
+# gets the services, which is the safe way to be wrong.
+one_off_needs_no_services() {
+    for _arg in "$@"; do
+        case "$_arg" in
+            -*) continue ;;
+            list|help|ai:orient|ai:agent|ai:state|ai:work|ai:work:approve|ai:make-it|ai:backlog|ai:epic|ai:decision) return 0 ;;
+            *) return 1 ;;
+        esac
+    done
+    # Options alone (--version, --help): the console answers by itself.
+    return 0
+}
+
 # Run a one-off, no-host-port app container to execute a CLI command. Compose
 # `run` does NOT publish service ports by default, so this works even when
 # another container/process holds SWOOLE_PORT — which is the right design for
@@ -3907,16 +3928,20 @@ proxy_run_one_off_app() {
     # Read before env_export_compose_context: a value in .env would otherwise
     # replace the caller's own session and trace.
     _agent_env="$(agent_env_args)"
+    _no_deps=''
+    if one_off_needs_no_services "$@"; then
+        _no_deps='--no-deps'
+    fi
     (
         env_export_compose_context
         # Run as the host user: a root one-off writing into the bind-mounted
         # project leaves root:0600 files the host user cannot read.
         if [ -t 0 ] && [ -t 1 ]; then
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm $_no_deps $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         else
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm -T $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm -T $_no_deps $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         fi
     )
 }
