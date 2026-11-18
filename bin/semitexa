@@ -738,6 +738,11 @@ router_sync_project_domains() {
     [ -n "$_domains" ] || return 0
 
     _saved_project_root="$PROJECT_ROOT"
+    # Every entry read below sets COMPOSE_PROJECT_NAME to its own project's,
+    # the entries just written included, and the docker compose up after the
+    # sync took the last one's (review, update#115). Put back on the way out,
+    # as the renderers do.
+    _sync_cpn_set="${COMPOSE_PROJECT_NAME+x}" _sync_cpn="${COMPOSE_PROJECT_NAME:-}"
     _port="$(env_val SWOOLE_PORT 8080)"
     _mode="$(router_mode_get)"
 
@@ -758,20 +763,31 @@ $_domains
 SYNC_DOMAINS
     PROJECT_ROOT="$_saved_project_root"
     if [ -n "$_sync_failed" ]; then
-        warn "The local router keeps this project's domains as they were: it could not write$_sync_failed."
+        # Exact about what happened: the domains it could write were written,
+        # and no stale entry was removed (review, installer#113).
+        warn "The local router could not write$_sync_failed: those keep the entries they had, and no stale entry of this project was removed."
+        if [ -n "$_sync_cpn_set" ]; then COMPOSE_PROJECT_NAME="$_sync_cpn"; else unset COMPOSE_PROJECT_NAME; fi
         return 1
     fi
 
+    _stale_kept=''
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
         registry_entry_load "$_entry" || continue
         [ "$PROJECT_ROOT" = "$_saved_project_root" ] || continue
         if ! printf '%s\n' "$_domains" | grep -Fx -- "$DOMAIN" >/dev/null 2>&1; then
-            rm -f "$_entry"
+            # Said, not lost: a stale entry that stays keeps its route
+            # (review, installer#113 and update#115).
+            rm -f "$_entry" 2>/dev/null || _stale_kept="$_stale_kept ${DOMAIN:-${_entry##*/}}"
         fi
     done
     PROJECT_ROOT="$_saved_project_root"
+    if [ -n "$_sync_cpn_set" ]; then COMPOSE_PROJECT_NAME="$_sync_cpn"; else unset COMPOSE_PROJECT_NAME; fi
+    if [ -n "$_stale_kept" ]; then
+        warn "The local router could not remove the stale entries of$_stale_kept: they still route here."
+        return 1
+    fi
     return 0
 }
 
@@ -1122,6 +1138,9 @@ router_apply_app_port_to_domains() {
     [ -d "$ROUTER_REGISTRY_DIR" ] || return 0
 
     _saved_project_root="$PROJECT_ROOT"
+    # As in router_sync_project_domains: each entry read sets
+    # COMPOSE_PROJECT_NAME, and it is put back on the way out.
+    _apply_cpn_set="${COMPOSE_PROJECT_NAME+x}" _apply_cpn="${COMPOSE_PROJECT_NAME:-}"
     _changed=0 _apply_failed=''
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
@@ -1139,6 +1158,7 @@ router_apply_app_port_to_domains() {
         fi
     done
     PROJECT_ROOT="$_saved_project_root"
+    if [ -n "$_apply_cpn_set" ]; then COMPOSE_PROJECT_NAME="$_apply_cpn"; else unset COMPOSE_PROJECT_NAME; fi
 
     if [ "$_changed" -eq 1 ]; then
         router_generate_nginx_config
