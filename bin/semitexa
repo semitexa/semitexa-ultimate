@@ -2547,6 +2547,93 @@ project_ownership_reclaim() {
     return 0
 }
 
+# ── Quiet steps: a build's output goes to a log when nobody watches it ─────
+# An agent or CI job that ran install and server:start read some 25,000
+# characters of BuildKit steps, Composer "Extracting archive" lines and
+# container state changes, none of it needed once the step worked
+# (tk-install-prints-build-logs-to-a-non-terminal). With stdout not a
+# terminal a step writes its whole output to a log under var/log and prints
+# one line; a failure prints the log's last lines, its path, and returns the
+# command's own exit code. On a terminal nothing changes.
+# SEMITEXA_VERBOSE=1 gives the full output everywhere.
+stdout_is_quiet() {
+    case "${SEMITEXA_VERBOSE:-}" in
+        1|true|yes|on) return 1 ;;
+    esac
+    if [ -t 1 ]; then return 1; fi
+    return 0
+}
+
+# Composer's own progress frames, left out of a quiet step's log. Sets
+# COMPOSER_QUIET_FLAG, empty on a terminal. A variable, not output: inside
+# $( ) stdout is a pipe, and the answer would always be "quiet".
+composer_quiet_flag() {
+    COMPOSER_QUIET_FLAG=""
+    if stdout_is_quiet; then COMPOSER_QUIET_FLAG="--no-progress"; fi
+    return 0
+}
+
+# Usage: quiet_step_log <name>. Prints the path of an emptied, writable log:
+# var/log/<name>.log, or a temporary file when var/log cannot be written.
+# Returns 1 when neither can be made (the caller then runs the step loud).
+# The emptying runs in a subshell: a redirection that fails on `:`, a special
+# builtin, ends the shell it is in, with a "cannot create" line of its own.
+quiet_step_log() {
+    _qsl_path="$PROJECT_ROOT/var/log/$1.log"
+    if mkdir -p "$PROJECT_ROOT/var/log" 2>/dev/null && ( : > "$_qsl_path" ) 2>/dev/null; then
+        printf '%s\n' "$_qsl_path"
+        return 0
+    fi
+    _qsl_path="$(mktemp 2>/dev/null)" || return 1
+    printf '%s\n' "$_qsl_path"
+}
+
+# Usage: run_quiet_step <log name> <what it does> <command> [args...]
+# The exit code is the command's, in both modes. QUIET_STEP_LOG is the log of
+# the last quiet step, empty after a loud one. A quiet step reads no input: a
+# prompt nobody can see would wait for an answer nobody gives.
+run_quiet_step() {
+    _qs_name="$1"
+    _qs_label="$2"
+    shift 2
+    QUIET_STEP_LOG=""
+    if ! stdout_is_quiet || ! QUIET_STEP_LOG="$(quiet_step_log "$_qs_name")"; then
+        QUIET_STEP_LOG=""
+        "$@"
+        return $?
+    fi
+    _qs_log="$QUIET_STEP_LOG"
+    _qs_rc=0
+    "$@" < /dev/null > "$_qs_log" 2>&1 || _qs_rc=$?
+    if [ "$_qs_rc" -eq 0 ]; then
+        success "$_qs_label: done (full output: $_qs_log)"
+        return 0
+    fi
+    error "$_qs_label: failed (exit $_qs_rc). The last lines of its output:"
+    tail -n 40 "$_qs_log" | sed 's/^/    /' >&2
+    error "Full output: $_qs_log"
+    return "$_qs_rc"
+}
+
+# server:start's `up -d --build`, shown as it comes and also left in the
+# file $1, where the port-conflict check reads it. Returns compose's exit code.
+server_start_compose_up_shown() {
+    _ssu_rc_file="$(mktemp)"
+    # Subshell + `set +e` so a non-zero compose exit doesn't abort the outer
+    # script. tee preserves the developer's real-time view of the build.
+    ( set +e; run_compose up -d --build; echo "$?" > "$_ssu_rc_file" ) 2>&1 | tee "$1"
+    _ssu_rc="$(cat "$_ssu_rc_file" 2>/dev/null || echo 1)"
+    rm -f "$_ssu_rc_file"
+    return "$_ssu_rc"
+}
+
+# The same as a step: quiet off a terminal, under the log name $2. The quiet
+# step wraps the shown one, so the file $1 has the output in both modes, and
+# also when a quiet step has no log to write and runs loud.
+server_start_compose_up() {
+    run_quiet_step "$2" "Building and starting the containers" server_start_compose_up_shown "$1"
+}
+
 # Wraps `run_compose up -d --build`, capturing exit + log so we can offer to
 # auto-recover from a Swoole port conflict that slipped past pre-start
 # reconcile (e.g., another process bound the broker-assigned port in the gap).
@@ -2560,12 +2647,8 @@ project_ownership_reclaim() {
 #   - On any other failure: pass through the original exit code.
 server_start_run_with_port_conflict_fallback() {
     _log_file="$(mktemp)"
-    _rc_file="$(mktemp)"
-    # Subshell + `set +e` so a non-zero compose exit doesn't abort the outer
-    # script. tee preserves the developer's real-time view of the build.
-    ( set +e; run_compose up -d --build; echo "$?" > "$_rc_file" ) 2>&1 | tee "$_log_file"
-    _rc="$(cat "$_rc_file" 2>/dev/null || echo 1)"
-    rm -f "$_rc_file"
+    _rc=0
+    server_start_compose_up "$_log_file" server-start || _rc=$?
 
     if [ "$_rc" -eq 0 ]; then
         rm -f "$_log_file"
@@ -2614,10 +2697,9 @@ server_start_run_with_port_conflict_fallback() {
 
     info "Reconciled to SWOOLE_PORT=${_new_port}. Retrying server:start once..."
     _log_file="$(mktemp)"
-    _rc_file="$(mktemp)"
-    ( set +e; run_compose up -d --build; echo "$?" > "$_rc_file" ) 2>&1 | tee "$_log_file"
-    _rc="$(cat "$_rc_file" 2>/dev/null || echo 1)"
-    rm -f "$_rc_file" "$_log_file"
+    _rc=0
+    server_start_compose_up "$_log_file" server-start-retry || _rc=$?
+    rm -f "$_log_file"
 
     if [ "$_rc" -eq 0 ]; then
         success "Recovered: server bound to SWOOLE_PORT=${_new_port}."
@@ -3158,9 +3240,11 @@ refresh_local_semitexa_packages() {
     info "Refreshing local Semitexa path packages in composer.lock..."
     info "(This keeps workspace clones ahead of stale published tags)"
 
+    composer_quiet_flag
     # shellcheck disable=SC2086
-    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app \
-        composer update --no-interaction --with-all-dependencies $_packages
+    run_quiet_step install-path-packages "Refreshing the local path packages" \
+        run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app \
+        composer update --no-interaction --with-all-dependencies $COMPOSER_QUIET_FLAG $_packages
 }
 
 cmd_install() {
@@ -3171,8 +3255,11 @@ cmd_install() {
     if [ ! -f "$PROJECT_ROOT/.env.default" ]; then error ".env.default not found. This project is missing its Semitexa baseline configuration."; exit 1; fi
     info "Building Docker image and running composer install inside container..."
     info "(This may take a few minutes on the first run)"
-    run_compose build app
-    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist
+    composer_quiet_flag
+    run_quiet_step install-build "Building the app image" run_compose build app
+    # shellcheck disable=SC2086
+    run_quiet_step install-composer "Installing the Composer packages" \
+        run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer install --no-interaction --prefer-dist $COMPOSER_QUIET_FLAG
     if [ $? -ne 0 ]; then
         printf "\n"
         error "Installation failed. Check the output above."
@@ -3193,9 +3280,12 @@ cmd_demo_install() {
     if [ ! -f "$PROJECT_ROOT/.env.default" ]; then error ".env.default not found. This project is missing its Semitexa baseline configuration."; exit 1; fi
     info "Installing semitexa/demo via Composer inside Docker..."
     info "(This may take a few minutes on the first run)"
-    run_compose build app
+    composer_quiet_flag
+    run_quiet_step demo-install-build "Building the app image" run_compose build app
     run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer config repositories.semitexa-demo vcs https://github.com/semitexa/semitexa-demo.git
-    run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer require semitexa/demo:* --no-interaction --prefer-dist
+    # shellcheck disable=SC2086
+    run_quiet_step demo-install-composer "Installing semitexa/demo" \
+        run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer require semitexa/demo:* --no-interaction --prefer-dist $COMPOSER_QUIET_FLAG
     if [ $? -eq 0 ]; then printf "\n"; success "Semitexa Demo installed (semitexa/demo)."; info "Start or restart the server to load the new routes."; info "Remove when done: composer remove semitexa/demo"
     else printf "\n"; error "Demo installation failed. Check the output above."; exit 1; fi
     printf "\n"
