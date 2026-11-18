@@ -606,12 +606,25 @@ registry_entry_load() {
 # directory name would write keys of its own into its entry, and a domain or
 # an upstream taken from there would go into the router's nginx configuration
 # (Fable's review, tk-registry-entry-with-a-space-runs-a-word).
+# A carriage return counts as a line break: the loader reads one at the end
+# of a line as a CRLF ending, so a root ending in one would not match itself
+# when read back (review, update#113).
 registry_value_is_one_line() {
+    _ol_cr="$(printf '\r')"
     case "$1" in
         *"
-"*) return 1 ;;
+"*|*"$_ol_cr"*) return 1 ;;
     esac
     return 0
+}
+
+# A TCP port as nginx takes one: decimal, 1-65535, written without a leading
+# zero, as the writers write it. One out of range in a proxy_pass made nginx
+# refuse the whole configuration, every other domain with it (review,
+# update#113).
+router_port_in_range() {
+    case "$1" in ''|*[!0-9]*|0*) return 1 ;; esac
+    [ "${#1}" -le 5 ] && [ "$1" -le 65535 ]
 }
 
 router_registry_count() {
@@ -1335,12 +1348,17 @@ router_detach_project() {
     # Entry by entry: a list of file names from grep -l split at every blank,
     # and under a home such as /Users/John Smith nothing was read (Fable's
     # review, tk-registry-entry-with-a-space-runs-a-word).
+    # Each one read as the router reads it, in a shell of its own: an entry
+    # with CRLF line ends matches as nginx sees it, and this PROJECT_ROOT
+    # stays (review, update#113).
+    _rd_root="$PROJECT_ROOT"
     _rd_nets=''
     for _rd_entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_rd_entry" ] || continue
-        grep -qxF "PROJECT_ROOT=$PROJECT_ROOT" "$_rd_entry" 2>/dev/null || continue
+        _rd_net="$(PROJECT_ROOT='' UPSTREAM_NETWORK=''; registry_entry_load "$_rd_entry" && [ "$PROJECT_ROOT" = "$_rd_root" ] && printf '%s' "$UPSTREAM_NETWORK")" || true
+        [ -n "$_rd_net" ] || continue
         _rd_nets="$_rd_nets
-$(sed -n "s/^UPSTREAM_NETWORK=//p" "$_rd_entry" 2>/dev/null || true)"
+$_rd_net"
     done
     for _rd_net in $(router_proxy_networks || true); do
         [ "$_rd_net" = "router_default" ] && continue
@@ -1476,14 +1494,18 @@ EOF
             warn "Left out of the local router: ${_entry##*/} does not name a .test domain."
             continue
         fi
-        case "$UPSTREAM_HOST:$UPSTREAM_PORT" in
-            :*|*[!A-Za-z0-9.:-]*|*:*[!0-9]*)
+        case "$UPSTREAM_HOST" in
+            ''|*[!A-Za-z0-9.-]*)
                 warn "Left out of the local router: ${_entry##*/} holds an upstream that is not a host and a port."
                 continue
                 ;;
         esac
+        if ! router_port_in_range "$UPSTREAM_PORT"; then
+            warn "Left out of the local router: ${_entry##*/} holds an upstream that is not a host and a port."
+            continue
+        fi
         case "$UPSTREAM_CONTAINER" in *[!A-Za-z0-9_.-]*) UPSTREAM_CONTAINER='' ;; esac
-        case "$UPSTREAM_CONTAINER_PORT" in *[!0-9]*) UPSTREAM_CONTAINER_PORT='' ;; esac
+        router_port_in_range "$UPSTREAM_CONTAINER_PORT" || UPSTREAM_CONTAINER_PORT=
         # Into the app's container over its own network when the router is on
         # it (tk-app-port-binds-every-interface): the host port is then not
         # needed. Resolved per request, so a stopped project is a 502 for its

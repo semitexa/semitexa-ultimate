@@ -177,7 +177,7 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         // Both write a heredoc with a closing brace of its own: taken whole, up to the function after them.
         $renderers = $this->region('router_generate_nginx_config() {', 'router_generate_compose() {');
         $out = $this->shell(
-            ['registry_entry_load', 'router_validate_domain'],
+            ['registry_entry_load', 'router_validate_domain', 'router_port_in_range'],
             $renderers . "\n"
                 . 'router_ensure_dirs() { :; }; router_proxy_networks() { printf "shop_default\n"; }; warn() { printf "WARN %s\n" "$*"; }' . "\n"
                 . 'ROUTER_NGINX_DEFAULT=' . escapeshellarg($this->tmp . '/default.conf') . '; ROUTER_NGINX_DOMAINS=' . escapeshellarg($this->tmp . '/domains.conf') . "\n"
@@ -210,7 +210,7 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         file_put_contents($this->tmp . '/domains/zzz.test.env', "DOMAIN=zzz.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=9555\n");
 
         self::assertSame(['aaa.test'], $this->shell(
-            ['registry_entry_load', 'router_validate_domain'],
+            ['registry_entry_load', 'router_validate_domain', 'router_port_in_range'],
             $this->region('router_generate_nginx_config() {', 'router_generate_compose() {') . "\n"
                 . 'router_ensure_dirs() { :; }; router_proxy_networks() { :; }; warn() { :; }' . "\n"
                 . 'ROUTER_NGINX_DEFAULT=default.conf; ROUTER_NGINX_DOMAINS=domains.conf; ROUTER_DNSMASQ_CONF=dnsmasq.conf; ROUTER_DNS_DOMAINS=dns.conf' . "\n"
@@ -224,16 +224,77 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         mkdir($this->tmp . '/John Smith/domains', 0o777, true);
         file_put_contents($this->tmp . '/John Smith/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_NETWORK=shop_default\n");
 
+        $this->detach($this->tmp . '/John Smith/domains');
+
+        self::assertSame("shop_default\n", @file_get_contents($this->tmp . '/disconnected'), 'the network named in the entry is let go');
+    }
+
+    /** Review, update#113: detach matched the raw line, so an entry with CRLF ends kept its network attached. */
+    #[Test]
+    public function detach_reads_an_entry_with_crlf_line_ends_as_the_router_does(): void
+    {
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\r\nPROJECT_ROOT=/home/dev/shop\r\nUPSTREAM_NETWORK=shop_default\r\n");
+
+        $this->detach($this->tmp . '/domains');
+
+        self::assertSame("shop_default\n", @file_get_contents($this->tmp . '/disconnected'));
+    }
+
+    /**
+     * Review, update#113: a port nginx cannot take, in a proxy_pass, made it
+     * refuse the whole configuration. On a container route it hid a good
+     * host route.
+     */
+    #[Test]
+    public function a_port_nginx_cannot_take_leaves_the_route_out_or_falls_back_to_the_host(): void
+    {
+        file_put_contents($this->tmp . '/domains/a.test.env', "DOMAIN=a.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=65536\n");
+        file_put_contents($this->tmp . '/domains/b.test.env', "DOMAIN=b.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=0\n");
+        file_put_contents($this->tmp . '/domains/c.test.env', "DOMAIN=c.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=8080\nUPSTREAM_CONTAINER=c-app-1\nUPSTREAM_NETWORK=c_default\nUPSTREAM_CONTAINER_PORT=65536\n");
+
+        $out = $this->shell(
+            ['registry_entry_load', 'router_validate_domain', 'router_port_in_range'],
+            $this->region('router_generate_nginx_config() {', 'router_generate_compose() {') . "\n"
+                . 'router_ensure_dirs() { :; }; router_proxy_networks() { printf "c_default\n"; }; warn() { printf "WARN %s\n" "$*"; }' . "\n"
+                . 'ROUTER_NGINX_DEFAULT=default.conf; ROUTER_NGINX_DOMAINS=domains.conf' . "\n"
+                . 'router_generate_nginx_config',
+        );
+
+        self::assertSame([
+            'WARN Left out of the local router: a.test.env holds an upstream that is not a host and a port.',
+            'WARN Left out of the local router: b.test.env holds an upstream that is not a host and a port.',
+        ], $out);
+        $nginx = (string) file_get_contents($this->tmp . '/domains.conf');
+        self::assertSame(1, substr_count($nginx, 'server_name '), $nginx);
+        self::assertStringContainsString('proxy_pass http://host.docker.internal:8080;', $nginx, 'the container port that is not one falls back to the host route');
+        self::assertStringNotContainsString('65536', $nginx);
+    }
+
+    /** Review, update#113: the loader takes a carriage return at a line's end for a CRLF ending, so such a root would not match itself. */
+    #[Test]
+    public function a_root_ending_in_a_carriage_return_is_not_recorded(): void
+    {
+        $out = $this->shell(
+            ['registry_entry_load', 'registry_value_is_one_line', 'router_app_entry_path', 'router_app_write_entry'],
+            'router_ensure_app_dirs() { mkdir -p "$ROUTER_APP_REGISTRY_DIR"; }; error() { printf "ERROR %s\n" "$*"; }' . "\n"
+                . 'router_app_write_entry app-123456 9555 ' . escapeshellarg("/home/dev/app\r") . '; printf "%s\n" "$?"',
+        );
+
+        self::assertSame(["ERROR The project's directory has a line break in its name, which the local app registry cannot record: rename the directory.", '1'], $out);
+        self::assertSame([], glob($this->tmp . '/apps/*.env'));
+    }
+
+    /** Runs router_detach_project on one registry, the docker calls it makes written down in "disconnected". */
+    private function detach(string $registry): void
+    {
         $this->shell(
-            ['router_detach_project'],
-            'ROUTER_REGISTRY_DIR=' . escapeshellarg($this->tmp . '/John Smith/domains') . '; PROJECT_ROOT=/home/dev/shop' . "\n"
+            ['registry_entry_load', 'router_detach_project'],
+            'ROUTER_REGISTRY_DIR=' . escapeshellarg($registry) . '; PROJECT_ROOT=/home/dev/shop' . "\n"
                 // The disconnect's own output goes to /dev/null: the stub writes it down instead.
                 . 'docker() { case "$1 $2" in "network disconnect") printf "%s\n" "$4" >> disconnected ;; "inspect semitexa-router-proxy") return 0 ;; esac; return 1; }' . "\n"
                 . 'compose_bin() { echo false; }; compose_args() { :; }; router_proxy_networks() { :; }' . "\n"
                 . 'router_detach_project',
         );
-
-        self::assertSame("shop_default\n", @file_get_contents($this->tmp . '/disconnected'), 'the network named in the entry is let go');
     }
 
     #[Test]
