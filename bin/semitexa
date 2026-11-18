@@ -613,9 +613,11 @@ registry_entry_load() {
         #   (review, ultimate#166).
         # - An unquoted one-word value drops a comment after a blank, so
         #   "DOMAIN=demo.test # local demo" stays demo.test (review,
-        #   installer#111). A root or a name keeps its " #", so a network
-        #   written back as "shop #blue" reads the same the next time
-        #   (review, ultimate#166).
+        #   installer#111). A root or a network name keeps its " #", so a
+        #   network written back as "shop #blue" reads the same the next
+        #   time (review, ultimate#166). A container name cannot hold a blank
+        #   or a "#", so it drops a comment like any one-word value (Fable's
+        #   review, ultimate#166).
         case "$_rl_key" in
             PROJECT_NAME|COMPOSE_PROJECT_NAME) ;;
             *)
@@ -631,7 +633,7 @@ registry_entry_load() {
                         ;;
                     *)
                         case "$_rl_key" in
-                            PROJECT_ROOT|UPSTREAM_CONTAINER|UPSTREAM_NETWORK) ;;
+                            PROJECT_ROOT|UPSTREAM_NETWORK) ;;
                             *)
                                 _rl_val="${_rl_val%%[[:blank:]]#*}"
                                 _rl_val="${_rl_val%"${_rl_val##*[![:blank:]]}"}"

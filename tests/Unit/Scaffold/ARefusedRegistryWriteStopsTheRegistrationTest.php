@@ -143,9 +143,10 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
     #[Test]
     public function a_name_a_writer_took_from_docker_or_a_directory_reads_as_written(): void
     {
-        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_NAME=\"weird\"\nCOMPOSE_PROJECT_NAME=my #app\nUPSTREAM_CONTAINER=shop-app-1 #2\nUPSTREAM_NETWORK=shop #blue\n");
+        // A container name cannot hold a blank or a "#": a hand-edited comment after one goes (Fable's review).
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_NAME=\"weird\"\nCOMPOSE_PROJECT_NAME=my #app\nUPSTREAM_CONTAINER=shop-app-1 # moved\nUPSTREAM_NETWORK=shop #blue\n");
 
-        self::assertSame(['"weird"', 'my #app', 'shop-app-1 #2', 'shop #blue'], $this->shell(['registry_entry_load'],
+        self::assertSame(['"weird"', 'my #app', 'shop-app-1', 'shop #blue'], $this->shell(['registry_entry_load'],
             'registry_entry_load ' . escapeshellarg($this->tmp . '/domains/shop.test.env') . '; printf "%s\n" "$PROJECT_NAME" "$COMPOSE_PROJECT_NAME" "$UPSTREAM_CONTAINER" "$UPSTREAM_NETWORK"'));
     }
 
