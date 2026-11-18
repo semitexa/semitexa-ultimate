@@ -69,6 +69,32 @@ final class InitIsRetiredTest extends TestCase
         self::assertSame(1, $exit);
     }
 
+    /**
+     * The scaffold docs' headers said a new project gets them from init and that
+     * init --only-docs refreshes them. An agent that read those lines ran a
+     * command that is retired (tk-scaffold-doc-headers-name-the-retired-init).
+     *
+     * @return iterable<string, array{string}> the docs scaffold:sync-docs keeps in step
+     */
+    public static function scaffoldDocs(): iterable
+    {
+        foreach (['AGENTS.md', 'AGENTS_DOCTRINE.md', 'AI_ENTRY.md', 'AI_REFERENCE.md', 'AI_CONTEXT.md', 'CLAUDE.md', 'README.md'] as $doc) {
+            yield $doc => [$doc];
+        }
+    }
+
+    #[Test]
+    #[\PHPUnit\Framework\Attributes\DataProvider('scaffoldDocs')]
+    public function no_scaffold_doc_sends_you_to_init(string $doc): void
+    {
+        $path = dirname(__DIR__, 3) . '/' . $doc;
+        self::assertFileExists($path);
+        $text = (string) file_get_contents($path);
+        self::assertStringContainsString('semitexa/ultimate', $text, $doc . ' is read: its header names the scaffold it comes from');
+
+        self::assertStringNotContainsString('bin/semitexa init', $text, $doc . ': init is retired; a new project comes from the installer, and bin/semitexa update keeps the scaffold docs current');
+    }
+
     /** @return array{list<string>, int} the lines printed (the banner left out), the exit code */
     private function runCommand(string $command, string $projectRoot): array
     {

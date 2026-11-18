@@ -647,13 +647,24 @@ router_ensure_app_dirs() {
 }
 
 # Best-effort lock via mkdir; gives up after ~5s. Workstation-only collisions
-# are extremely rare; the lock just guards back-to-back installs.
+# are extremely rare; the lock just guards back-to-back installs. It always
+# returns 0, since its callers run under set -e and a registration goes on
+# without the lock as before. ROUTER_LOCK_HELD says whether this run holds
+# it: what must not run unlocked, such as removing entries, checks it
+# (review, installer#110). A registration still frees the lock on release
+# whoever took it, as before: that is how a lock left by a killed run goes.
+# A lock with an owner is tk-registry-lock-is-best-effort.
 router_lock_acquire() {
     router_ensure_app_dirs
     _lock="$ROUTER_LOCK_DIR/registry.lock"
+    ROUTER_LOCK_HELD=''
+    # Tries, 0.1 s apart: 50 by default. Pruning, which can wait for the next
+    # start, tries once.
+    _tries="${1:-50}"
     _waited=0
-    while [ "$_waited" -lt 50 ]; do
+    while [ "$_waited" -lt "$_tries" ]; do
         if mkdir "$_lock" 2>/dev/null; then
+            ROUTER_LOCK_HELD=1
             return 0
         fi
         sleep 0.1 2>/dev/null || sleep 1
@@ -663,6 +674,7 @@ router_lock_acquire() {
 }
 
 router_lock_release() {
+    ROUTER_LOCK_HELD=''
     rm -rf "$ROUTER_LOCK_DIR/registry.lock" 2>/dev/null || true
 }
 
@@ -882,6 +894,35 @@ router_app_delete_entry() {
     rm -f "$(router_app_entry_path "$_id")"
 }
 
+# Drops the entries of projects that are gone, such as a directory deleted with
+# its project, a scratch install, or a clone removed after a test. Nothing
+# dropped them, and each one kept its port: on one workstation, 9 of 20 entries
+# named a directory that was no longer there, in a 99-port range
+# (tk-port-registry-keeps-dead-projects). Prints the name of each project
+# dropped, one per line.
+# A root that is away only for now, on a drive that is not mounted, is dropped
+# too. Its next start registers it again, on its own SWOOLE_PORT while that
+# port is free.
+# Only an absolute root is judged. Entries are read with sed and never
+# sourced, so a root with a space in it is one value.
+router_app_prune_gone_projects() {
+    [ -d "$ROUTER_APP_REGISTRY_DIR" ] || return 0
+    for _pg_entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
+        [ -f "$_pg_entry" ] || continue
+        _pg_root="$(sed -n 's/^PROJECT_ROOT=//p' "$_pg_entry" | head -n 1)"
+        case "$_pg_root" in /*) ;; *) continue ;; esac
+        [ -d "$_pg_root" ] && continue
+        # Gone only when the system says there is no such file: a root this
+        # run may not look into is not gone. Examples are one under a parent
+        # it cannot read, or one in a folder macOS keeps from this terminal
+        # (Documents, Desktop) (independent review, installer#110).
+        LC_ALL=C ls -d -- "$_pg_root" 2>&1 >/dev/null | grep -q 'No such file or directory' || continue
+        _pg_name="$(sed -n 's/^PROJECT_NAME=//p' "$_pg_entry" | head -n 1)"
+        rm -f "$_pg_entry" && printf '%s\n' "${_pg_name:-${_pg_root##*/}}"
+    done
+    return 0
+}
+
 # Rewrite UPSTREAM_PORT for every domain entry under a project root, regenerate
 # nginx + dnsmasq config, and reload the proxy if it's running.
 router_apply_app_port_to_domains() {
@@ -1097,6 +1138,22 @@ local_app_reconcile() {
     _env_file="$PROJECT_ROOT/.env"
     if [ ! -f "$_env_file" ] && [ ! -f "$PROJECT_ROOT/.env.default" ]; then
         return 0
+    fi
+
+    # Only under the lock: an allocation reading an entry while it is removed
+    # would stop on the file that went away, and one whose entry was just
+    # replaced would lose it. Tried once: when it is held, by another start
+    # or a run that was killed, the pruning waits for the next start and the
+    # lock is left to whoever holds it, rather than this start waiting 5 s
+    # (review and independent review, installer#110).
+    _gone=''
+    router_lock_acquire 1
+    if [ -n "${ROUTER_LOCK_HELD:-}" ]; then
+        _gone="$(router_app_prune_gone_projects)"
+        router_lock_release
+    fi
+    if [ -n "$_gone" ]; then
+        info "$(printf '%s\n' "$_gone" | awk 'NR <= 5 { names = names (NR > 1 ? ", " : "") $0 } END { if (NR > 5) names = names " and " (NR - 5) " more"; if (NR == 1) printf "Freed the port of a project that is gone: %s.", names; else printf "Freed the ports of %d projects that are gone: %s.", NR, names }')"
     fi
 
     _app_id="$(env_val SEMITEXA_APP_ID '')"
@@ -3897,6 +3954,27 @@ proxy_diagnose_port_conflict() {
         "$_runtime_line" "$_registry_line" "$_host_proc"
 }
 
+# The commands that read and write the project's own files and nothing else:
+# who is here, what comes next, the backlog. A one-off container runs them
+# alone. Without --no-deps, asking who is here on a stopped stack started
+# MySQL, Redis, NATS and setup, and left them running
+# (tk-a-cli-command-starts-the-whole-stack); each command here was run in a
+# container with no network. Any other command gets the services the app
+# depends on, as before. Leading options are skipped. A word that is not a
+# command, such as the value of an option, is taken as one: that command
+# gets the services, which is the safe way to be wrong.
+one_off_needs_no_services() {
+    for _arg in "$@"; do
+        case "$_arg" in
+            -*) continue ;;
+            list|help|ai:orient|ai:agent|ai:state|ai:work|ai:work:approve|ai:make-it|ai:backlog|ai:epic|ai:decision) return 0 ;;
+            *) return 1 ;;
+        esac
+    done
+    # Options alone (--version, --help): the console answers by itself.
+    return 0
+}
+
 # Run a one-off, no-host-port app container to execute a CLI command. Compose
 # `run` does NOT publish service ports by default, so this works even when
 # another container/process holds SWOOLE_PORT — which is the right design for
@@ -3907,16 +3985,20 @@ proxy_run_one_off_app() {
     # Read before env_export_compose_context: a value in .env would otherwise
     # replace the caller's own session and trace.
     _agent_env="$(agent_env_args)"
+    _no_deps=''
+    if one_off_needs_no_services "$@"; then
+        _no_deps='--no-deps'
+    fi
     (
         env_export_compose_context
         # Run as the host user: a root one-off writing into the bind-mounted
         # project leaves root:0600 files the host user cannot read.
         if [ -t 0 ] && [ -t 1 ]; then
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm $_no_deps $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         else
             # shellcheck disable=SC2086
-            $_compose $_overlays run --rm -T $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
+            $_compose $_overlays run --rm -T $_no_deps $_agent_env --user "$(id -u):$(id -g)" app php vendor/bin/semitexa "$@"
         fi
     )
 }

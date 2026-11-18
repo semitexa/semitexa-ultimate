@@ -1,7 +1,7 @@
 <!--
-Source: semitexa/ultimate scaffold. This file is copied into new projects by `bin/semitexa init`.
+Source: semitexa/ultimate scaffold. Every new project starts with this file.
 In the semitexa.dev workspace edit the root copy and run `bin/semitexa scaffold:sync-docs` to propagate;
-in a consumer project, `bin/semitexa init --only-docs` refreshes it and local edits are overwritten.
+in a consumer project it is the project's own: `bin/semitexa update` leaves it as it is.
 -->
 
 # Semitexa
