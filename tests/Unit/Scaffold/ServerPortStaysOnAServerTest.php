@@ -34,7 +34,8 @@ final class ServerPortStaysOnAServerTest extends TestCase
         port_range_end() { printf '9599'; }
         port_in_range() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -ge 9501 ] && [ "$1" -le 9599 ]; }
         port_owned_by_other_app() { [ "$1" = "$T_TAKEN" ]; }
-        port_in_use_on_host_excluding_self() { return 1; }
+        port_owner_name() { [ "$1" = "$T_TAKEN" ] && printf 'guard'; return 0; }
+        port_in_use_on_host_excluding_self() { [ "$1" = "${T_BOUND:-}" ]; }
         allocate_free_port() { printf '9501'; }
         router_app_write_entry() { printf 'RECORD %s %s\n' "$1" "$2" >&2; }
         router_apply_app_port_to_domains() { printf 'ROUTE %s\n' "$2" >&2; }
@@ -46,7 +47,7 @@ final class ServerPortStaysOnAServerTest extends TestCase
 
     private const RANGE_HINT = 'The range is SEMITEXA_LOCAL_PORT_RANGE_START/END in /home/dev/.semitexa/router/config.env; under APP_ENV=prod the port is never moved.';
 
-    /** @return iterable<string, array{string, string, string, list<string>}> */
+    /** @return iterable<string, array{0: string, 1: string, 2: string, 3: list<string>, 4?: string}> */
     public static function starts(): iterable
     {
         // verify:accept-test-change the register logic is no longer a stub that only echoed its port: every case now asserts what the real one records, routes and warns (6 cases, was 4)
@@ -72,28 +73,32 @@ final class ServerPortStaysOnAServerTest extends TestCase
             'INFO Swoole port for app app-123456 assigned to 9501.',
             'UPSERT SWOOLE_PORT=9501',
         ]];
+        // verify:accept-test-change a start no longer repeats the move in three warnings (tk-first-start-warns-about-an-ordinary-port-choice): register says nothing, reconcile says it once
         yield 'a workstation port outside the range is moved, and the warning says why and where' => ['dev', '9000', '', [
-            'WARN Port 9000 is outside the allowed range (9501-9599).',
-            'WARN Falling back to free port 9501.',
             'RECORD app-123456 9501',
             'ROUTE 9501',
             'WARN SWOOLE_PORT in .env changed from 9000 to 9501: it is outside the local range 9501-9599. ' . self::RANGE_HINT,
             'UPSERT SWOOLE_PORT=9501',
         ]];
-        yield 'a workstation port taken by another app is moved, and the warning says so' => ['dev', '9502', '9502', [
-            'WARN Port 9502 is already assigned to another local Semitexa app.',
-            'WARN Falling back to free port 9501.',
+        // The second project on a machine: every project ships 9502, so this is an ordinary move, said once.
+        yield 'a workstation port taken by another app is moved, said in one line naming it' => ['dev', '9502', '9502', [
             'RECORD app-123456 9501',
             'ROUTE 9501',
-            'WARN SWOOLE_PORT in .env changed from 9502 to 9501: it is taken by another app or process. ' . self::RANGE_HINT,
+            'INFO Port 9502 is used by guard; using 9501, saved to .env.',
             'UPSERT SWOOLE_PORT=9501',
         ]];
+        yield 'a workstation port bound by another process is moved, said in one line' => ['dev', '9502', '', [
+            'RECORD app-123456 9501',
+            'ROUTE 9501',
+            'INFO Port 9502 is used by another process on this machine; using 9501, saved to .env.',
+            'UPSERT SWOOLE_PORT=9501',
+        ], '9502'];
     }
 
     /** @param list<string> $expected */
     #[Test]
     #[DataProvider('starts')]
-    public function the_port_is_moved_on_a_workstation_and_never_on_a_server(string $appEnv, string $port, string $takenByAnother, array $expected): void
+    public function the_port_is_moved_on_a_workstation_and_never_on_a_server(string $appEnv, string $port, string $takenByAnother, array $expected, string $boundOnHost = ''): void
     {
         $functions = $this->function('local_app_register_logic') . "\n" . $this->function('local_app_reconcile');
         $project = sys_get_temp_dir() . '/port-reconcile-' . bin2hex(random_bytes(6));
@@ -102,10 +107,11 @@ final class ServerPortStaysOnAServerTest extends TestCase
         try {
             $sh = self::STUBS . "\nPROJECT_ROOT=" . escapeshellarg($project) . "\n" . $functions . "\nlocal_app_reconcile 2>&1; printf 'EXIT %s\\n' \"\$?\"";
             $out = (string) shell_exec(sprintf(
-                'env -i PATH=/usr/bin:/bin T_APP_ENV=%s T_PORT=%s T_TAKEN=%s sh -c %s',
+                'env -i PATH=/usr/bin:/bin T_APP_ENV=%s T_PORT=%s T_TAKEN=%s T_BOUND=%s sh -c %s',
                 escapeshellarg($appEnv),
                 escapeshellarg($port),
                 escapeshellarg($takenByAnother),
+                escapeshellarg($boundOnHost),
                 escapeshellarg($sh),
             ));
         } finally {
