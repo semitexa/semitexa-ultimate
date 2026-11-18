@@ -1489,6 +1489,9 @@ RD_NETS
     # update#113), and Docker accepts names a charset guard refused
     # (review, ultimate#165).
     printf '%s\n' "$_rd_nets" | sed '/^$/d' | sort -u | while IFS= read -r _rd_net; do
+        # The router's own network stays, whoever names it: an entry that did
+        # cut the proxy off every route (review, ultimate#166).
+        [ "$_rd_net" = "router_default" ] && continue
         docker network disconnect -f "$_rd_net" semitexa-router-proxy >/dev/null 2>&1 || true
     done
     return 0

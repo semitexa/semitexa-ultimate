@@ -240,6 +240,22 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
         self::assertSame("app dev\n", @file_get_contents($this->tmp . '/disconnected'), "this project's network, whole; router_default and another project's left");
     }
 
+    /** Review, ultimate#166: a registry entry naming router_default had detach cut the proxy off its own network, and every route with it. */
+    #[Test]
+    public function detach_never_lets_go_of_the_routers_own_network(): void
+    {
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_NETWORK=router_default\n");
+        file_put_contents($this->tmp . '/domains/blog.test.env', "DOMAIN=blog.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_NETWORK=shop_default\n");
+
+        $this->shell(['registry_entry_load', 'router_detach_project'],
+            'PROJECT_ROOT=/home/dev/shop' . "\n"
+            . 'compose_bin() { echo false; }; compose_args() { :; }; router_proxy_networks() { :; }' . "\n"
+            . 'docker() { case "$1 $2" in "network disconnect") printf "%s\n" "$4" >> disconnected ;; "inspect semitexa-router-proxy") return 0 ;; esac; return 1; }' . "\n"
+            . 'router_detach_project');
+
+        self::assertSame("shop_default\n", @file_get_contents($this->tmp . '/disconnected'));
+    }
+
     /** The script from one line up to, not including, another. */
     private function region(string $from, string $to): string
     {
