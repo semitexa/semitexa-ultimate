@@ -743,6 +743,25 @@ router_sync_project_domains() {
 
     router_ensure_dirs
 
+    # This project's entries first, in this shell (a here-document, not a
+    # pipe, so a failure is seen): the stale ones went first, and a renamed
+    # domain lost its route when the new entry could not be written. A sync
+    # that cannot write leaves every entry as it was and says so (review,
+    # ultimate#166).
+    _sync_failed=''
+    while IFS= read -r _domain; do
+        [ -n "$_domain" ] || continue
+        PROJECT_ROOT="$_saved_project_root"
+        router_registry_write_entry "$_domain" "$_port" "$_mode" || _sync_failed="$_sync_failed $_domain"
+    done <<SYNC_DOMAINS
+$_domains
+SYNC_DOMAINS
+    PROJECT_ROOT="$_saved_project_root"
+    if [ -n "$_sync_failed" ]; then
+        warn "The local router keeps this project's domains as they were: it could not write$_sync_failed."
+        return 1
+    fi
+
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
@@ -752,13 +771,8 @@ router_sync_project_domains() {
             rm -f "$_entry"
         fi
     done
-
     PROJECT_ROOT="$_saved_project_root"
-    printf '%s\n' "$_domains" | while IFS= read -r _domain; do
-        [ -n "$_domain" ] || continue
-        router_registry_write_entry "$_domain" "$_port" "$_mode"
-    done
-    PROJECT_ROOT="$_saved_project_root"
+    return 0
 }
 
 router_project_domain_count() {
@@ -1108,7 +1122,7 @@ router_apply_app_port_to_domains() {
     [ -d "$ROUTER_REGISTRY_DIR" ] || return 0
 
     _saved_project_root="$PROJECT_ROOT"
-    _changed=0
+    _changed=0 _apply_failed=''
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
@@ -1116,8 +1130,13 @@ router_apply_app_port_to_domains() {
         [ "$PROJECT_ROOT" = "$_project_root_arg" ] || continue
         [ "$UPSTREAM_PORT" != "$_new_port" ] || continue
         PROJECT_ROOT="$_project_root_arg"
-        router_registry_write_entry "$DOMAIN" "$_new_port" "$MODE"
-        _changed=1
+        # Checked, not left to set -e: a write that failed ended a
+        # registration with the lock held (Fable's review, installer#112).
+        if router_registry_write_entry "$DOMAIN" "$_new_port" "$MODE"; then
+            _changed=1
+        else
+            _apply_failed="$_apply_failed $DOMAIN"
+        fi
     done
     PROJECT_ROOT="$_saved_project_root"
 
@@ -1128,6 +1147,7 @@ router_apply_app_port_to_domains() {
             router_compose restart proxy >/dev/null 2>&1 || true
         fi
     fi
+    [ -z "$_apply_failed" ]
 }
 
 # Atomic-ish .env upsert: replace KEY=... line in-place, otherwise append.
@@ -1304,7 +1324,12 @@ local_app_register_logic() {
         router_lock_release
         return 1
     fi
-    router_apply_app_port_to_domains "$_project_root_arg" "$_assigned"
+    # The port is recorded either way. Domains whose route could not follow
+    # it are said, and a start writes them again (review, installer#112 and
+    # update#114).
+    if ! router_apply_app_port_to_domains "$_project_root_arg" "$_assigned"; then
+        warn "Port $_assigned is recorded, but some of this project's domains still go to the port before: the next bin/semitexa server:start writes them again."
+    fi
     router_lock_release
     printf '%s' "$_assigned"
 }
@@ -1434,7 +1459,10 @@ router_attach_project() {
         _ra_domain="${_ra_fields%% *}"
         _ra_hport="${_ra_fields#* }"
         [ -n "$_ra_domain" ] || continue
-        router_registry_write_entry "$_ra_domain" "${_ra_hport:-$_ra_port}" "$_ra_mode" "$_ra_name" "$_ra_net" "$_ra_port"
+        # Each domain on its own: under set -e, a write that failed ended the
+        # start after the app was up and before the render (Fable's review,
+        # installer#112; review, update#114). The writer says which one.
+        router_registry_write_entry "$_ra_domain" "${_ra_hport:-$_ra_port}" "$_ra_mode" "$_ra_name" "$_ra_net" "$_ra_port" || :
     done
     PROJECT_ROOT="$_ra_root"
     router_generate_nginx_config
@@ -2762,7 +2790,7 @@ cmd_server_start() {
 
     # ── Pre-flight Checks (Proxy & DNS) ──────────────────────────────
     if project_has_shared_domains; then
-        router_sync_project_domains
+        router_sync_project_domains || :
         if command -v ss >/dev/null 2>&1; then
             _port80_pid="$(ss -ltnp 2>/dev/null | awk '$4 ~ /:80$/ {print $6}' | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n 1)"
             if [ -n "$_port80_pid" ]; then

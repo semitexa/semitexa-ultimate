@@ -203,6 +203,9 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
             "ERROR Could not write the local router's entry for shop.test; the one before is kept.",
             'domain=1',
         ], $out);
+        // Still there and still empty: a writer that removed one would pass an emptiness check alone (review, ultimate#166).
+        self::assertDirectoryExists($this->tmp . '/apps/app-777777.env');
+        self::assertDirectoryExists($this->tmp . '/domains/shop.test.env');
         self::assertSame([], array_merge(glob($this->tmp . '/apps/app-777777.env/*') ?: [], glob($this->tmp . '/domains/shop.test.env/*') ?: []), 'nothing went inside the directories');
     }
 
@@ -254,6 +257,86 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
             . 'router_detach_project');
 
         self::assertSame("shop_default\n", @file_get_contents($this->tmp . '/disconnected'));
+    }
+
+    /**
+     * tk-registry-domain-write-failure-leaves-the-lock, from Fable's review
+     * and CodeRabbit on installer#112 and update#114: a domain write that
+     * failed inside a registration ended it under set -e with the lock held.
+     * The port is recorded, the lock goes back, and the domains that did not
+     * follow are named.
+     */
+    #[Test]
+    public function a_domain_write_that_fails_in_a_registration_is_said_and_the_lock_goes_back(): void
+    {
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_PORT=9400\nMODE=shared\n");
+        $stubs = 'app_validate_app_id() { return 0; }; router_app_entry_exists() { return 1; }; router_ensure_app_dirs() { mkdir -p "$ROUTER_APP_REGISTRY_DIR" "$ROUTER_LOCK_DIR"; }' . "\n"
+            . 'port_range_start() { printf 9501; }; port_range_end() { printf 9599; }; port_in_range() { return 0; }; port_owned_by_other_app() { return 1; }' . "\n"
+            . 'port_in_use_on_host_excluding_self() { return 1; }; allocate_free_port() { printf 9501; }' . "\n"
+            // On stderr, as the real error and warn print: stdout is the port the caller reads.
+            . 'router_registry_write_entry() { printf "ERROR Could not write the local router\x27s entry for %s; the one before is kept.\n" "$1" >&2; return 1; }' . "\n"
+            . 'router_generate_nginx_config() { echo rendered >&2; }; router_generate_dns_config() { :; }' . "\n"
+            . 'warn() { printf "WARN %s\n" "$*" >&2; }; error() { printf "ERROR %s\n" "$*" >&2; }; ROUTER_LOCK_DIR=locks' . "\n";
+
+        $out = $this->shell(['registry_entry_load', 'registry_value_is_one_line', 'router_app_entry_path', 'router_app_write_entry', 'router_lock_acquire', 'router_lock_release', 'router_apply_app_port_to_domains', 'local_app_register_logic'],
+            $stubs . '( set -e; port="$(local_app_register_logic app-123456 "" /home/dev/shop)"; echo "port=$port" ); printf "exit=%s\n" "$?"' . "\n"
+            . '[ -d locks/registry.lock ] && echo held || echo free');
+
+        self::assertSame([
+            "ERROR Could not write the local router's entry for shop.test; the one before is kept.",
+            'WARN Port 9501 is recorded, but some of this project\'s domains still go to the port before: the next bin/semitexa server:start writes them again.',
+            'port=9501',
+            'exit=0',
+            'free',
+        ], $out);
+        self::assertStringContainsString('SWOOLE_PORT=9501', (string) file_get_contents($this->tmp . '/apps/app-123456.env'), 'the port is recorded');
+    }
+
+    /** Fable's review of installer#112: a failed domain write ended server:start after the app was up and before the render. */
+    #[Test]
+    public function a_domain_write_that_fails_in_an_attach_leaves_the_render_to_run(): void
+    {
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=9555\n");
+
+        $out = $this->shell(['registry_entry_load', 'router_validate_domain', 'router_port_normalize', 'router_attach_project'],
+            'project_has_shared_domains() { return 0; }; compose_bin() { echo compose_stub; }; compose_args() { :; }; compose_stub() { echo cid-1; }' . "\n"
+            . 'docker() { case "$*" in *semitexa-router-proxy*) return 0 ;; *".Name"*) echo /shop-app-1 ;; *com.docker.compose.project*) echo shop ;; *Networks*) echo shop_default ;; esac; }' . "\n"
+            . 'router_connect_proxy() { :; }; router_proxy_networks() { echo shop_default; }; env_val() { printf 8080; }; router_mode_get() { printf shared; }' . "\n"
+            . 'router_registry_write_entry() { printf "ERROR Could not write the local router\x27s entry for %s; the one before is kept.\n" "$1"; return 1; }' . "\n"
+            . 'router_generate_nginx_config() { echo rendered; }; router_reload_proxy() { echo reloaded; }' . "\n"
+            . 'PROJECT_ROOT=/home/dev/shop; ( set -e; router_attach_project; echo "went on" )');
+
+        self::assertSame(["ERROR Could not write the local router's entry for shop.test; the one before is kept.", 'rendered', 'reloaded', 'went on'], $out);
+    }
+
+    /**
+     * tk-domain-sync-drops-a-route-before-its-replacement (CodeRabbit,
+     * ultimate#166): the sync removed a project's stale entries first. A
+     * renamed domain lost its route when the new entry could not be written,
+     * and the sync said it was done. It writes first now and removes the
+     * stale ones only then.
+     */
+    #[Test]
+    public function a_sync_that_cannot_write_keeps_the_old_route_and_says_so(): void
+    {
+        file_put_contents($this->tmp . '/domains/old.test.env', "DOMAIN=old.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_PORT=9555\n");
+        $sync = 'router_collect_project_domains() { echo new.test; }; env_val() { printf 9555; }; router_mode_get() { printf shared; }; router_ensure_dirs() { :; }' . "\n"
+            . 'warn() { printf "WARN %s\n" "$*"; }' . "\n";
+
+        $failed = $this->shell(['registry_entry_load', 'router_sync_project_domains'],
+            $sync . 'router_registry_write_entry() { printf "ERROR cannot write %s\n" "$1"; return 1; }' . "\n"
+            . 'PROJECT_ROOT=/home/dev/shop; ( set -e; router_sync_project_domains ); printf "exit=%s\n" "$?"');
+
+        self::assertSame(['ERROR cannot write new.test', "WARN The local router keeps this project's domains as they were: it could not write new.test.", 'exit=1'], $failed);
+        self::assertFileExists($this->tmp . '/domains/old.test.env', 'the old route is kept');
+
+        $written = $this->shell(['registry_entry_load', 'router_sync_project_domains'],
+            $sync . 'router_registry_write_entry() { printf "DOMAIN=%s\nPROJECT_ROOT=%s\nUPSTREAM_PORT=%s\n" "$1" "$PROJECT_ROOT" "$2" > "$ROUTER_REGISTRY_DIR/$1.env"; }' . "\n"
+            . 'PROJECT_ROOT=/home/dev/shop; ( set -e; router_sync_project_domains ); printf "exit=%s\n" "$?"');
+
+        self::assertSame(['exit=0'], $written);
+        self::assertFileExists($this->tmp . '/domains/new.test.env');
+        self::assertFileDoesNotExist($this->tmp . '/domains/old.test.env', 'the stale one goes once the new one is written');
     }
 
     /** The script from one line up to, not including, another. */
