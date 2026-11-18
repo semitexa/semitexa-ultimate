@@ -527,18 +527,26 @@ router_registry_write_entry() {
         return 1
     fi
     if [ -z "$_uc" ] && [ -f "$_path" ]; then
-        # Read as the router reads it, each in a shell of its own: read raw, a
-        # CRLF entry kept a carriage return in every value it handed on
-        # (review, installer#111).
-        _uc="$(UPSTREAM_CONTAINER=''; registry_entry_load "$_path" && printf '%s' "$UPSTREAM_CONTAINER")" || _uc=''
-        _un="$(UPSTREAM_NETWORK=''; registry_entry_load "$_path" && printf '%s' "$UPSTREAM_NETWORK")" || _un=''
-        _ucp="$(UPSTREAM_CONTAINER_PORT=''; registry_entry_load "$_path" && printf '%s' "$UPSTREAM_CONTAINER_PORT")" || _ucp=''
-        _rw_root="$(PROJECT_ROOT=''; registry_entry_load "$_path" && printf '%s' "$PROJECT_ROOT")" || _rw_root=''
-        [ "$_rw_root" = "$PROJECT_ROOT" ] || { _uc=''; _un=''; _ucp=''; }
+        # Read as the router reads it, in a shell of its own: read raw, a CRLF
+        # entry kept a carriage return in every value it handed on (review,
+        # installer#111). One load: the route, and the root it is checked
+        # against, come from the same version of the entry (review,
+        # update#114 and ultimate#166).
+        _rw_root="$PROJECT_ROOT"
+        _rw_route="$(PROJECT_ROOT='' UPSTREAM_CONTAINER='' UPSTREAM_NETWORK='' UPSTREAM_CONTAINER_PORT=''
+            registry_entry_load "$_path" && [ "$PROJECT_ROOT" = "$_rw_root" ] \
+                && printf '%s\n%s\n%s' "$UPSTREAM_CONTAINER" "$UPSTREAM_NETWORK" "$UPSTREAM_CONTAINER_PORT")" || _rw_route=''
+        _uc="$(printf '%s\n' "$_rw_route" | sed -n 1p)"
+        _un="$(printf '%s\n' "$_rw_route" | sed -n 2p)"
+        _ucp="$(printf '%s\n' "$_rw_route" | sed -n 3p)"
     fi
 
     router_ensure_dirs
-    cat > "$_path" <<EOF
+    # Whole or not at all: written in place, a write cut short (a full disk)
+    # left half an entry and lost the one before (review, installer#112).
+    _rw_tmp="$_path.new.$$"
+    if ! {
+        cat <<EOF
 DOMAIN=$_domain
 PROJECT_ROOT=$PROJECT_ROOT
 COMPOSE_PROJECT_NAME=$_compose_project_name
@@ -547,8 +555,13 @@ UPSTREAM_PORT=$_upstream_port
 MODE=$_mode
 UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
-    if [ -n "$_uc" ] && [ -n "$_un" ] && [ -n "$_ucp" ]; then
-        printf 'UPSTREAM_CONTAINER=%s\nUPSTREAM_NETWORK=%s\nUPSTREAM_CONTAINER_PORT=%s\n' "$_uc" "$_un" "$_ucp" >> "$_path"
+        if [ -n "$_uc" ] && [ -n "$_un" ] && [ -n "$_ucp" ]; then
+            printf 'UPSTREAM_CONTAINER=%s\nUPSTREAM_NETWORK=%s\nUPSTREAM_CONTAINER_PORT=%s\n' "$_uc" "$_un" "$_ucp"
+        fi
+    } 2>/dev/null > "$_rw_tmp" || ! mv -f "$_rw_tmp" "$_path"; then
+        rm -f "$_rw_tmp"
+        error "Could not write the local router's entry for $_domain; the one before is kept."
+        return 1
     fi
 }
 
@@ -587,24 +600,33 @@ registry_entry_load() {
         #   after the closing quote (review, ultimate#165);
         # - an unquoted one-word value drops a comment after a blank, so
         #   "DOMAIN=demo.test # local demo" stays demo.test (review,
-        #   installer#111). A path or a name made from one keeps its " #",
-        #   which may be its own.
-        case "$_rl_val" in
-            \"*\"*|\'*\'*)
-                _rl_q="${_rl_val%"${_rl_val#?}"}"
-                _rl_in="${_rl_val#?}"
-                _rl_after="${_rl_in#*"$_rl_q"}"
-                _rl_after="${_rl_after#"${_rl_after%%[![:blank:]]*}"}"
-                case "$_rl_after" in
-                    ''|\#*) _rl_val="${_rl_in%%"$_rl_q"*}" ;;
-                esac
-                ;;
+        #   installer#111).
+        # A name the writers took from a directory or from Docker is read as
+        # written, quotes and " #" included: written back unquoted, it has to
+        # read the same the next time (review, ultimate#166). A root keeps its
+        # " #" too; it always starts with a slash, so only a hand edit quotes
+        # one.
+        case "$_rl_key" in
+            PROJECT_NAME|COMPOSE_PROJECT_NAME|UPSTREAM_CONTAINER|UPSTREAM_NETWORK) ;;
             *)
-                case "$_rl_key" in
-                    PROJECT_ROOT|PROJECT_NAME|COMPOSE_PROJECT_NAME) ;;
+                case "$_rl_val" in
+                    \"*\"*|\'*\'*)
+                        _rl_q="${_rl_val%"${_rl_val#?}"}"
+                        _rl_in="${_rl_val#?}"
+                        _rl_after="${_rl_in#*"$_rl_q"}"
+                        _rl_after="${_rl_after#"${_rl_after%%[![:blank:]]*}"}"
+                        case "$_rl_after" in
+                            ''|\#*) _rl_val="${_rl_in%%"$_rl_q"*}" ;;
+                        esac
+                        ;;
                     *)
-                        _rl_val="${_rl_val%%[[:blank:]]#*}"
-                        _rl_val="${_rl_val%"${_rl_val##*[![:blank:]]}"}"
+                        case "$_rl_key" in
+                            PROJECT_ROOT) ;;
+                            *)
+                                _rl_val="${_rl_val%%[[:blank:]]#*}"
+                                _rl_val="${_rl_val%"${_rl_val##*[![:blank:]]}"}"
+                                ;;
+                        esac
                         ;;
                 esac
                 ;;
@@ -1010,7 +1032,12 @@ router_app_write_entry() {
     fi
     [ -n "$_registered_at" ] || _registered_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     router_ensure_app_dirs
-    cat > "$_path" <<EOF
+    # Whole or not at all: written in place, a write cut short (a full disk)
+    # left half an entry and lost the port it held (review, installer#112).
+    _aw_tmp="$_path.new.$$"
+    # The shell's own complaint about the redirect is left out: the line
+    # below says what happened.
+    if ! { cat > "$_aw_tmp" <<EOF
 APP_ID=$_id
 PROJECT_ROOT=$_project_root_arg
 PROJECT_NAME=$_project_name
@@ -1018,6 +1045,11 @@ SWOOLE_PORT=$_port
 REGISTERED_AT=$_registered_at
 UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
+    } 2>/dev/null || ! mv -f "$_aw_tmp" "$_path"; then
+        rm -f "$_aw_tmp"
+        error "Could not write the local app registry's entry for $_id; the one before is kept."
+        return 1
+    fi
 }
 
 router_app_delete_entry() {

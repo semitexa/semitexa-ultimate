@@ -48,7 +48,10 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
             . 'port_in_use_on_host_excluding_self() { return 1; }; allocate_free_port() { printf 9501; }' . "\n"
             . 'router_apply_app_port_to_domains() { printf "ROUTED %s\n" "$2"; }; warn() { printf "WARN %s\n" "$*"; }; error() { printf "ERROR %s\n" "$*"; }' . "\n"
             . 'ROUTER_LOCK_DIR=locks' . "\n";
-        $functions = ['registry_entry_load', 'registry_value_is_one_line', 'router_app_entry_path', 'router_app_write_entry', 'router_lock_acquire', 'router_lock_release', 'local_app_register_logic'];
+        // The writer's own check, recording first whether the lock is held: "free" afterwards means
+        // released only if it was taken (review, ultimate#166).
+        $stubs .= 'registry_value_is_one_line() { [ -d locks/registry.lock ] && echo "held at the write"; case "$1" in *"' . "\n" . '"*) return 1 ;; esac; return 0; }' . "\n";
+        $functions = ['registry_entry_load', 'router_app_entry_path', 'router_app_write_entry', 'router_lock_acquire', 'router_lock_release', 'local_app_register_logic'];
 
         // As local-app:register runs it: under set -e, the result not checked.
         $out = $this->shell($functions, $stubs
@@ -56,6 +59,7 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
             . '[ -d locks/registry.lock ] && echo held || echo free');
 
         self::assertSame([
+            'held at the write',
             "ERROR The project's directory has a line break in its name, which the local app registry cannot record: rename the directory.",
             'exit=1',
             'free',
@@ -114,8 +118,11 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
             . '( set -e; router_generate_nginx_config; router_generate_dns_config; echo rendered )');
 
         self::assertSame($root ? ['rendered'] : ['WARN Left out of the local router: a.test.env cannot be read.', 'rendered'], $out);
-        self::assertStringContainsString('server_name shop.test;', (string) file_get_contents($this->tmp . '/domains.conf'));
-        self::assertStringContainsString('address=/shop.test/', (string) file_get_contents($this->tmp . '/dns.conf'));
+        // The exact set each renderer wrote (review, ultimate#166).
+        $domains = $root ? ['a.test', 'shop.test'] : ['shop.test'];
+        preg_match_all('/server_name (\S+);/', (string) file_get_contents($this->tmp . '/domains.conf'), $nginx);
+        self::assertSame($domains, $nginx[1]);
+        self::assertSame(implode('', array_map(static fn (string $d): string => "address=/{$d}/127.0.0.1\n", $domains)), file_get_contents($this->tmp . '/dns.conf'));
     }
 
     /** Review, ultimate#165: a quoted root with a comment after it kept the quotes and the comment, and the app was never found by its path. */
@@ -126,6 +133,56 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
 
         self::assertSame(['app-123456'], $this->shell(['registry_entry_load', 'router_app_find_by_project'],
             'router_app_find_by_project "/home/dev/My Projects/shop"; echo'));
+    }
+
+    /**
+     * Review, ultimate#166: a name the writers took from a directory or from
+     * Docker is written back unquoted, so it has to read as written. Quotes and
+     * " #" are kept.
+     */
+    #[Test]
+    public function a_name_a_writer_took_from_docker_or_a_directory_reads_as_written(): void
+    {
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_NAME=\"weird\"\nCOMPOSE_PROJECT_NAME=my #app\nUPSTREAM_CONTAINER=shop-app-1 #2\nUPSTREAM_NETWORK=shop #blue\n");
+
+        self::assertSame(['"weird"', 'my #app', 'shop-app-1 #2', 'shop #blue'], $this->shell(['registry_entry_load'],
+            'registry_entry_load ' . escapeshellarg($this->tmp . '/domains/shop.test.env') . '; printf "%s\n" "$PROJECT_NAME" "$COMPOSE_PROJECT_NAME" "$UPSTREAM_CONTAINER" "$UPSTREAM_NETWORK"'));
+    }
+
+    /**
+     * Review, installer#112: an entry was written in place, so a write cut
+     * short left half of it and lost the one before. Each writer now writes
+     * beside the entry and moves the whole into place. A registry it cannot
+     * write keeps the entry it had. Root writes whatever the modes, so there
+     * the new one lands.
+     */
+    #[Test]
+    public function a_write_that_fails_keeps_the_entry_before_it(): void
+    {
+        file_put_contents($this->tmp . '/apps/app-123456.env', "APP_ID=app-123456\nPROJECT_ROOT=/home/dev/app\nSWOOLE_PORT=9555\n");
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_PORT=9556\n");
+        chmod($this->tmp . '/apps', 0o555);
+        chmod($this->tmp . '/domains', 0o555);
+        $root = function_exists('posix_geteuid') && posix_geteuid() === 0;
+        try {
+            $out = $this->shell(['registry_entry_load', 'registry_value_is_one_line', 'router_app_entry_path', 'router_app_write_entry', 'router_entry_key', 'router_entry_path', 'router_registry_write_entry'],
+                'router_ensure_app_dirs() { :; }; router_ensure_dirs() { :; }; error() { printf "ERROR %s\n" "$*"; }' . "\n"
+                . 'router_app_write_entry app-123456 9600 /home/dev/app; printf "app=%s\n" "$?"' . "\n"
+                . 'PROJECT_ROOT=/home/dev/shop; router_registry_write_entry shop.test 9601 shared; printf "domain=%s\n" "$?"');
+        } finally {
+            chmod($this->tmp . '/apps', 0o755);
+            chmod($this->tmp . '/domains', 0o755);
+        }
+
+        self::assertSame($root ? ['app=0', 'domain=0'] : [
+            "ERROR Could not write the local app registry's entry for app-123456; the one before is kept.",
+            'app=1',
+            "ERROR Could not write the local router's entry for shop.test; the one before is kept.",
+            'domain=1',
+        ], $out);
+        self::assertStringContainsString($root ? 'SWOOLE_PORT=9600' : 'SWOOLE_PORT=9555', (string) file_get_contents($this->tmp . '/apps/app-123456.env'));
+        self::assertStringContainsString($root ? 'UPSTREAM_PORT=9601' : 'UPSTREAM_PORT=9556', (string) file_get_contents($this->tmp . '/domains/shop.test.env'));
+        self::assertSame([], array_merge(glob($this->tmp . '/apps/*.new.*') ?: [], glob($this->tmp . '/domains/*.new.*') ?: []), 'nothing is left beside them');
     }
 
     /** The script from one line up to, not including, another. */
