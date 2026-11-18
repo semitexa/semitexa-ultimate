@@ -119,7 +119,6 @@ services:
       - |
         TARGET_DIR=/var/www/html
         TEMP_DIR=/tmp/semitexa-bootstrap
-        BACKUP_DIR=/tmp/semitexa-bootstrap-backup
         MARKER_PATH="$$TARGET_DIR/var/install/bootstrap-complete.json"
         COPYING_PATH="$$TARGET_DIR/var/install/bootstrap-copying"
         LOG_PATH="$$TARGET_DIR/var/log/install-bootstrap.log"
@@ -136,7 +135,7 @@ services:
           printf '[%s] [BOOTSTRAP] %s\n' "$$ts" "$$*"
           printf '[%s] [BOOTSTRAP] %s\n' "$$ts" "$$*" >> "$$LOG_PATH" 2>/dev/null || true
         }
-        fail() { log "ERROR: $$*"; rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"; exit 2; }
+        fail() { log "ERROR: $$*"; rm -rf "$$TEMP_DIR"; exit 2; }
         write_marker() {
           mkdir -p "$$TARGET_DIR/var/install"
           printf '{\n  "status": "ok",\n  "installed_package": "%s",\n  "installed_at": "%s",\n  "bootstrap_version": %s\n}\n' \
@@ -151,7 +150,7 @@ services:
 
         [ -d "$$TARGET_DIR" ] || fail "$$TARGET_DIR does not exist"
         [ -w "$$TARGET_DIR" ] || fail "$$TARGET_DIR is not writable"
-        for b in composer php cp rm mkdir date; do
+        for b in composer php cp mv rm mkdir date; do
           command -v "$$b" >/dev/null 2>&1 || fail "missing required binary: $$b"
         done
         # The first log line makes var/log, as root: what this run makes goes
@@ -201,7 +200,7 @@ services:
           exit 0
         fi
 
-        rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"
+        rm -rf "$$TEMP_DIR"
 
         log "step 1/6 create project skeleton ($${PACKAGE_VERSION:-latest stable})"
         composer create-project "$$PACKAGE_NAME" "$$TEMP_DIR" $${PACKAGE_VERSION:+"$$PACKAGE_VERSION"} \
@@ -224,27 +223,25 @@ services:
         log "step 4/6 sync project files"
         host_uid="$$(stat -c '%u' "$$TARGET_DIR")"
         host_gid="$$(stat -c '%g' "$$TARGET_DIR")"
-        mkdir -p "$$BACKUP_DIR/bin"
-        for f in .env.default .env .gitignore Dockerfile \
-                 docker-compose.yml docker-compose.mysql.yml \
-                 docker-compose.redis.yml docker-compose.nats.yml \
-                 docker-compose.ollama.yml docker-compose.worker.yml \
-                 docker-compose.override.yml.example
-        do
-          if [ -e "$$TARGET_DIR/$$f" ]; then
-            cp -a "$$TARGET_DIR/$$f" "$$BACKUP_DIR/$$f"
-          fi
-        done
-        if [ -e "$$TARGET_DIR/bin/semitexa" ]; then
-          cp -a "$$TARGET_DIR/bin/semitexa" "$$BACKUP_DIR/bin/semitexa"
+        if [ -e "$$COPYING_PATH" ]; then
+          log "a copy was cut off midway: copying the skeleton again, the installer's own files left out"
         fi
-
         # Until the marker is written, a composer.json here is the skeleton's,
         # not a project's: a copy cut off midway is done again on the next start.
         mkdir -p "$$TARGET_DIR/var/install" && : > "$$COPYING_PATH" \
           || fail "cannot mark the copy as in progress"
-        cp -a "$$TEMP_DIR/." "$$TARGET_DIR/" || fail "copy into bind mount failed"
-
+        # The installer's own files never go through the bulk copy. One the
+        # target has stays as it is, an edit made between the tries included:
+        # its skeleton copy is dropped. They used to be backed up and put back,
+        # and a copy cut off midway left them written over, half written, or
+        # from another release for the retry to "restore"
+        # (tk-setup-retry-keeps-the-first-backup; review, installer#107).
+        # One the target lacks comes from the skeleton under a name of its own
+        # and is renamed into place once it is whole. Written by the bulk copy,
+        # a cut-off write left half a file, which the retry then kept as the
+        # installer's (review, update#110). A link the target has is the
+        # target's, even one to a file this container cannot see, such as an
+        # .env.default shared between projects (review, ultimate#163).
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
@@ -252,11 +249,16 @@ services:
                  docker-compose.override.yml.example \
                  bin/semitexa
         do
-          if [ -e "$$BACKUP_DIR/$$f" ]; then
-            mkdir -p "$$TARGET_DIR/$$(dirname "$$f")"
-            cp -a "$$BACKUP_DIR/$$f" "$$TARGET_DIR/$$f"
+          rm -f "$$TARGET_DIR/$$f.semitexa-new"
+          if [ ! -e "$$TARGET_DIR/$$f" ] && [ ! -L "$$TARGET_DIR/$$f" ] && [ -e "$$TEMP_DIR/$$f" ]; then
+            case "$$f" in */*) mkdir -p "$$TARGET_DIR/$${f%/*}" ;; esac
+            cp -a "$$TEMP_DIR/$$f" "$$TARGET_DIR/$$f.semitexa-new" \
+              && mv -f "$$TARGET_DIR/$$f.semitexa-new" "$$TARGET_DIR/$$f" \
+              || fail "copy of $$f into bind mount failed"
           fi
+          rm -f "$$TEMP_DIR/$$f"
         done
+        cp -a "$$TEMP_DIR/." "$$TARGET_DIR/" || fail "copy into bind mount failed"
 
         chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/" 2>/dev/null || true
         chmod +x "$$TARGET_DIR/bin/semitexa" 2>/dev/null || true
@@ -293,7 +295,7 @@ services:
           log "WARN: initial git commit failed, skipped; run: git init && git add -A && git commit -m 'Initial Semitexa project'"
         fi
 
-        rm -rf "$$TEMP_DIR" "$$BACKUP_DIR"
+        rm -rf "$$TEMP_DIR"
         log "bootstrap complete"
     restart: "no"
 
