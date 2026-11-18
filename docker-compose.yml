@@ -239,7 +239,9 @@ services:
         # One the target lacks comes from the skeleton under a name of its own
         # and is renamed into place once it is whole. Written by the bulk copy,
         # a cut-off write left half a file, which the retry then kept as the
-        # installer's (review, update#110).
+        # installer's (review, update#110). A link the target has is the
+        # target's, even one to a file this container cannot see, such as an
+        # .env.default shared between projects (review, ultimate#163).
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
@@ -248,7 +250,7 @@ services:
                  bin/semitexa
         do
           rm -f "$$TARGET_DIR/$$f.semitexa-new"
-          if [ ! -e "$$TARGET_DIR/$$f" ] && [ -e "$$TEMP_DIR/$$f" ]; then
+          if [ ! -e "$$TARGET_DIR/$$f" ] && [ ! -L "$$TARGET_DIR/$$f" ] && [ -e "$$TEMP_DIR/$$f" ]; then
             case "$$f" in */*) mkdir -p "$$TARGET_DIR/$${f%/*}" ;; esac
             cp -a "$$TEMP_DIR/$$f" "$$TARGET_DIR/$$f.semitexa-new" \
               && mv -f "$$TARGET_DIR/$$f.semitexa-new" "$$TARGET_DIR/$$f" \
