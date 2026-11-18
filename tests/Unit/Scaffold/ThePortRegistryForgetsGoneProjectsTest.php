@@ -103,12 +103,44 @@ final class ThePortRegistryForgetsGoneProjectsTest extends TestCase
         self::assertSame(['a-live.env'], $this->entries());
     }
 
+    /**
+     * Review, installer#110: the lock gives up after about 5 s and returned as
+     * if taken, so a start removed entries while another registration was
+     * writing one, and then freed that registration's lock.
+     */
+    #[Test]
+    public function a_start_that_cannot_take_the_lock_removes_nothing_and_leaves_the_lock(): void
+    {
+        $this->entry('a-gone', $this->tmp . '/gone', 'gone-app');
+        mkdir($this->tmp . '/locks/registry.lock', 0o777, true);
+
+        self::assertSame([], $this->reconcile(realLock: true), 'nothing is said to be freed');
+        self::assertSame(['a-gone.env'], $this->entries(), 'the pruning waits for the next start');
+        self::assertDirectoryExists($this->tmp . '/locks/registry.lock', "the other registration's lock is left to it");
+    }
+
+    #[Test]
+    public function a_lock_left_by_a_run_that_died_is_taken_over(): void
+    {
+        $this->entry('a-gone', $this->tmp . '/gone', 'gone-app');
+        mkdir($this->tmp . '/locks/registry.lock', 0o777, true);
+        touch($this->tmp . '/locks/registry.lock', time() - 300);
+
+        self::assertSame(['INFO Freed the port of a project that is gone: gone-app.'], $this->reconcile(realLock: true));
+        self::assertDirectoryDoesNotExist($this->tmp . '/locks/registry.lock', 'taken, used and freed');
+    }
+
     /** @return list<string> what local_app_reconcile printed, the allocation's own lines left out */
-    private function reconcile(): array
+    private function reconcile(bool $realLock = false): array
     {
         touch($this->tmp . '/live/.env');
+        $lock = $realLock
+            ? 'router_ensure_app_dirs() { mkdir -p "$ROUTER_APP_REGISTRY_DIR" "$ROUTER_LOCK_DIR"; }; ROUTER_LOCK_DIR=' . escapeshellarg($this->tmp . '/locks') . "\n"
+                . $this->function('router_lock_acquire') . "\n" . $this->function('router_lock_release') . "\n"
+            // As if taken: the lock's own cases run it as bin/semitexa has it.
+            : 'router_lock_acquire() { ROUTER_LOCK_HELD=1; }; router_lock_release() { ROUTER_LOCK_HELD=; }' . "\n";
         $stubs = 'env_val() { case "$1" in SWOOLE_PORT) printf 9501 ;; SEMITEXA_APP_ID) printf app-123456 ;; *) printf "%s" "$2" ;; esac; }' . "\n"
-            . 'local_app_register_logic() { printf 9501; }; router_lock_acquire() { :; }; router_lock_release() { :; }' . "\n"
+            . 'local_app_register_logic() { printf 9501; }' . "\n" . $lock
             . 'info() { printf "INFO %s\n" "$*"; }; warn() { printf "WARN %s\n" "$*"; }' . "\n"
             . 'PROJECT_ROOT=' . escapeshellarg($this->tmp . '/live') . "\n"
             . $this->function('router_app_prune_gone_projects') . "\n";
