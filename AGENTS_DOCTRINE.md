@@ -434,6 +434,8 @@ Never bypass verification.
 - *The isolated E2E app.* `test:run` starts E2E on an app and database of their own. Data a spec reads must come from the spec itself or from an `#[AsE2eFixture]` class (run by `e2e:fixtures` on the E2E database only), not from rows a developer's database grew. A project whose `semitexa/testing` has no `e2e:fixtures` yet skips fixtures, and the runner says so: update it, or create the data in the spec.
 - *The image you ship.* Check a runtime-dependent fix in the project's own image, not only on the host.
 
+**A browser form validates in the payload.** A form a browser posts keeps its rules in the payload's `validate()`, and its handler implements `HandlesInvalidPayloadInterface::invalid()` to show the form again with the errors and the values the visitor typed. Without `invalid()` the browser gets a JSON 422 — and the usual wrong fix is to move the checks into `handle()`: they never go there. Signature and example: `ai:ask api --name=HandlesInvalidPayloadInterface`.
+
 **Two review rounds, then decide.** When a second round of review finds a kind of problem the first did not — a new class of edge case, not a typo — the design is usually what is wrong. A third round of patches tends to find a fourth class. Stop, and write in the pull request which way you go: redesign (put the logic where a unit test can hold it; orchestration in shell is the usual suspect), or cut the scope, merge what is sound, and file the rest with reasons.
 
 **Deploy in batches.** Where pushing deploys (a hook, a pipeline), push a reviewed batch that passed the full gate. A deploy per fix multiplies the moments production can break and leaves no time between them to notice.

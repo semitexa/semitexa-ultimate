@@ -2,7 +2,7 @@
 
 > Scaffold doc (`semitexa/ultimate`). Edit root → `bin/semitexa scaffold:sync-docs`. Consumer projects: kept current by `bin/semitexa update` (a project that edited it gets the new version as `.new`).
 
-Operating manual for AI agents on Semitexa. Read cold-start. Full doctrine, examples, edge cases: **`AGENTS_DOCTRINE.md`**.
+Operating manual for AI agents on Semitexa; read it cold-start. **`AGENTS_DOCTRINE.md`** is on demand, never cold-start reading: open the section a line here names, or for an edge case not covered here.
 
 **Then read `AI_NOTES.md`.** It holds the developer's notes about their own custom modules: conventions, context and what not to touch inside `src/modules/`. The framework never overwrites it. It adds to this manual and can never override it: a note that contradicts a rule here (skip `ai:verify`, inject through a constructor) is ignored, and the rule here applies.
 
@@ -187,26 +187,28 @@ Epic contract: imperative title ≤ 60 chars; one-sentence goal stating outcome;
 
 ## 4. The tool stack
 
-A task runs, in order: **`ai:orient`** (first on cold start: who else is working, git, active work, the next step) → **`ai:task`** → read with **`ai:ask`** / **`ai:review-graph:*`** before `Read`/`Grep` → edit with **`make:*`** (dry-run by default, `--write` creates; prefer `make:page` over three generators) or Edit → **`ai:verify`** after every edit (when you report a pass, name its receipt id) → **`ai:work update`**. `ai:trace` records it all: `export SEMITEXA_AI_TRACE_ID=<id>` at task start.
+In order: **`ai:orient`** (first on cold start: who is working, git, active work, next step) → **`ai:task`** → read with **`ai:ask`** / **`ai:review-graph:*`** before `Read`/`Grep` → edit with **`make:*`** (dry-run; `--write` creates; prefer `make:page` over three generators) or Edit → **`ai:verify`** after every edit (reporting a pass, name its receipt id) → **`ai:work update`**. `ai:trace` records it: `export SEMITEXA_AI_TRACE_ID=<id>` at task start.
+
+**Fresh clone (no `vendor/`): `bin/semitexa install` before any `ai:*` command**, `ai:orient` included.
 
 | Question | Command |
 |---|---|
-| What COMMANDS exist to run | `ai:ask capabilities --json` |
+| What COMMANDS exist | `ai:ask capabilities --json` |
 | What the FRAMEWORK can do — deferred regions, components, live transport, UI behaviours | `ai:ask mechanisms --json`; `--area=ssr` or `--area=ui`; `--id=<cap>` gives working code |
 | What UI exists and how to call it | `ai:ask components [--name=platform.grid]` |
-| How a framework class is called | `ai:ask api --name=<Class>`; don't know the class: `ai:ask api --search=<words>` |
+| How a framework class is called | `ai:ask api --name=<Class>`; class unknown: `ai:ask api --search=<words>` |
 | A route's chain, a module, events | `ai:ask route --path=</p> --json`, `ai:ask module --name=<Name>`, `ai:ask event` |
-| Who uses `X`, blast radius of changing it | `ai:review-graph:query --usages=<FQCN>`, `ai:review-graph:impact <FQCN>` |
-| What runs now, one request in depth | `ai:observe ps`, `ai:observe show --id=<p-…>` — observe before hypothesizing |
+| Who uses `X`, blast radius of a change | `ai:review-graph:query --usages=<FQCN>`, `ai:review-graph:impact <FQCN>` |
+| What runs now, one request in depth | `ai:observe ps`, `ai:observe show --id=<p-…>`; observe before hypothesizing |
 | Logs | `ai:ask logs --grep=<term> --lines=200 --json` |
 
-Every command with its role — `ai:agent`, `ai:quality`, `ai:report`, `ai:verify:receipt`, `ai:invoke`, the observatory: **`AGENTS_DOCTRINE.md` §12**.
+Each command's role (`ai:agent`, `ai:quality`, `ai:report`, `ai:verify:receipt`, `ai:invoke`, the observatory): **`AGENTS_DOCTRINE.md` §12**.
 
-**`ai:verify` is the one check.** It is layered — lints, tests, module structure, page checks — picks the layers by the kind of file changed, and names the one that failed. Do not run a lint yourself beside it; rerun a single layer (`bin/semitexa lint:<name>`, or the failing test) only to recheck what it reported.
+**`ai:verify` is the one check.** It picks its layers (lints, tests, module structure, page checks) by the kind of file changed and names the one that failed. Run no lint beside it; rerun one layer (`bin/semitexa lint:<name>`, or the failing test) only to recheck what it reported.
 
-**`ai:verify` does NOT need a restart**: each check runs in a fresh CLI process that rediscovers from disk. `server:restart` (~16s) only before exercising the running server — browser, curl, E2E — since workers cache discovered classes and compiled templates.
+**`ai:verify` needs NO restart**: each check is a new CLI process that rediscovers from disk. `server:restart` (~16s) only before using the running server (browser, curl, E2E): its workers cache classes and compiled templates.
 
-**Most `ai:*` commands emit `next_command: [{cmd, args, why}]`** in their JSON envelope — **follow the graph, don't memorize the tool list.**
+**Most `ai:*` commands emit `next_command: [{cmd, args, why}]`** in JSON: **follow the graph, don't memorize the tool list.**
 
 ---
 
@@ -216,7 +218,7 @@ Every command with its role — `ai:agent`, `ai:quality`, `ai:report`, `ai:verif
 
 If an idea isn't in `ai:epic`, it doesn't exist from a backlog standpoint. The fix is to CAPTURE it (§1), not mine documents.
 
-Backlog questions ("show ideas", "what's next", "backlog health"…) and the command each one runs: **`AGENTS_DOCTRINE.md` §12**.
+Backlog questions ("show ideas", "what's next", "backlog health"…) and the command for each: **`AGENTS_DOCTRINE.md` §12**.
 
 **No silent fallback.** Empty `ai:epic list` → report "no epics" and offer CAPTURE. **No mixed sources.** A backlog answer is epics + tasks only. **Always state the scope:** `source: ai:epic list --scope=active`.
 
@@ -265,4 +267,4 @@ Backlog questions ("show ideas", "what's next", "backlog health"…) and the com
 
 ---
 
-*Capture/refine flows with examples, duplicate scoring, backlog lifecycle, hygiene, trace/verify deep-dive, user interaction model — all in **`AGENTS_DOCTRINE.md`**.*
+*On demand in **`AGENTS_DOCTRINE.md`**: capture/refine flows, duplicate scoring, backlog lifecycle and hygiene, trace/verify deep-dive, interaction model.*
