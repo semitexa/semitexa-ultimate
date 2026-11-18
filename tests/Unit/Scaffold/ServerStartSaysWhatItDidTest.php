@@ -32,22 +32,33 @@ final class ServerStartSaysWhatItDidTest extends TestCase
         self::assertSame(array_keys($positions), array_keys($inOrder), 'the app, then the services, then "started!" and the URL');
     }
 
-    /** info() prints with %s, so a "\n" at the end of its text showed as a backslash and an n. */
+    /**
+     * info() prints with %s, so a "\n" at the end of its text showed as a
+     * backslash and an n. A call stands at a line start or after a command
+     * boundary (`;`, `&&`, `||`, `then`, `else`, `do`): review, ultimate#162.
+     */
     #[Test]
     public function no_message_ends_in_a_literal_backslash_n(): void
     {
-        self::assertSame(0, preg_match_all('/^\s*(?:info|warn|error|success)\s+"[^"\n]*\\\\n"\s*$/m', $this->script(), $matches), implode("\n", $matches[0]));
+        $call = '/(?:^|[;&|]|\bthen\b|\belse\b|\bdo\b)\s*(?:info|warn|error|success)\s+"[^"\n]*\\\\n"/m';
+        self::assertSame(1, preg_match($call, 'if true; then printf "\n"; success "Done!\\n"'), 'the guard sees an inline call');
+        self::assertSame(0, preg_match($call, 'printf "\\n"'), 'and lets printf be');
+        self::assertSame(0, preg_match_all($call, $this->script(), $matches), implode("\n", $matches[0]));
     }
 
     #[Test]
     public function a_command_before_the_first_install_says_that_is_expected_and_what_install_does(): void
     {
-        $sh = "info() { printf 'INFO %s\\n' \"\$*\"; }\nerror() { printf 'ERROR %s\\n' \"\$*\"; }\n" . $this->function('say_vendor_missing') . "\nsay_vendor_missing";
+        // As bin/semitexa has them: info() on stdout, error() on stderr.
+        $sh = "info() { printf 'INFO %s\\n' \"\$*\"; }\nerror() { printf 'ERROR %s\\n' \"\$*\" >&2; }\n" . $this->function('say_vendor_missing') . "\nsay_vendor_missing";
+        $run = static fn (string $streams): string => (string) shell_exec('env -i PATH=/usr/bin:/bin sh -c ' . escapeshellarg($sh) . ' ' . $streams);
 
         self::assertSame([
             'ERROR vendor/bin/semitexa not found: expected on a fresh clone, before the first install.',
             'INFO Run bin/semitexa install (it builds the image and runs composer install in a container; it touches only this Compose project), then repeat this command.',
-        ], array_values(array_filter(explode("\n", (string) shell_exec('env -i PATH=/usr/bin:/bin sh -c ' . escapeshellarg($sh))))));
+        ], array_values(array_filter(explode("\n", $run('2>&1 >/dev/null')))), 'all of it on stderr');
+        // Review, installer#106: the proxy's stdout is the command's (--json), the MCP server's the protocol's.
+        self::assertSame('', $run('2>/dev/null'), 'nothing on stdout');
         self::assertSame(2, substr_count($this->script(), "        say_vendor_missing\n"), 'both commands that need vendor/ say it');
     }
 
@@ -60,6 +71,11 @@ final class ServerStartSaysWhatItDidTest extends TestCase
 
     private function script(): string
     {
-        return (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        // Review, ultimate#162: an unreadable or empty script would pass the newline guard.
+        $script = file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        self::assertIsString($script);
+        self::assertStringStartsWith('#!/bin/sh', $script);
+
+        return $script;
     }
 }

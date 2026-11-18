@@ -2874,9 +2874,11 @@ cmd_demo_install() {
 # A command that needs the PHP side, before `install` made it: expected on a
 # fresh clone. An agent read some 1000 lines of bin/semitexa to learn what
 # install does (tk-install-prints-a-literal-backslash-n), so it says so here.
+# All of it on stderr: the proxy's stdout is the command's (--json), and the
+# MCP server's is the protocol's (review, installer#106).
 say_vendor_missing() {
     error "vendor/bin/semitexa not found: expected on a fresh clone, before the first install."
-    info  "Run bin/semitexa install (it builds the image and runs composer install in a container; it touches only this Compose project), then repeat this command."
+    info  "Run bin/semitexa install (it builds the image and runs composer install in a container; it touches only this Compose project), then repeat this command." >&2
 }
 
 cmd_init() {
