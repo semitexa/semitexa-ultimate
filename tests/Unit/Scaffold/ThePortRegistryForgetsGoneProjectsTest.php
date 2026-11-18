@@ -106,8 +106,10 @@ final class ThePortRegistryForgetsGoneProjectsTest extends TestCase
     /**
      * Review, installer#110: the lock gives up after about 5 s and returned as
      * if taken, so a start removed entries while another registration was
-     * writing one, and then freed that registration's lock.
+     * writing one, and then freed that registration's lock. Not taken, the
+     * start removes nothing and leaves the lock alone.
      */
+    // verify:accept-test-change the stale-lock takeover case went with the takeover itself, cut after review round 2 (installer#110, two-round cap): a registration frees a stuck lock on release, as before
     #[Test]
     public function a_start_that_cannot_take_the_lock_removes_nothing_and_leaves_the_lock(): void
     {
@@ -117,17 +119,6 @@ final class ThePortRegistryForgetsGoneProjectsTest extends TestCase
         self::assertSame([], $this->reconcile(realLock: true), 'nothing is said to be freed');
         self::assertSame(['a-gone.env'], $this->entries(), 'the pruning waits for the next start');
         self::assertDirectoryExists($this->tmp . '/locks/registry.lock', "the other registration's lock is left to it");
-    }
-
-    #[Test]
-    public function a_lock_left_by_a_run_that_died_is_taken_over(): void
-    {
-        $this->entry('a-gone', $this->tmp . '/gone', 'gone-app');
-        mkdir($this->tmp . '/locks/registry.lock', 0o777, true);
-        touch($this->tmp . '/locks/registry.lock', time() - 300);
-
-        self::assertSame(['INFO Freed the port of a project that is gone: gone-app.'], $this->reconcile(realLock: true));
-        self::assertDirectoryDoesNotExist($this->tmp . '/locks/registry.lock', 'taken, used and freed');
     }
 
     /** @return list<string> what local_app_reconcile printed, the allocation's own lines left out */

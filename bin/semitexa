@@ -651,17 +651,13 @@ router_ensure_app_dirs() {
 # returns 0, since its callers run under set -e and a registration goes on
 # without the lock as before. ROUTER_LOCK_HELD says whether this run holds
 # it: what must not run unlocked, such as removing entries, checks it
-# (review, installer#110).
+# (review, installer#110). A registration still frees the lock on release
+# whoever took it, as before: that is how a lock left by a killed run goes.
+# A lock with an owner is tk-registry-lock-is-best-effort.
 router_lock_acquire() {
     router_ensure_app_dirs
     _lock="$ROUTER_LOCK_DIR/registry.lock"
     ROUTER_LOCK_HELD=''
-    # A lock older than a minute outlived the run that took it, which was
-    # killed mid-registration: none takes that long. It is cleared. Before,
-    # the next run to give up cleared it on release, whoever held it.
-    if [ -n "$(find "$_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-        rm -rf "$_lock" 2>/dev/null || true
-    fi
     _waited=0
     while [ "$_waited" -lt 50 ]; do
         if mkdir "$_lock" 2>/dev/null; then
@@ -674,10 +670,7 @@ router_lock_acquire() {
     return 0
 }
 
-# Frees the lock only when this run took it: one another registration holds
-# is left to it.
 router_lock_release() {
-    [ -n "${ROUTER_LOCK_HELD:-}" ] || return 0
     ROUTER_LOCK_HELD=''
     rm -rf "$ROUTER_LOCK_DIR/registry.lock" 2>/dev/null || true
 }
@@ -1142,7 +1135,8 @@ local_app_reconcile() {
     # Only under the lock: an allocation reading an entry while it is removed
     # would stop on the file that went away, and one whose entry was just
     # replaced would lose it. Not taken in time, the pruning waits for the
-    # next start (review, installer#110).
+    # next start, and the lock is left to whoever holds it (review,
+    # installer#110).
     _gone=''
     router_lock_acquire
     if [ -n "${ROUTER_LOCK_HELD:-}" ]; then
