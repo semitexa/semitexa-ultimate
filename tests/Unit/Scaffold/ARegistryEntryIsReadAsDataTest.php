@@ -89,14 +89,15 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         self::assertFileDoesNotExist($this->tmp . '/ran');
     }
 
+    // verify:accept-test-change PROJECT_NAME is read as written since ultimate#166 (a name a writer took from a directory must round-trip); quote dropping is shown on SWOOLE_PORT, which still has it
     #[Test]
     public function quotes_a_hand_edit_added_are_dropped_and_other_keys_ignored(): void
     {
-        file_put_contents($this->tmp . '/apps/app-123456.env', "APP_ID=app-123456\nPROJECT_NAME=\"my app\"\nPROJECT_ROOT='/home/dev/my app'\nPATH=/nowhere\nSWOOLE_PORT=9555\n");
+        file_put_contents($this->tmp . '/apps/app-123456.env', "APP_ID=app-123456\nSWOOLE_PORT=\"9555\"\nPROJECT_ROOT='/home/dev/my app'\nPATH=/nowhere\n");
 
-        self::assertSame(['my app', '/home/dev/my app', '/usr/bin:/bin'], $this->shell(
+        self::assertSame(['9555', '/home/dev/my app', '/usr/bin:/bin'], $this->shell(
             ['registry_entry_load'],
-            'registry_entry_load ' . escapeshellarg($this->tmp . '/apps/app-123456.env') . '; printf "%s\n" "$PROJECT_NAME" "$PROJECT_ROOT" "$PATH"',
+            'registry_entry_load ' . escapeshellarg($this->tmp . '/apps/app-123456.env') . '; printf "%s\n" "$SWOOLE_PORT" "$PROJECT_ROOT" "$PATH"',
         ));
     }
 
@@ -316,21 +317,33 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
             . 'ROUTER_NGINX_DEFAULT=default.conf; ROUTER_NGINX_DOMAINS=domains.conf; ROUTER_DNSMASQ_CONF=dnsmasq.conf; ROUTER_DNS_DOMAINS=dns.conf' . "\n";
         $functions = ['registry_entry_load', 'router_validate_domain', 'router_port_normalize', 'router_route_admit'];
 
-        self::assertSame(['router'], $this->shell($functions, $render . 'export COMPOSE_PROJECT_NAME=router; router_generate_nginx_config && router_generate_dns_config && printf "%s\n" "$COMPOSE_PROJECT_NAME"'));
+        // Read from a child shell, as docker compose reads it: a renderer that put the value back without export would fail this (review, ultimate#165).
+        self::assertSame(['router'], $this->shell($functions, $render . 'export COMPOSE_PROJECT_NAME=router; router_generate_nginx_config && router_generate_dns_config && sh -c \'printf "%s\\n" "${COMPOSE_PROJECT_NAME-unset}"\''));
+        // That run read the entry: a renderer that returned early could not have changed anything (review, ultimate#166).
+        self::assertStringContainsString('server_name demo.test;', (string) file_get_contents($this->tmp . '/domains.conf'));
+        self::assertSame("address=/demo.test/127.0.0.1\n", file_get_contents($this->tmp . '/dns.conf'));
+        unlink($this->tmp . '/domains.conf');
+        unlink($this->tmp . '/dns.conf');
         self::assertSame(['unset'], $this->shell($functions, $render . 'unset COMPOSE_PROJECT_NAME; router_generate_nginx_config && router_generate_dns_config && printf "%s\n" "${COMPOSE_PROJECT_NAME-unset}"'));
         self::assertSame("address=/demo.test/127.0.0.1\n", file_get_contents($this->tmp . '/dns.conf'), 'the entry was read');
     }
 
-    /** Review, update#113: a hand-edited network name with a blank was split into disconnects of networks the entry never named. */
+    /**
+     * Review, update#113: a hand-edited network name with a blank was split
+     * into disconnects of networks the entry never named. Review, ultimate#165:
+     * a charset guard dropped names Docker accepts. Each name goes whole.
+     */
+    // verify:accept-test-change detach no longer refuses names outside a charset (ultimate#165): each goes whole to docker, never split, which is what this checks
     #[Test]
-    public function detach_lets_go_only_of_a_network_docker_could_have_named(): void
+    public function detach_lets_go_of_each_name_whole_and_never_splits_one(): void
     {
         file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_NETWORK=\"router_default other_default\"\n");
         file_put_contents($this->tmp . '/domains/blog.test.env', "DOMAIN=blog.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_NETWORK=shop_default\n");
 
         $this->detach($this->tmp . '/domains');
 
-        self::assertSame("shop_default\n", @file_get_contents($this->tmp . '/disconnected'), 'one disconnect, of the one real name');
+        // A quoted name is the text between its quotes (ultimate#166, round 2): the hand edit goes whole.
+        self::assertSame("router_default other_default\nshop_default\n", @file_get_contents($this->tmp . '/disconnected'), 'one disconnect a name, the hand-edited one whole: router_default alone is never let go');
     }
 
     /** Runs router_detach_project on one registry, the docker calls it makes written down in "disconnected". */
