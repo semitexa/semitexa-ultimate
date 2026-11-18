@@ -544,9 +544,14 @@ router_registry_write_entry() {
     router_ensure_dirs
     # Whole or not at all: written in place, a write cut short (a full disk)
     # left half an entry and lost the one before (review, installer#112).
+    # Each write is checked on its own: as one block, the optional route's
+    # "if" set the status, and a cut-short base write was moved into place
+    # all the same (review, installer#112, round 2). The shell's own
+    # complaint about a redirect is left out; the error below says what
+    # happened.
     _rw_tmp="$_path.new.$$"
-    if ! {
-        cat <<EOF
+    _rw_ok=1
+    { cat > "$_rw_tmp" <<EOF
 DOMAIN=$_domain
 PROJECT_ROOT=$PROJECT_ROOT
 COMPOSE_PROJECT_NAME=$_compose_project_name
@@ -555,10 +560,13 @@ UPSTREAM_PORT=$_upstream_port
 MODE=$_mode
 UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
-        if [ -n "$_uc" ] && [ -n "$_un" ] && [ -n "$_ucp" ]; then
-            printf 'UPSTREAM_CONTAINER=%s\nUPSTREAM_NETWORK=%s\nUPSTREAM_CONTAINER_PORT=%s\n' "$_uc" "$_un" "$_ucp"
-        fi
-    } 2>/dev/null > "$_rw_tmp" || ! mv -f "$_rw_tmp" "$_path"; then
+    } 2>/dev/null || _rw_ok=''
+    if [ -n "$_rw_ok" ] && [ -n "$_uc" ] && [ -n "$_un" ] && [ -n "$_ucp" ]; then
+        { printf 'UPSTREAM_CONTAINER=%s\nUPSTREAM_NETWORK=%s\nUPSTREAM_CONTAINER_PORT=%s\n' "$_uc" "$_un" "$_ucp" >> "$_rw_tmp"; } 2>/dev/null || _rw_ok=''
+    fi
+    # A directory at the entry's path would take the file inside it, and mv
+    # would say it worked (review, installer#112, round 2).
+    if [ -z "$_rw_ok" ] || [ -d "$_path" ] || ! mv -f "$_rw_tmp" "$_path"; then
         rm -f "$_rw_tmp"
         error "Could not write the local router's entry for $_domain; the one before is kept."
         return 1
@@ -595,19 +603,21 @@ registry_entry_load() {
         _rl_key="${_rl_line%%=*}"
         [ "$_rl_key" != "$_rl_line" ] || continue
         _rl_val="${_rl_line#*=}"
-        # What sourcing kept of a hand-edited value:
-        # - a quoted one is the text between its quotes, even with a comment
-        #   after the closing quote (review, ultimate#165);
-        # - an unquoted one-word value drops a comment after a blank, so
+        # What sourcing kept of a hand-edited value, where a writer could not
+        # have written it:
+        # - A quoted value is the text between its quotes, even with a comment
+        #   after the closing quote (review, ultimate#165). No writer starts a
+        #   root, a port, a domain, or a Docker container or network name
+        #   with a quote. A name taken from a directory may start with one,
+        #   so PROJECT_NAME and COMPOSE_PROJECT_NAME are read as written
+        #   (review, ultimate#166).
+        # - An unquoted one-word value drops a comment after a blank, so
         #   "DOMAIN=demo.test # local demo" stays demo.test (review,
-        #   installer#111).
-        # A name the writers took from a directory or from Docker is read as
-        # written, quotes and " #" included: written back unquoted, it has to
-        # read the same the next time (review, ultimate#166). A root keeps its
-        # " #" too; it always starts with a slash, so only a hand edit quotes
-        # one.
+        #   installer#111). A root or a name keeps its " #", so a network
+        #   written back as "shop #blue" reads the same the next time
+        #   (review, ultimate#166).
         case "$_rl_key" in
-            PROJECT_NAME|COMPOSE_PROJECT_NAME|UPSTREAM_CONTAINER|UPSTREAM_NETWORK) ;;
+            PROJECT_NAME|COMPOSE_PROJECT_NAME) ;;
             *)
                 case "$_rl_val" in
                     \"*\"*|\'*\'*)
@@ -621,7 +631,7 @@ registry_entry_load() {
                         ;;
                     *)
                         case "$_rl_key" in
-                            PROJECT_ROOT) ;;
+                            PROJECT_ROOT|UPSTREAM_CONTAINER|UPSTREAM_NETWORK) ;;
                             *)
                                 _rl_val="${_rl_val%%[[:blank:]]#*}"
                                 _rl_val="${_rl_val%"${_rl_val##*[![:blank:]]}"}"
@@ -1045,7 +1055,7 @@ SWOOLE_PORT=$_port
 REGISTERED_AT=$_registered_at
 UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
-    } 2>/dev/null || ! mv -f "$_aw_tmp" "$_path"; then
+    } 2>/dev/null || [ -d "$_path" ] || ! mv -f "$_aw_tmp" "$_path"; then
         rm -f "$_aw_tmp"
         error "Could not write the local app registry's entry for $_id; the one before is kept."
         return 1

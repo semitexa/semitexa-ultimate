@@ -152,37 +152,72 @@ final class ARefusedRegistryWriteStopsTheRegistrationTest extends TestCase
     /**
      * Review, installer#112: an entry was written in place, so a write cut
      * short left half of it and lost the one before. Each writer now writes
-     * beside the entry and moves the whole into place. A registry it cannot
-     * write keeps the entry it had. Root writes whatever the modes, so there
-     * the new one lands.
+     * beside the entry and moves the whole into place. In round 2 the domain
+     * writer's optional route set the status, and a cut-short base write was
+     * moved in all the same. The cut is a cat that writes part and fails, so
+     * it is the same with or without root.
      */
     #[Test]
-    public function a_write_that_fails_keeps_the_entry_before_it(): void
+    public function a_write_cut_short_keeps_the_entry_before_it_byte_for_byte(): void
     {
-        file_put_contents($this->tmp . '/apps/app-123456.env', "APP_ID=app-123456\nPROJECT_ROOT=/home/dev/app\nSWOOLE_PORT=9555\n");
-        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_PORT=9556\n");
-        chmod($this->tmp . '/apps', 0o555);
-        chmod($this->tmp . '/domains', 0o555);
-        $root = function_exists('posix_geteuid') && posix_geteuid() === 0;
-        try {
-            $out = $this->shell(['registry_entry_load', 'registry_value_is_one_line', 'router_app_entry_path', 'router_app_write_entry', 'router_entry_key', 'router_entry_path', 'router_registry_write_entry'],
-                'router_ensure_app_dirs() { :; }; router_ensure_dirs() { :; }; error() { printf "ERROR %s\n" "$*"; }' . "\n"
-                . 'router_app_write_entry app-123456 9600 /home/dev/app; printf "app=%s\n" "$?"' . "\n"
-                . 'PROJECT_ROOT=/home/dev/shop; router_registry_write_entry shop.test 9601 shared; printf "domain=%s\n" "$?"');
-        } finally {
-            chmod($this->tmp . '/apps', 0o755);
-            chmod($this->tmp . '/domains', 0o755);
-        }
+        $app = "APP_ID=app-123456\nPROJECT_ROOT=/home/dev/app\nPROJECT_NAME=app\nSWOOLE_PORT=9555\n";
+        $domain = "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=9556\n";
+        file_put_contents($this->tmp . '/apps/app-123456.env', $app);
+        file_put_contents($this->tmp . '/domains/shop.test.env', $domain);
 
-        self::assertSame($root ? ['app=0', 'domain=0'] : [
+        $out = $this->shell(['registry_entry_load', 'registry_value_is_one_line', 'router_app_entry_path', 'router_app_write_entry', 'router_entry_key', 'router_entry_path', 'router_registry_write_entry'],
+            'router_ensure_app_dirs() { :; }; router_ensure_dirs() { :; }; error() { printf "ERROR %s\n" "$*"; }' . "\n"
+            // A full disk: part of the entry is written, then cat fails.
+            . 'cat() { printf "APP_ID=part"; return 1; }' . "\n"
+            . 'router_app_write_entry app-123456 9600 /home/dev/app; printf "app=%s\n" "$?"' . "\n"
+            // A host-only entry: no container route whose test could hide the failure.
+            . 'PROJECT_ROOT=/home/dev/shop; router_registry_write_entry shop.test 9601 shared; printf "domain=%s\n" "$?"');
+
+        self::assertSame([
             "ERROR Could not write the local app registry's entry for app-123456; the one before is kept.",
             'app=1',
             "ERROR Could not write the local router's entry for shop.test; the one before is kept.",
             'domain=1',
         ], $out);
-        self::assertStringContainsString($root ? 'SWOOLE_PORT=9600' : 'SWOOLE_PORT=9555', (string) file_get_contents($this->tmp . '/apps/app-123456.env'));
-        self::assertStringContainsString($root ? 'UPSTREAM_PORT=9601' : 'UPSTREAM_PORT=9556', (string) file_get_contents($this->tmp . '/domains/shop.test.env'));
+        self::assertSame($app, file_get_contents($this->tmp . '/apps/app-123456.env'), 'the app entry, byte for byte');
+        self::assertSame($domain, file_get_contents($this->tmp . '/domains/shop.test.env'), 'the domain entry, byte for byte');
         self::assertSame([], array_merge(glob($this->tmp . '/apps/*.new.*') ?: [], glob($this->tmp . '/domains/*.new.*') ?: []), 'nothing is left beside them');
+    }
+
+    /** Review, installer#112, round 2: mv -f moves a file into a directory at its target and says it worked. */
+    #[Test]
+    public function a_directory_at_an_entry_path_is_refused(): void
+    {
+        mkdir($this->tmp . '/apps/app-777777.env');
+        mkdir($this->tmp . '/domains/shop.test.env');
+
+        $out = $this->shell(['registry_entry_load', 'registry_value_is_one_line', 'router_app_entry_path', 'router_app_write_entry', 'router_entry_key', 'router_entry_path', 'router_registry_write_entry'],
+            'router_ensure_app_dirs() { :; }; router_ensure_dirs() { :; }; error() { printf "ERROR %s\n" "$*"; }' . "\n"
+            . 'router_app_write_entry app-777777 9600 /home/dev/app; printf "app=%s\n" "$?"' . "\n"
+            . 'PROJECT_ROOT=/home/dev/shop; router_registry_write_entry shop.test 9601 shared; printf "domain=%s\n" "$?"');
+
+        self::assertSame([
+            "ERROR Could not write the local app registry's entry for app-777777; the one before is kept.",
+            'app=1',
+            "ERROR Could not write the local router's entry for shop.test; the one before is kept.",
+            'domain=1',
+        ], $out);
+        self::assertSame([], array_merge(glob($this->tmp . '/apps/app-777777.env/*') ?: [], glob($this->tmp . '/domains/shop.test.env/*') ?: []), 'nothing went inside the directories');
+    }
+
+    /**
+     * Review, update#114 and ultimate#166, round 2: a hand-edited quoted
+     * container name kept its quotes, the renderer cleared it, and the route
+     * fell back to the host port. No writer starts a Docker name with a
+     * quote, so a quoted one is the text between the quotes.
+     */
+    #[Test]
+    public function a_quoted_container_or_network_name_reads_without_its_quotes(): void
+    {
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nUPSTREAM_CONTAINER=\"demo-app\" # local route\nUPSTREAM_NETWORK='demo_default'\n");
+
+        self::assertSame(['demo-app', 'demo_default'], $this->shell(['registry_entry_load'],
+            'registry_entry_load ' . escapeshellarg($this->tmp . '/domains/shop.test.env') . '; printf "%s\n" "$UPSTREAM_CONTAINER" "$UPSTREAM_NETWORK"'));
     }
 
     /**

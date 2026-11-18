@@ -342,8 +342,8 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
 
         $this->detach($this->tmp . '/domains');
 
-        // A network name is read as written since ultimate#166, so the hand edit goes with its quotes, whole.
-        self::assertSame("\"router_default other_default\"\nshop_default\n", @file_get_contents($this->tmp . '/disconnected'), 'one disconnect a name, the hand-edited one whole: router_default alone is never let go');
+        // A quoted name is the text between its quotes (ultimate#166, round 2): the hand edit goes whole.
+        self::assertSame("router_default other_default\nshop_default\n", @file_get_contents($this->tmp . '/disconnected'), 'one disconnect a name, the hand-edited one whole: router_default alone is never let go');
     }
 
     /** Runs router_detach_project on one registry, the docker calls it makes written down in "disconnected". */
