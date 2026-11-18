@@ -177,7 +177,7 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         // Both write a heredoc with a closing brace of its own: taken whole, up to the function after them.
         $renderers = $this->region('router_generate_nginx_config() {', 'router_generate_compose() {');
         $out = $this->shell(
-            ['registry_entry_load', 'router_validate_domain', 'router_port_in_range'],
+            ['registry_entry_load', 'router_validate_domain', 'router_port_normalize', 'router_route_admit'],
             $renderers . "\n"
                 . 'router_ensure_dirs() { :; }; router_proxy_networks() { printf "shop_default\n"; }; warn() { printf "WARN %s\n" "$*"; }' . "\n"
                 . 'ROUTER_NGINX_DEFAULT=' . escapeshellarg($this->tmp . '/default.conf') . '; ROUTER_NGINX_DOMAINS=' . escapeshellarg($this->tmp . '/domains.conf') . "\n"
@@ -187,16 +187,16 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
 
         self::assertSame([
             'WARN Left out of the local router: a.test.env does not name a .test domain.',
-            'WARN Left out of the local router: b.test.env holds an upstream that is not a host and a port.',
-            'WARN Left out of the local router: c.test.env holds an upstream that is not a host and a port.',
+            'WARN Left out of the local router: b.test.env holds an upstream port that is not one.',
+            'WARN Left out of the local router: c.test.env names an upstream host other than host.docker.internal.',
         ], $out);
         $nginx = (string) file_get_contents($this->tmp . '/domains.conf');
         self::assertSame(1, substr_count($nginx, 'server_name '), $nginx);
         self::assertStringContainsString('server_name shop.test;', $nginx);
         self::assertStringContainsString('proxy_pass http://host.docker.internal:9555;', $nginx, 'a container name that is not one falls back to the host port');
         self::assertStringNotContainsString('evil', $nginx);
-        // A .test domain resolves here whatever its upstream; one that is not a domain is not written.
-        self::assertSame("address=/b.test/127.0.0.1\naddress=/c.test/127.0.0.1\naddress=/shop.test/127.0.0.1\n", file_get_contents($this->tmp . '/dns-domains.conf'));
+        // Only a route nginx takes is published (review, installer#111).
+        self::assertSame("address=/shop.test/127.0.0.1\n", file_get_contents($this->tmp . '/dns-domains.conf'));
     }
 
     /**
@@ -210,12 +210,15 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         file_put_contents($this->tmp . '/domains/zzz.test.env', "DOMAIN=zzz.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=9555\n");
 
         self::assertSame(['aaa.test'], $this->shell(
-            ['registry_entry_load', 'router_validate_domain', 'router_port_in_range'],
+            ['registry_entry_load', 'router_validate_domain', 'router_port_normalize', 'router_route_admit'],
             $this->region('router_generate_nginx_config() {', 'router_generate_compose() {') . "\n"
                 . 'router_ensure_dirs() { :; }; router_proxy_networks() { :; }; warn() { :; }' . "\n"
                 . 'ROUTER_NGINX_DEFAULT=default.conf; ROUTER_NGINX_DOMAINS=domains.conf; ROUTER_DNSMASQ_CONF=dnsmasq.conf; ROUTER_DNS_DOMAINS=dns.conf' . "\n"
-                . '_domain=aaa.test; router_generate_nginx_config; router_generate_dns_config; printf "%s\n" "$_domain"',
+                . '_domain=aaa.test; router_generate_nginx_config && router_generate_dns_config && printf "%s\n" "$_domain"',
         ));
+        // Both read the entry: a renderer that returned before it could not clobber anything (review, ultimate#165).
+        self::assertStringContainsString('server_name zzz.test;', (string) file_get_contents($this->tmp . '/domains.conf'));
+        self::assertStringContainsString('address=/zzz.test/', (string) file_get_contents($this->tmp . '/dns.conf'));
     }
 
     #[Test]
@@ -250,10 +253,12 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
     {
         file_put_contents($this->tmp . '/domains/a.test.env', "DOMAIN=a.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=65536\n");
         file_put_contents($this->tmp . '/domains/b.test.env', "DOMAIN=b.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=0\n");
+        // An .env may carry a leading zero into an entry; nginx reads 08080 as 8080 (review, installer#111).
+        file_put_contents($this->tmp . '/domains/d.test.env', "DOMAIN=d.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=08080\n");
         file_put_contents($this->tmp . '/domains/c.test.env', "DOMAIN=c.test\nUPSTREAM_HOST=host.docker.internal\nUPSTREAM_PORT=8080\nUPSTREAM_CONTAINER=c-app-1\nUPSTREAM_NETWORK=c_default\nUPSTREAM_CONTAINER_PORT=65536\n");
 
         $out = $this->shell(
-            ['registry_entry_load', 'router_validate_domain', 'router_port_in_range'],
+            ['registry_entry_load', 'router_validate_domain', 'router_port_normalize', 'router_route_admit'],
             $this->region('router_generate_nginx_config() {', 'router_generate_compose() {') . "\n"
                 . 'router_ensure_dirs() { :; }; router_proxy_networks() { printf "c_default\n"; }; warn() { printf "WARN %s\n" "$*"; }' . "\n"
                 . 'ROUTER_NGINX_DEFAULT=default.conf; ROUTER_NGINX_DOMAINS=domains.conf' . "\n"
@@ -261,13 +266,14 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         );
 
         self::assertSame([
-            'WARN Left out of the local router: a.test.env holds an upstream that is not a host and a port.',
-            'WARN Left out of the local router: b.test.env holds an upstream that is not a host and a port.',
+            'WARN Left out of the local router: a.test.env holds an upstream port that is not one.',
+            'WARN Left out of the local router: b.test.env holds an upstream port that is not one.',
         ], $out);
         $nginx = (string) file_get_contents($this->tmp . '/domains.conf');
-        self::assertSame(1, substr_count($nginx, 'server_name '), $nginx);
-        self::assertStringContainsString('proxy_pass http://host.docker.internal:8080;', $nginx, 'the container port that is not one falls back to the host route');
+        self::assertSame(2, substr_count($nginx, 'server_name '), $nginx);
+        self::assertSame(2, substr_count($nginx, 'proxy_pass http://host.docker.internal:8080;'), 'the container port that is not one falls back to the host route, and 08080 is 8080');
         self::assertStringNotContainsString('65536', $nginx);
+        self::assertStringNotContainsString('08080', $nginx);
     }
 
     /** Review, update#113: the loader takes a carriage return at a line's end for a CRLF ending, so such a root would not match itself. */
@@ -282,6 +288,49 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
 
         self::assertSame(["ERROR The project's directory has a line break in its name, which the local app registry cannot record: rename the directory.", '1'], $out);
         self::assertSame([], glob($this->tmp . '/apps/*.env'));
+    }
+
+    /** Review, installer#111: sourcing dropped a comment after a one-word value; a path keeps what may be its own. */
+    #[Test]
+    public function a_comment_after_a_one_word_value_goes_as_sourcing_dropped_it(): void
+    {
+        file_put_contents($this->tmp . '/domains/demo.test.env', "DOMAIN=demo.test # local demo\nUPSTREAM_PORT=9555\t# moved\nPROJECT_ROOT=/home/dev/project #1\n");
+
+        self::assertSame(['demo.test', '9555', '/home/dev/project #1'], $this->shell(
+            ['registry_entry_load'],
+            'registry_entry_load ' . escapeshellarg($this->tmp . '/domains/demo.test.env') . '; printf "%s\n" "$DOMAIN" "$UPSTREAM_PORT" "$PROJECT_ROOT"',
+        ));
+    }
+
+    /**
+     * Review, installer#111: every entry sets COMPOSE_PROJECT_NAME to its own
+     * project's. nginx's renderer put the caller's back, dnsmasq's did not, and
+     * router_compose after a render ran in the last entry's project.
+     */
+    #[Test]
+    public function rendering_the_router_leaves_the_compose_project_as_it_was(): void
+    {
+        file_put_contents($this->tmp . '/domains/demo.test.env', "DOMAIN=demo.test\r\nCOMPOSE_PROJECT_NAME=demo\r\nUPSTREAM_HOST=host.docker.internal\r\nUPSTREAM_PORT=9555\r\n");
+        $render = $this->region('router_generate_nginx_config() {', 'router_generate_compose() {') . "\n"
+            . 'router_ensure_dirs() { :; }; router_proxy_networks() { :; }; warn() { :; }' . "\n"
+            . 'ROUTER_NGINX_DEFAULT=default.conf; ROUTER_NGINX_DOMAINS=domains.conf; ROUTER_DNSMASQ_CONF=dnsmasq.conf; ROUTER_DNS_DOMAINS=dns.conf' . "\n";
+        $functions = ['registry_entry_load', 'router_validate_domain', 'router_port_normalize', 'router_route_admit'];
+
+        self::assertSame(['router'], $this->shell($functions, $render . 'export COMPOSE_PROJECT_NAME=router; router_generate_nginx_config && router_generate_dns_config && printf "%s\n" "$COMPOSE_PROJECT_NAME"'));
+        self::assertSame(['unset'], $this->shell($functions, $render . 'unset COMPOSE_PROJECT_NAME; router_generate_nginx_config && router_generate_dns_config && printf "%s\n" "${COMPOSE_PROJECT_NAME-unset}"'));
+        self::assertSame("address=/demo.test/127.0.0.1\n", file_get_contents($this->tmp . '/dns.conf'), 'the entry was read');
+    }
+
+    /** Review, update#113: a hand-edited network name with a blank was split into disconnects of networks the entry never named. */
+    #[Test]
+    public function detach_lets_go_only_of_a_network_docker_could_have_named(): void
+    {
+        file_put_contents($this->tmp . '/domains/shop.test.env', "DOMAIN=shop.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_NETWORK=\"router_default other_default\"\n");
+        file_put_contents($this->tmp . '/domains/blog.test.env', "DOMAIN=blog.test\nPROJECT_ROOT=/home/dev/shop\nUPSTREAM_NETWORK=shop_default\n");
+
+        $this->detach($this->tmp . '/domains');
+
+        self::assertSame("shop_default\n", @file_get_contents($this->tmp . '/disconnected'), 'one disconnect, of the one real name');
     }
 
     /** Runs router_detach_project on one registry, the docker calls it makes written down in "disconnected". */
@@ -302,7 +351,9 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
     {
         $script = $this->script();
 
-        self::assertSame(0, preg_match_all('/^\s*(?:\.|source)\s+["$]/m', $script), 'an entry is read with registry_entry_load, never sourced');
+        self::assertSame(0, self::sourcings($script), 'an entry is read with registry_entry_load, never sourced');
+        // The gate sees a sourcing wherever a command starts, not only at a line's start (review, ultimate#165).
+        self::assertSame(4, self::sourcings(". \"\$_entry\"\nload \"\$x\"; . \"\$_entry\"\nif true; then source \$f; fi\n[ -f \"\$e\" ] && . \"\$e\"\n"), 'the gate catches each sourcing');
         self::assertGreaterThanOrEqual(17, substr_count($script, 'registry_entry_load "'), 'every reader that sourced an entry reads it with the loader');
     }
 
@@ -344,6 +395,15 @@ final class ARegistryEntryIsReadAsDataTest extends TestCase
         self::assertGreaterThan($start, $end);
 
         return substr($script, $start + 1, $end - $start);
+    }
+
+    /** How many times $script sources a file named by a variable, at any place a command starts. */
+    private static function sourcings(string $script): int
+    {
+        $count = preg_match_all('/(?:^|[;&|]|\b(?:then|do|else))\s*(?:\.|source)\s+["$]/m', $script);
+        self::assertIsInt($count, 'the pattern compiles');
+
+        return $count;
     }
 
     private function script(): string

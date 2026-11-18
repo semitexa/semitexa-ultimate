@@ -578,6 +578,16 @@ registry_entry_load() {
         _rl_key="${_rl_line%%=*}"
         [ "$_rl_key" != "$_rl_line" ] || continue
         _rl_val="${_rl_line#*=}"
+        # A comment after a one-word value went with sourcing: a hand-edited
+        # "DOMAIN=demo.test # local demo" stays demo.test. A path keeps its
+        # " #", which may be its own (review, installer#111).
+        case "$_rl_key" in
+            PROJECT_ROOT|PROJECT_NAME) ;;
+            *)
+                _rl_val="${_rl_val%%[[:blank:]]#*}"
+                _rl_val="${_rl_val%"${_rl_val##*[![:blank:]]}"}"
+                ;;
+        esac
         case "$_rl_val" in
             \"*\") _rl_val="${_rl_val#\"}"; _rl_val="${_rl_val%\"}" ;;
             \'*\') _rl_val="${_rl_val#\'}"; _rl_val="${_rl_val%\'}" ;;
@@ -618,13 +628,39 @@ registry_value_is_one_line() {
     return 0
 }
 
-# A TCP port as nginx takes one: decimal, 1-65535, written without a leading
-# zero, as the writers write it. One out of range in a proxy_pass made nginx
-# refuse the whole configuration, every other domain with it (review,
-# update#113).
-router_port_in_range() {
-    case "$1" in ''|*[!0-9]*|0*) return 1 ;; esac
-    [ "${#1}" -le 5 ] && [ "$1" -le 65535 ]
+# A TCP port as nginx takes one: decimal, 1-65535. One out of range in a
+# proxy_pass made nginx refuse the whole configuration, every other domain with
+# it (review, update#113). Leading zeros are dropped, as nginx reads 08080 as
+# 8080, and an .env may carry one into a domain entry (review, installer#111).
+# Prints the port without them; fails on anything else.
+router_port_normalize() {
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    _pn="${1#"${1%%[!0]*}"}"
+    [ -n "$_pn" ] && [ "${#_pn}" -le 5 ] && [ "$_pn" -le 65535 ] || return 1
+    printf '%s' "$_pn"
+}
+
+# Whether the router takes a loaded entry's route. nginx and dnsmasq ask the
+# same question, so a domain is never published for a route nginx left out
+# (review, installer#111). The host is the one the writers have only ever
+# written: a literal proxy_pass to a name that does not resolve made nginx
+# refuse the whole configuration (review, installer#111 and update#113).
+# Sets ROUTE_PORT to the port as nginx takes it, or ROUTE_PROBLEM to why not.
+router_route_admit() {
+    ROUTE_PROBLEM='' ROUTE_PORT=''
+    if ! router_validate_domain "$DOMAIN"; then
+        ROUTE_PROBLEM='does not name a .test domain'
+        return 1
+    fi
+    if [ "$UPSTREAM_HOST" != host.docker.internal ]; then
+        ROUTE_PROBLEM='names an upstream host other than host.docker.internal'
+        return 1
+    fi
+    if ! ROUTE_PORT="$(router_port_normalize "$UPSTREAM_PORT")"; then
+        ROUTE_PROBLEM='holds an upstream port that is not one'
+        return 1
+    fi
+    return 0
 }
 
 router_registry_count() {
@@ -1356,7 +1392,10 @@ router_detach_project() {
     for _rd_entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_rd_entry" ] || continue
         _rd_net="$(PROJECT_ROOT='' UPSTREAM_NETWORK=''; registry_entry_load "$_rd_entry" && [ "$PROJECT_ROOT" = "$_rd_root" ] && printf '%s' "$UPSTREAM_NETWORK")" || true
-        [ -n "$_rd_net" ] || continue
+        # A name Docker could have given: a hand-edited "a b" was split into
+        # two disconnects, of networks the entry never named (review,
+        # update#113).
+        case "$_rd_net" in ''|*[!A-Za-z0-9_.-]*) continue ;; esac
         _rd_nets="$_rd_nets
 $_rd_net"
     done
@@ -1490,22 +1529,13 @@ EOF
         # does not hold what the writers write is left out, and the container
         # route falls back to the host port (Fable's review,
         # tk-registry-entry-with-a-space-runs-a-word).
-        if ! router_validate_domain "$DOMAIN"; then
-            warn "Left out of the local router: ${_entry##*/} does not name a .test domain."
+        if ! router_route_admit; then
+            warn "Left out of the local router: ${_entry##*/} $ROUTE_PROBLEM."
             continue
         fi
-        case "$UPSTREAM_HOST" in
-            ''|*[!A-Za-z0-9.-]*)
-                warn "Left out of the local router: ${_entry##*/} holds an upstream that is not a host and a port."
-                continue
-                ;;
-        esac
-        if ! router_port_in_range "$UPSTREAM_PORT"; then
-            warn "Left out of the local router: ${_entry##*/} holds an upstream that is not a host and a port."
-            continue
-        fi
+        UPSTREAM_PORT="$ROUTE_PORT"
         case "$UPSTREAM_CONTAINER" in *[!A-Za-z0-9_.-]*) UPSTREAM_CONTAINER='' ;; esac
-        router_port_in_range "$UPSTREAM_CONTAINER_PORT" || UPSTREAM_CONTAINER_PORT=
+        UPSTREAM_CONTAINER_PORT="$(router_port_normalize "$UPSTREAM_CONTAINER_PORT")" || UPSTREAM_CONTAINER_PORT=
         # Into the app's container over its own network when the router is on
         # it (tk-app-port-binds-every-interface): the host port is then not
         # needed. Resolved per request, so a stopped project is a 502 for its
@@ -1541,6 +1571,10 @@ EOF
 router_generate_dns_config() {
     router_ensure_dirs
     _saved_project_root="$PROJECT_ROOT"
+    # As in router_generate_nginx_config: each entry sets COMPOSE_PROJECT_NAME
+    # to its own project's, and router_compose after the render runs with
+    # whatever is left (review, installer#111).
+    _saved_cpn_set="${COMPOSE_PROJECT_NAME+x}" _saved_cpn="${COMPOSE_PROJECT_NAME:-}"
     cat > "$ROUTER_DNSMASQ_CONF" <<'EOF'
 port=53
 no-resolv
@@ -1552,14 +1586,16 @@ EOF
     : > "$ROUTER_DNS_DOMAINS"
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
-        DOMAIN='' MODE=''
+        DOMAIN='' MODE='' UPSTREAM_HOST='' UPSTREAM_PORT=''
         registry_entry_load "$_entry"
         [ -n "$DOMAIN" ] || continue
-        # Left out as from nginx's configuration (router_generate_nginx_config).
-        router_validate_domain "$DOMAIN" || continue
+        [ -n "$UPSTREAM_PORT" ] || continue
+        # Only a route nginx takes (router_generate_nginx_config).
+        router_route_admit || continue
         printf 'address=/%s/127.0.0.1\n' "$DOMAIN" >> "$ROUTER_DNS_DOMAINS"
     done
     PROJECT_ROOT="$_saved_project_root"
+    if [ -n "$_saved_cpn_set" ]; then COMPOSE_PROJECT_NAME="$_saved_cpn"; else unset COMPOSE_PROJECT_NAME; fi
 }
 
 router_generate_compose() {
