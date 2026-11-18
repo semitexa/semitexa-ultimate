@@ -150,7 +150,7 @@ services:
 
         [ -d "$$TARGET_DIR" ] || fail "$$TARGET_DIR does not exist"
         [ -w "$$TARGET_DIR" ] || fail "$$TARGET_DIR is not writable"
-        for b in composer php cp rm mkdir date; do
+        for b in composer php cp mv rm mkdir date; do
           command -v "$$b" >/dev/null 2>&1 || fail "missing required binary: $$b"
         done
         # The first log line makes var/log, as root: what this run makes goes
@@ -223,16 +223,23 @@ services:
         log "step 4/6 sync project files"
         host_uid="$$(stat -c '%u' "$$TARGET_DIR")"
         host_gid="$$(stat -c '%g' "$$TARGET_DIR")"
-        # The installer's own files never go through the copy: the skeleton's
-        # copy of each one the target has is dropped from the fetched skeleton
-        # first. They used to be backed up and put back, and a copy cut off
-        # midway left them written over, half written, or from another release
-        # for the retry to "restore" (tk-setup-retry-keeps-the-first-backup;
-        # review, installer#107). Kept out, they stay as they are, an edit
-        # made between the tries included.
         if [ -e "$$COPYING_PATH" ]; then
           log "a copy was cut off midway: copying the skeleton again, the installer's own files left out"
         fi
+        # Until the marker is written, a composer.json here is the skeleton's,
+        # not a project's: a copy cut off midway is done again on the next start.
+        mkdir -p "$$TARGET_DIR/var/install" && : > "$$COPYING_PATH" \
+          || fail "cannot mark the copy as in progress"
+        # The installer's own files never go through the bulk copy. One the
+        # target has stays as it is, an edit made between the tries included:
+        # its skeleton copy is dropped. They used to be backed up and put back,
+        # and a copy cut off midway left them written over, half written, or
+        # from another release for the retry to "restore"
+        # (tk-setup-retry-keeps-the-first-backup; review, installer#107).
+        # One the target lacks comes from the skeleton under a name of its own
+        # and is renamed into place once it is whole. Written by the bulk copy,
+        # a cut-off write left half a file, which the retry then kept as the
+        # installer's (review, update#110).
         for f in .env.default .env .gitignore Dockerfile \
                  docker-compose.yml docker-compose.mysql.yml \
                  docker-compose.redis.yml docker-compose.nats.yml \
@@ -240,15 +247,15 @@ services:
                  docker-compose.override.yml.example \
                  bin/semitexa
         do
-          if [ -e "$$TARGET_DIR/$$f" ]; then
-            rm -f "$$TEMP_DIR/$$f"
+          rm -f "$$TARGET_DIR/$$f.semitexa-new"
+          if [ ! -e "$$TARGET_DIR/$$f" ] && [ -e "$$TEMP_DIR/$$f" ]; then
+            case "$$f" in */*) mkdir -p "$$TARGET_DIR/$${f%/*}" ;; esac
+            cp -a "$$TEMP_DIR/$$f" "$$TARGET_DIR/$$f.semitexa-new" \
+              && mv -f "$$TARGET_DIR/$$f.semitexa-new" "$$TARGET_DIR/$$f" \
+              || fail "copy of $$f into bind mount failed"
           fi
+          rm -f "$$TEMP_DIR/$$f"
         done
-
-        # Until the marker is written, a composer.json here is the skeleton's,
-        # not a project's: a copy cut off midway is done again on the next start.
-        mkdir -p "$$TARGET_DIR/var/install" && : > "$$COPYING_PATH" \
-          || fail "cannot mark the copy as in progress"
         cp -a "$$TEMP_DIR/." "$$TARGET_DIR/" || fail "copy into bind mount failed"
 
         chown -R "$${host_uid}:$${host_gid}" "$$TARGET_DIR/" 2>/dev/null || true
