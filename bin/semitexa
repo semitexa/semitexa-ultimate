@@ -493,15 +493,19 @@ router_mode_set() {
     printf '%s\n' "$_mode" > "$ROUTER_MODE_FILE"
 }
 
+# Names of its own: it runs for every registry entry the router renders, and
+# set the callers' _domain to the last entry's, so local-domain:remove took
+# another domain's line out of /etc/hosts (Fable's review,
+# tk-registry-entry-with-a-space-runs-a-word).
 router_validate_domain() {
-    _domain="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
-    case "$_domain" in
+    _vd_domain="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$_vd_domain" in
         *.test) ;;
         *) return 1 ;;
     esac
-    _label="${_domain%.test}"
-    [ -n "$_label" ] || return 1
-    case "$_label" in
+    _vd_label="${_vd_domain%.test}"
+    [ -n "$_vd_label" ] || return 1
+    case "$_vd_label" in
         *[!a-z0-9.-]*|-*|*-) return 1 ;;
     esac
     return 0
@@ -518,6 +522,10 @@ router_registry_write_entry() {
     # drop it. UPSTREAM_HOST/UPSTREAM_PORT stay as they were: an older
     # bin/semitexa elsewhere renders from them, and the port checks read them.
     _uc="${4:-}" _un="${5:-}" _ucp="${6:-}"
+    if ! registry_value_is_one_line "$PROJECT_ROOT"; then
+        error "The project's directory has a line break in its name, which the local router cannot record: rename the directory."
+        return 1
+    fi
     if [ -z "$_uc" ] && [ -f "$_path" ]; then
         _uc="$(sed -n "s/^UPSTREAM_CONTAINER=//p" "$_path" | head -n 1)"
         _un="$(sed -n "s/^UPSTREAM_NETWORK=//p" "$_path" | head -n 1)"
@@ -543,6 +551,116 @@ EOF
 router_registry_delete_entry() {
     _domain="$1"
     rm -f "$(router_entry_path "$_domain")"
+}
+
+# Reads one registry entry, app or domain, into the variables its keys name,
+# as sourcing it did, but as data. Every reader used to source the entry. An
+# entry holds a project's root unquoted, so:
+# - a root with $(...) or a backtick in it ran that command on every start;
+# - a root with a space ran the rest of the path as a command.
+# (tk-registry-entry-with-a-space-runs-a-word)
+# Only the registries' own keys are set, and only those the entry has. Each
+# reader still resets the ones it reads first, as before. What a hand edit
+# might add is read as sourcing read it: a carriage return at the end of a
+# line, blanks or "export " before the key, one pair of surrounding quotes.
+registry_entry_load() {
+    [ -f "$1" ] && [ -r "$1" ] || return 1
+    _rl_cr="$(printf '\r')"
+    while IFS= read -r _rl_line || [ -n "$_rl_line" ]; do
+        _rl_line="${_rl_line%"$_rl_cr"}"
+        _rl_line="${_rl_line#"${_rl_line%%[![:blank:]]*}"}"
+        case "$_rl_line" in
+            export[[:blank:]]*)
+                _rl_line="${_rl_line#export}"
+                _rl_line="${_rl_line#"${_rl_line%%[![:blank:]]*}"}"
+                ;;
+        esac
+        _rl_key="${_rl_line%%=*}"
+        [ "$_rl_key" != "$_rl_line" ] || continue
+        _rl_val="${_rl_line#*=}"
+        # A comment after a one-word value went with sourcing: a hand-edited
+        # "DOMAIN=demo.test # local demo" stays demo.test. A path keeps its
+        # " #", which may be its own (review, installer#111).
+        case "$_rl_key" in
+            PROJECT_ROOT|PROJECT_NAME) ;;
+            *)
+                _rl_val="${_rl_val%%[[:blank:]]#*}"
+                _rl_val="${_rl_val%"${_rl_val##*[![:blank:]]}"}"
+                ;;
+        esac
+        case "$_rl_val" in
+            \"*\") _rl_val="${_rl_val#\"}"; _rl_val="${_rl_val%\"}" ;;
+            \'*\') _rl_val="${_rl_val#\'}"; _rl_val="${_rl_val%\'}" ;;
+        esac
+        case "$_rl_key" in
+            APP_ID) APP_ID="$_rl_val" ;;
+            SWOOLE_PORT) SWOOLE_PORT="$_rl_val" ;;
+            PROJECT_ROOT) PROJECT_ROOT="$_rl_val" ;;
+            PROJECT_NAME) PROJECT_NAME="$_rl_val" ;;
+            REGISTERED_AT) REGISTERED_AT="$_rl_val" ;;
+            UPDATED_AT) UPDATED_AT="$_rl_val" ;;
+            DOMAIN) DOMAIN="$_rl_val" ;;
+            COMPOSE_PROJECT_NAME) COMPOSE_PROJECT_NAME="$_rl_val" ;;
+            UPSTREAM_HOST) UPSTREAM_HOST="$_rl_val" ;;
+            UPSTREAM_PORT) UPSTREAM_PORT="$_rl_val" ;;
+            MODE) MODE="$_rl_val" ;;
+            UPSTREAM_CONTAINER) UPSTREAM_CONTAINER="$_rl_val" ;;
+            UPSTREAM_NETWORK) UPSTREAM_NETWORK="$_rl_val" ;;
+            UPSTREAM_CONTAINER_PORT) UPSTREAM_CONTAINER_PORT="$_rl_val" ;;
+        esac
+    done < "$1"
+    return 0
+}
+
+# A value the registries keep is one line: a line break in a project's
+# directory name would write keys of its own into its entry, and a domain or
+# an upstream taken from there would go into the router's nginx configuration
+# (Fable's review, tk-registry-entry-with-a-space-runs-a-word).
+# A carriage return counts as a line break: the loader reads one at the end
+# of a line as a CRLF ending, so a root ending in one would not match itself
+# when read back (review, update#113).
+registry_value_is_one_line() {
+    _ol_cr="$(printf '\r')"
+    case "$1" in
+        *"
+"*|*"$_ol_cr"*) return 1 ;;
+    esac
+    return 0
+}
+
+# A TCP port as nginx takes one: decimal, 1-65535. One out of range in a
+# proxy_pass made nginx refuse the whole configuration, every other domain with
+# it (review, update#113). Leading zeros are dropped, as nginx reads 08080 as
+# 8080, and an .env may carry one into a domain entry (review, installer#111).
+# Prints the port without them; fails on anything else.
+router_port_normalize() {
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    _pn="${1#"${1%%[!0]*}"}"
+    [ -n "$_pn" ] && [ "${#_pn}" -le 5 ] && [ "$_pn" -le 65535 ] || return 1
+    printf '%s' "$_pn"
+}
+
+# Whether the router takes a loaded entry's route. nginx and dnsmasq ask the
+# same question, so a domain is never published for a route nginx left out
+# (review, installer#111). The host is the one the writers have only ever
+# written: a literal proxy_pass to a name that does not resolve made nginx
+# refuse the whole configuration (review, installer#111 and update#113).
+# Sets ROUTE_PORT to the port as nginx takes it, or ROUTE_PROBLEM to why not.
+router_route_admit() {
+    ROUTE_PROBLEM='' ROUTE_PORT=''
+    if ! router_validate_domain "$DOMAIN"; then
+        ROUTE_PROBLEM='does not name a .test domain'
+        return 1
+    fi
+    if [ "$UPSTREAM_HOST" != host.docker.internal ]; then
+        ROUTE_PROBLEM='names an upstream host other than host.docker.internal'
+        return 1
+    fi
+    if ! ROUTE_PORT="$(router_port_normalize "$UPSTREAM_PORT")"; then
+        ROUTE_PROBLEM='holds an upstream port that is not one'
+        return 1
+    fi
+    return 0
 }
 
 router_registry_count() {
@@ -577,8 +695,7 @@ router_sync_project_domains() {
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ "$PROJECT_ROOT" = "$_saved_project_root" ] || continue
         if ! printf '%s\n' "$_domains" | grep -Fx -- "$DOMAIN" >/dev/null 2>&1; then
             rm -f "$_entry"
@@ -600,8 +717,7 @@ router_project_domain_count() {
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ "$PROJECT_ROOT" = "$_project_root" ] || continue
         _count=$((_count + 1))
     done
@@ -618,8 +734,7 @@ router_list_project_domains() {
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' UPSTREAM_PORT='' MODE=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ "$PROJECT_ROOT" = "$_project_root" ] || continue
         [ -n "$DOMAIN" ] || continue
         printf '%s\n' "$DOMAIN"
@@ -742,8 +857,7 @@ router_app_iter() {
     for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ -n "$APP_ID" ] || continue
         [ -n "$SWOOLE_PORT" ] || continue
         printf '%s\t%s\t%s\t%s\n' "$APP_ID" "$SWOOLE_PORT" "${PROJECT_ROOT:-}" "${PROJECT_NAME:-}"
@@ -758,8 +872,7 @@ router_app_find_by_project() {
     for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         if [ "$PROJECT_ROOT" = "$_root" ] && [ -n "$APP_ID" ]; then
             printf '%s' "$APP_ID"
             return 0
@@ -777,8 +890,7 @@ port_owner_name() {
     for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         if [ -n "$APP_ID" ] && [ "$SWOOLE_PORT" = "$1" ] && [ "$APP_ID" != "$2" ]; then
             printf '%s' "${PROJECT_NAME:-${PROJECT_ROOT##*/}}"
             return 0
@@ -793,8 +905,7 @@ port_owned_by_other_app() {
     for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ -n "$APP_ID" ] || continue
         [ -n "$SWOOLE_PORT" ] || continue
         [ "$SWOOLE_PORT" = "$_port" ] || continue
@@ -868,13 +979,16 @@ router_app_write_entry() {
     _id="$1"
     _port="$2"
     _project_root_arg="${3:-$PROJECT_ROOT}"
+    if ! registry_value_is_one_line "$_project_root_arg"; then
+        error "The project's directory has a line break in its name, which the local app registry cannot record: rename the directory."
+        return 1
+    fi
     _project_name="$(basename "$_project_root_arg" 2>/dev/null || echo unknown)"
     _path="$(router_app_entry_path "$_id")"
     _registered_at=""
     if [ -f "$_path" ]; then
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$_path"
+        registry_entry_load "$_path"
         _registered_at="$REGISTERED_AT"
     fi
     [ -n "$_registered_at" ] || _registered_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -937,8 +1051,7 @@ router_apply_app_port_to_domains() {
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ "$PROJECT_ROOT" = "$_project_root_arg" ] || continue
         [ "$UPSTREAM_PORT" != "$_new_port" ] || continue
         PROJECT_ROOT="$_project_root_arg"
@@ -1030,8 +1143,7 @@ port_in_use_on_host_excluding_self() {
         for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
             [ -f "$_entry" ] || continue
             DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
-            # shellcheck disable=SC1090
-            . "$_entry"
+            registry_entry_load "$_entry"
             if [ "$_project_running" -eq 1 ] && [ "$PROJECT_ROOT" = "$_project_root_arg" ] && [ "$UPSTREAM_PORT" = "$_port" ]; then
                 return 1
             fi
@@ -1040,8 +1152,7 @@ port_in_use_on_host_excluding_self() {
     _existing="$(router_app_find_by_project "$_project_root_arg" 2>/dev/null || true)"
     if [ -n "$_existing" ] && [ -f "$(router_app_entry_path "$_existing")" ]; then
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$(router_app_entry_path "$_existing")"
+        registry_entry_load "$(router_app_entry_path "$_existing")"
         if [ "$_project_running" -eq 1 ] && [ "$SWOOLE_PORT" = "$_port" ]; then
             return 1
         fi
@@ -1073,8 +1184,7 @@ local_app_register_logic() {
     _existing_port=""
     if router_app_entry_exists "$_id"; then
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$(router_app_entry_path "$_id")"
+        registry_entry_load "$(router_app_entry_path "$_id")"
         _existing_port="$SWOOLE_PORT"
     fi
 
@@ -1271,7 +1381,24 @@ router_detach_project() {
     _rd_cid="$($_rd_compose $(compose_args) ps -a -q 2>/dev/null </dev/null | head -n 1 || true)"
     _rd_proj=''
     [ -n "$_rd_cid" ] && _rd_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$_rd_cid" 2>/dev/null || true)"
-    _rd_nets="$(sed -n "s/^UPSTREAM_NETWORK=//p" $(grep -lxF "PROJECT_ROOT=$PROJECT_ROOT" "$ROUTER_REGISTRY_DIR"/*.env 2>/dev/null) </dev/null 2>/dev/null || true)"
+    # Entry by entry: a list of file names from grep -l split at every blank,
+    # and under a home such as /Users/John Smith nothing was read (Fable's
+    # review, tk-registry-entry-with-a-space-runs-a-word).
+    # Each one read as the router reads it, in a shell of its own: an entry
+    # with CRLF line ends matches as nginx sees it, and this PROJECT_ROOT
+    # stays (review, update#113).
+    _rd_root="$PROJECT_ROOT"
+    _rd_nets=''
+    for _rd_entry in "$ROUTER_REGISTRY_DIR"/*.env; do
+        [ -f "$_rd_entry" ] || continue
+        _rd_net="$(PROJECT_ROOT='' UPSTREAM_NETWORK=''; registry_entry_load "$_rd_entry" && [ "$PROJECT_ROOT" = "$_rd_root" ] && printf '%s' "$UPSTREAM_NETWORK")" || true
+        # A name Docker could have given: a hand-edited "a b" was split into
+        # two disconnects, of networks the entry never named (review,
+        # update#113).
+        case "$_rd_net" in ''|*[!A-Za-z0-9_.-]*) continue ;; esac
+        _rd_nets="$_rd_nets
+$_rd_net"
+    done
     for _rd_net in $(router_proxy_networks || true); do
         [ "$_rd_net" = "router_default" ] && continue
         if [ -n "$_rd_proj" ] && [ "$(docker network inspect -f '{{index .Labels "com.docker.compose.project"}}' "$_rd_net" 2>/dev/null || true)" = "$_rd_proj" ]; then
@@ -1395,10 +1522,20 @@ EOF
         [ -f "$_entry" ] || continue
         DOMAIN='' PROJECT_ROOT='' COMPOSE_PROJECT_NAME='' UPSTREAM_HOST='' UPSTREAM_PORT='' MODE='' UPDATED_AT=''
         UPSTREAM_CONTAINER='' UPSTREAM_NETWORK='' UPSTREAM_CONTAINER_PORT=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ -n "$DOMAIN" ] || continue
         [ -n "$UPSTREAM_PORT" ] || continue
+        # Each value goes into nginx's configuration as it is. An entry that
+        # does not hold what the writers write is left out, and the container
+        # route falls back to the host port (Fable's review,
+        # tk-registry-entry-with-a-space-runs-a-word).
+        if ! router_route_admit; then
+            warn "Left out of the local router: ${_entry##*/} $ROUTE_PROBLEM."
+            continue
+        fi
+        UPSTREAM_PORT="$ROUTE_PORT"
+        case "$UPSTREAM_CONTAINER" in *[!A-Za-z0-9_.-]*) UPSTREAM_CONTAINER='' ;; esac
+        UPSTREAM_CONTAINER_PORT="$(router_port_normalize "$UPSTREAM_CONTAINER_PORT")" || UPSTREAM_CONTAINER_PORT=
         # Into the app's container over its own network when the router is on
         # it (tk-app-port-binds-every-interface): the host port is then not
         # needed. Resolved per request, so a stopped project is a 502 for its
@@ -1434,6 +1571,10 @@ EOF
 router_generate_dns_config() {
     router_ensure_dirs
     _saved_project_root="$PROJECT_ROOT"
+    # As in router_generate_nginx_config: each entry sets COMPOSE_PROJECT_NAME
+    # to its own project's, and router_compose after the render runs with
+    # whatever is left (review, installer#111).
+    _saved_cpn_set="${COMPOSE_PROJECT_NAME+x}" _saved_cpn="${COMPOSE_PROJECT_NAME:-}"
     cat > "$ROUTER_DNSMASQ_CONF" <<'EOF'
 port=53
 no-resolv
@@ -1445,13 +1586,16 @@ EOF
     : > "$ROUTER_DNS_DOMAINS"
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
-        DOMAIN='' MODE=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        DOMAIN='' MODE='' UPSTREAM_HOST='' UPSTREAM_PORT=''
+        registry_entry_load "$_entry"
         [ -n "$DOMAIN" ] || continue
+        [ -n "$UPSTREAM_PORT" ] || continue
+        # Only a route nginx takes (router_generate_nginx_config).
+        router_route_admit || continue
         printf 'address=/%s/127.0.0.1\n' "$DOMAIN" >> "$ROUTER_DNS_DOMAINS"
     done
     PROJECT_ROOT="$_saved_project_root"
+    if [ -n "$_saved_cpn_set" ]; then COMPOSE_PROJECT_NAME="$_saved_cpn"; else unset COMPOSE_PROJECT_NAME; fi
 }
 
 router_generate_compose() {
@@ -1973,8 +2117,7 @@ cmd_local_domain_list() {
     for _entry in "$ROUTER_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         DOMAIN='' UPSTREAM_PORT='' PROJECT_ROOT='' MODE=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ -n "$DOMAIN" ] || continue
         _project_label="$(basename "${PROJECT_ROOT:-}")"
         [ -n "$_project_label" ] || _project_label="unknown"
@@ -2086,8 +2229,7 @@ cmd_local_app_remove() {
         exit 0
     fi
     APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-    # shellcheck disable=SC1090
-    . "$(router_app_entry_path "$_id")"
+    registry_entry_load "$(router_app_entry_path "$_id")"
     router_app_delete_entry "$_id"
     success "Removed local app: $_id (port ${SWOOLE_PORT:-?}, project ${PROJECT_ROOT:-?})."
 }
@@ -3802,8 +3944,7 @@ proxy_registry_owner_for_port() {
     for _entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
         [ -f "$_entry" ] || continue
         APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
-        # shellcheck disable=SC1090
-        . "$_entry"
+        registry_entry_load "$_entry"
         [ -n "$APP_ID" ] || continue
         [ "$SWOOLE_PORT" = "$_port" ] || continue
         printf '%s\t%s\t%s\n' "$APP_ID" "${PROJECT_NAME:-}" "${PROJECT_ROOT:-}"
