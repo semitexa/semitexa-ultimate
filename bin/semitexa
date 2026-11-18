@@ -882,6 +882,30 @@ router_app_delete_entry() {
     rm -f "$(router_app_entry_path "$_id")"
 }
 
+# Drops the entries of projects that are gone, such as a directory deleted with
+# its project, a scratch install, or a clone removed after a test. Nothing
+# dropped them, and each one kept its port: on one workstation, 9 of 20 entries
+# named a directory that was no longer there, in a 99-port range
+# (tk-port-registry-keeps-dead-projects). Prints the name of each project
+# dropped, one per line.
+# A root that is away only for now, on a drive that is not mounted, is dropped
+# too. Its next start registers it again, on its own SWOOLE_PORT while that
+# port is free.
+# Only an absolute root is judged. Entries are read with sed and never
+# sourced, so a root with a space in it is one value.
+router_app_prune_gone_projects() {
+    [ -d "$ROUTER_APP_REGISTRY_DIR" ] || return 0
+    for _pg_entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
+        [ -f "$_pg_entry" ] || continue
+        _pg_root="$(sed -n 's/^PROJECT_ROOT=//p' "$_pg_entry" | head -n 1)"
+        case "$_pg_root" in /*) ;; *) continue ;; esac
+        [ -d "$_pg_root" ] && continue
+        _pg_name="$(sed -n 's/^PROJECT_NAME=//p' "$_pg_entry" | head -n 1)"
+        rm -f "$_pg_entry" && printf '%s\n' "${_pg_name:-${_pg_root##*/}}"
+    done
+    return 0
+}
+
 # Rewrite UPSTREAM_PORT for every domain entry under a project root, regenerate
 # nginx + dnsmasq config, and reload the proxy if it's running.
 router_apply_app_port_to_domains() {
@@ -1097,6 +1121,15 @@ local_app_reconcile() {
     _env_file="$PROJECT_ROOT/.env"
     if [ ! -f "$_env_file" ] && [ ! -f "$PROJECT_ROOT/.env.default" ]; then
         return 0
+    fi
+
+    # Under the lock: an allocation reading an entry while it is removed would
+    # stop on the file that went away.
+    router_lock_acquire
+    _gone="$(router_app_prune_gone_projects)"
+    router_lock_release
+    if [ -n "$_gone" ]; then
+        info "$(printf '%s\n' "$_gone" | awk 'NR <= 5 { names = names (NR > 1 ? ", " : "") $0 } END { if (NR > 5) names = names " and " (NR - 5) " more"; if (NR == 1) printf "Freed the port of a project that is gone: %s.", names; else printf "Freed the ports of %d projects that are gone: %s.", NR, names }')"
     fi
 
     _app_id="$(env_val SEMITEXA_APP_ID '')"
