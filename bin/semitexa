@@ -2350,6 +2350,14 @@ cmd_local_app_register() {
         [ -n "$_id" ] || _id="$(app_generate_uuid)"
     fi
 
+    # --write-env makes this id the one in this root's .env, so the ids of
+    # earlier installs go first: before the allocation, or the ports they still
+    # hold could leave it none (review, installer#115). Without --write-env,
+    # .env may name another id, and nothing is dropped.
+    if [ "$_write_env" -eq 1 ]; then
+        local_app_drop_earlier_ids "$_id" "$_root"
+    fi
+
     _saved_project_root="$PROJECT_ROOT"
     PROJECT_ROOT="$_root"
     _assigned="$(local_app_register_logic "$_id" "$_port" "$_root")"
@@ -2362,8 +2370,6 @@ cmd_local_app_register() {
         env_upsert_kv "$_env_file" SEMITEXA_APP_ID "$_id"
         env_upsert_kv "$_env_file" SWOOLE_PORT "$_assigned"
         success "Wrote SEMITEXA_APP_ID=$_id and SWOOLE_PORT=$_assigned to $_env_file"
-        # The id is now the one in this root's .env.
-        local_app_drop_earlier_ids "$_id" "$_root"
     fi
 
     printf '%s\n' "$_assigned"

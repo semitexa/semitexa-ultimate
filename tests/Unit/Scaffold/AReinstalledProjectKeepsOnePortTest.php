@@ -292,17 +292,19 @@ final class AReinstalledProjectKeepsOnePortTest extends TestCase
     {
         $this->entry('aaaaaaaa-0000-4000-8000-000000000001', $this->root, 9504);
         $stubs = 'env_upsert_kv() { printf "UPSERT %s=%s\n" "$2" "$3"; }; success() { printf "OK %s\n" "$*"; }' . "\n"
-            . 'local_app_register_logic() { printf 9509; }' . "\n";
+            // The allocation reports the entries it sees: the earlier one must be gone by then (review, installer#115).
+            . 'local_app_register_logic() { printf "allocating beside %s entries\n" "$(ls "$ROUTER_APP_REGISTRY_DIR" | wc -l | tr -d " ")" >&2; printf 9509; }' . "\n";
         $run = static fn (string $flag): string => '( set -e; cmd_local_app_register --app-id=' . self::CURRENT . ' --project-root="$PROJECT_ROOT" ' . $flag . '; echo "went on" ); printf "exit=%s\n" "$?"';
 
-        self::assertSame(['9509', 'went on', 'exit=0'], $this->shell(['local_app_drop_earlier_ids', 'cmd_local_app_register'], $stubs . $run('')));
+        self::assertSame(['allocating beside 1 entries', '9509', 'went on', 'exit=0'], $this->shell(['local_app_drop_earlier_ids', 'cmd_local_app_register'], $stubs . $run('')));
         self::assertSame(['aaaaaaaa-0000-4000-8000-000000000001.env'], $this->entries());
 
         self::assertSame([
+            'INFO Dropped an earlier registration of this project: app id aaaaaaaa-0000-4000-8000-000000000001, port 9504.',
+            'allocating beside 0 entries',
             'UPSERT SEMITEXA_APP_ID=' . self::CURRENT,
             'UPSERT SWOOLE_PORT=9509',
             'OK Wrote SEMITEXA_APP_ID=' . self::CURRENT . ' and SWOOLE_PORT=9509 to ' . $this->root . '/.env',
-            'INFO Dropped an earlier registration of this project: app id aaaaaaaa-0000-4000-8000-000000000001, port 9504.',
             '9509',
             'went on',
             'exit=0',
