@@ -152,7 +152,8 @@ final class ThePortRegistryForgetsGoneProjectsTest extends TestCase
             // As if taken: the lock's own cases run it as bin/semitexa has it.
             : 'router_lock_acquire() { ROUTER_LOCK_HELD=1; }; router_lock_release() { ROUTER_LOCK_HELD=; }' . "\n";
         $stubs = 'env_val() { case "$1" in SWOOLE_PORT) printf 9501 ;; SEMITEXA_APP_ID) printf app-123456 ;; *) printf "%s" "$2" ;; esac; }' . "\n"
-            . 'local_app_register_logic() { printf 9501; }' . "\n" . $lock
+            // Its own cases are in AReinstalledProjectKeepsOnePortTest.
+            . 'local_app_register_logic() { printf 9501; }; local_app_drop_earlier_ids() { :; }' . "\n" . $lock
             . 'info() { printf "INFO %s\n" "$*"; }; warn() { printf "WARN %s\n" "$*"; }' . "\n"
             . 'PROJECT_ROOT=' . escapeshellarg($this->tmp . '/live') . "\n"
             . $this->function('router_app_prune_gone_projects') . "\n";

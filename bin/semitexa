@@ -1128,6 +1128,53 @@ router_app_prune_gone_projects() {
     return 0
 }
 
+# Drops what earlier installs of this project left in the registry. Each
+# bin/semitexa install writes a new SEMITEXA_APP_ID into .env, and nothing
+# dropped the entry of the id before: one directory, installed three times,
+# held three ports (tk-reinstalled-project-keeps-its-old-ports). A root has
+# one .env, so it has one app id: $1, the one in .env. $2 is the root.
+# - Roots are compared exactly: /home/dev/shop is not /home/dev/shop-2.
+# - An entry that cannot be read is left alone, and so is this id's own.
+# - Only under the lock, tried once, as the pruning of gone projects is: when
+#   it is held, the entries wait for the next start.
+# - A removal that failed is said and never stops a start.
+# - Only an absolute root is judged, as with gone projects: a hand-typed
+#   --project-root=. names no one project.
+# - A project moved to another directory, with a new install at its old
+#   path, loses its reservation to that install: its entry still names the
+#   old path. It registers again on its next start.
+# One line per entry removed. Reading an entry sets PROJECT_ROOT and the
+# rest, so the loop runs in a subshell.
+local_app_drop_earlier_ids() {
+    _de_id="$1"
+    _de_root="$2"
+    case "$_de_root" in /*) ;; *) return 0 ;; esac
+    [ -d "$ROUTER_APP_REGISTRY_DIR" ] || return 0
+    app_validate_app_id "$_de_id" || return 0
+    router_lock_acquire 1
+    [ -n "${ROUTER_LOCK_HELD:-}" ] || return 0
+    (
+        _de_own="$(router_app_entry_path "$_de_id")"
+        for _de_entry in "$ROUTER_APP_REGISTRY_DIR"/*.env; do
+            [ -f "$_de_entry" ] || continue
+            [ "$_de_entry" != "$_de_own" ] || continue
+            APP_ID='' SWOOLE_PORT='' PROJECT_ROOT='' PROJECT_NAME='' REGISTERED_AT='' UPDATED_AT=''
+            registry_entry_load "$_de_entry" || continue
+            [ "$PROJECT_ROOT" = "$_de_root" ] || continue
+            [ "$APP_ID" != "$_de_id" ] || continue
+            _de_was="${_de_entry##*/}"
+            _de_was="${APP_ID:-${_de_was%.env}}"
+            if rm -f "$_de_entry" 2>/dev/null; then
+                info "Dropped an earlier registration of this project: app id $_de_was, port ${SWOOLE_PORT:-unknown}."
+            else
+                warn "Could not drop an earlier registration of this project (app id $_de_was): remove $_de_entry by hand."
+            fi
+        done
+    ) || :
+    router_lock_release
+    return 0
+}
+
 # Rewrite UPSTREAM_PORT for every domain entry under a project root, regenerate
 # nginx + dnsmasq config, and reload the proxy if it's running.
 router_apply_app_port_to_domains() {
@@ -1391,6 +1438,10 @@ local_app_reconcile() {
         [ -f "$_env_file" ] || : > "$_env_file"
         env_upsert_kv "$_env_file" SEMITEXA_APP_ID "$_app_id"
     fi
+
+    # Before the registration, so a port an earlier install of this project
+    # held is free for this one.
+    local_app_drop_earlier_ids "$_app_id" "$PROJECT_ROOT"
 
     _current_port="$(env_val SWOOLE_PORT '')"
     # A server's port is the one its proxy was configured with: the workstation
@@ -2297,6 +2348,14 @@ cmd_local_app_register() {
     if [ -z "$_id" ]; then
         _id="$(router_app_find_by_project "$_root" 2>/dev/null || true)"
         [ -n "$_id" ] || _id="$(app_generate_uuid)"
+    fi
+
+    # --write-env makes this id the one in this root's .env, so the ids of
+    # earlier installs go first: before the allocation, or the ports they still
+    # hold could leave it none (review, installer#115). Without --write-env,
+    # .env may name another id, and nothing is dropped.
+    if [ "$_write_env" -eq 1 ]; then
+        local_app_drop_earlier_ids "$_id" "$_root"
     fi
 
     _saved_project_root="$PROJECT_ROOT"
