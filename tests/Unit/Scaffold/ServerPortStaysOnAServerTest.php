@@ -29,6 +29,7 @@ final class ServerPortStaysOnAServerTest extends TestCase
         router_lock_acquire() { :; }
         router_lock_release() { :; }
         router_app_prune_gone_projects() { :; }
+        local_app_drop_earlier_ids() { :; }
         router_app_entry_exists() { return 1; }
         router_app_entry_path() { :; }
         port_range_start() { printf '9501'; }
