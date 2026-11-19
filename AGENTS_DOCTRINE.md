@@ -427,6 +427,8 @@ Never bypass verification.
 
 **A test must be able to fail.** Run a new test against the code before the fix and see it red, then green. A test written after the fix that was never red may pass on anything — and an assertion an empty value satisfies (`assertNotSame`, `assertNotFalse` on a lookup, a count cast from `false`) is green whatever the code does. `lint:test-integrity` refuses the obvious shapes; the red run is the proof.
 
+**A close needs its proof, or a reason.** `ai:work update --status=done` refuses a task that counts (approved, or a bug) when no passing `ai:verify --trace=<id>` run holds a test of its code; docs and config need only the pass. Run it and close again. Only when no test can prove the work — a manual acceptance run, files outside the workspace — close with `--no-proof-because="<why>"` (at least 20 characters, with `--status=done`): the reason is kept on the task, and `ai:state` counts it as done and shows it apart, "N closed with a reason". Use it only for work no test can reach; after a failing run it is refused, because a reason never closes past one.
+
 **Commit on the verdict.** `ai:verify` ends with one verdict line. A shell chain that greps for it and commits on `&&` commits on a `fail` line too, because the grep succeeded. Test the verdict itself (`grep -q '"verdict":"pass"' || stop`) before every commit and every pull request.
 
 **Check it where it will run.** What passes in one place fails in another when it depends on where it runs:
