@@ -26,7 +26,7 @@
         "semitexa/cache": "2026.11.10.0849",
         "semitexa/storage": "2026.10.29.1052",
         "semitexa/ssr": "2026.11.19.0527",
-        "semitexa/dev": "2026.11.19.1915",
+        "semitexa/dev": "2026.11.20.0112",
         "semitexa/tenancy": "2026.11.06.0513",
         "semitexa/locale": "2026.10.29.1052",
         "semitexa/orm": "2026.11.18.0511",
@@ -39,7 +39,7 @@
         "semitexa/ledger": "2026.11.11.1552",
         "semitexa/project-graph": "2026.11.19.0527",
         "semitexa/theme": "2026.11.07.1841",
-        "semitexa/platform-ui": "2026.11.19.1915",
+        "semitexa/platform-ui": "2026.11.20.0112",
         "semitexa/platform-user": "2026.10.29.1052",
         "semitexa/platform-settings": "2026.11.16.1329",
         "semitexa/crud": "2026.11.17.1407"
