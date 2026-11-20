@@ -888,7 +888,12 @@ router_lock_acquire() {
             LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'
         fi
     }
-    ROUTER_LOCK_ME="$$|$(_rl_started "$$")|."
+    _rl_mine="$(_rl_started "$$")"
+    ROUTER_LOCK_ME="$$|$_rl_mine|."
+    # Where this run keeps an owner file it renamed away. The name says when
+    # this process started, as the owner file does: a claim left by a killed
+    # run whose pid another process has since is litter (review, installer#122).
+    _rl_claim="$_lock/claim.$$.$(printf '%s' "$_rl_mine" | tr -c 'A-Za-z0-9' '_')"
     # The owner file, whole and only if there is none: ln fails on a name
     # that exists. A write that came out short (a full disk) links nothing.
     _rl_own() {
@@ -908,10 +913,17 @@ router_lock_acquire() {
     if [ -z "$_rl_tries" ]; then
         _rl_tries="${SEMITEXA_REGISTRY_LOCK_WAIT:-30}"
         case "$_rl_tries" in ''|*[!0-9]*) _rl_tries=30 ;; esac
+        # Decimal seconds: with a leading zero the shell reads octal, and
+        # stops the whole script on 08 (review, installer#122). Past four
+        # digits it is no wait anybody set on purpose.
+        while :; do case "$_rl_tries" in 0?*) _rl_tries="${_rl_tries#0}" ;; *) break ;; esac; done
+        case "$_rl_tries" in ?????*) _rl_tries=30 ;; esac
         _rl_tries=$((_rl_tries * 10))
     fi
     _rl_grace="${SEMITEXA_REGISTRY_LOCK_OWNERLESS_GRACE:-10}"
     case "$_rl_grace" in ''|*[!0-9]*) _rl_grace=10 ;; esac
+    while :; do case "$_rl_grace" in 0?*) _rl_grace="${_rl_grace#0}" ;; *) break ;; esac; done
+    case "$_rl_grace" in ?????*) _rl_grace=10 ;; esac
     _rl_grace=$((_rl_grace * 10))
     [ "$_rl_grace" -ge 1 ] || _rl_grace=1
     _rl_waited=0
@@ -954,21 +966,21 @@ router_lock_acquire() {
             fi
             if [ -n "$_rl_alive" ]; then
                 ROUTER_LOCK_HOLDER="another bin/semitexa run (process $_rl_pid)"
-            elif mv "$_lock/owner" "$_lock/claim.$$" 2>/dev/null; then
+            elif mv "$_lock/owner" "$_rl_claim" 2>/dev/null; then
                 _rl_got=''
-                { IFS= read -r _rl_got < "$_lock/claim.$$"; } 2>/dev/null || _rl_got=''
+                { IFS= read -r _rl_got < "$_rl_claim"; } 2>/dev/null || _rl_got=''
                 if [ "$_rl_got" = "$_rl_line" ]; then
                     if _rl_own; then
-                        rm -f "$_lock/claim.$$" 2>/dev/null || :
+                        rm -f "$_rl_claim" 2>/dev/null || :
                         ROUTER_LOCK_HELD=1
                         return 0
                     fi
                 else
                     # Not the owner judged dead: another run took over first.
                     # Its file goes back, unless an owner is there already.
-                    ln "$_lock/claim.$$" "$_lock/owner" 2>/dev/null || :
+                    ln "$_rl_claim" "$_lock/owner" 2>/dev/null || :
                 fi
-                rm -f "$_lock/claim.$$" 2>/dev/null || :
+                rm -f "$_rl_claim" 2>/dev/null || :
             fi
         else
             ROUTER_LOCK_HOLDER="a run that left no owner (killed, or a bin/semitexa from before the lock had one)"
@@ -988,26 +1000,34 @@ router_lock_acquire() {
                     # not this run's to write; a claim whose run is gone is
                     # litter.
                     _rl_claims=''
-                    for _rl_claim in "$_lock"/claim.*; do
-                        [ -e "$_rl_claim" ] || continue
-                        [ -z "$(_rl_started "${_rl_claim##*.}")" ] || _rl_claims=1
+                    for _rl_other in "$_lock"/claim.*; do
+                        [ -e "$_rl_other" ] || continue
+                        _rl_other="${_rl_other##*/claim.}"
+                        _rl_opid="${_rl_other%%.*}"
+                        case "$_rl_opid" in ''|*[!0-9]*) continue ;; esac
+                        case "$_rl_other" in *.*) _rl_other="${_rl_other#*.}" ;; *) continue ;; esac
+                        if [ -n "$_rl_other" ]; then
+                            [ "$(printf '%s' "$(_rl_started "$_rl_opid")" | tr -c 'A-Za-z0-9' '_')" != "$_rl_other" ] || _rl_claims=1
+                        else
+                            ! kill -0 "$_rl_opid" 2>/dev/null || _rl_claims=1
+                        fi
                     done
                     if [ -z "$_rl_claims" ] && _rl_own; then
                         _rl_took=1
                     fi
-                elif mv "$_lock/owner" "$_lock/claim.$$" 2>/dev/null; then
+                elif mv "$_lock/owner" "$_rl_claim" 2>/dev/null; then
                     # A file that was read and names nobody (it is written
                     # whole, so one damaged since): taken as a dead owner's is.
                     _rl_got=''
-                    { IFS= read -r _rl_got < "$_lock/claim.$$"; } 2>/dev/null || _rl_got=''
+                    { IFS= read -r _rl_got < "$_rl_claim"; } 2>/dev/null || _rl_got=''
                     if [ "$_rl_got" = "$_rl_line" ]; then
                         if _rl_own; then
                             _rl_took=1
                         fi
                     else
-                        ln "$_lock/claim.$$" "$_lock/owner" 2>/dev/null || :
+                        ln "$_rl_claim" "$_lock/owner" 2>/dev/null || :
                     fi
-                    rm -f "$_lock/claim.$$" 2>/dev/null || :
+                    rm -f "$_rl_claim" 2>/dev/null || :
                 fi
                 if [ -n "$_rl_took" ]; then
                     ROUTER_LOCK_HELD=1
@@ -1510,9 +1530,10 @@ local_app_register_logic() {
     router_ensure_app_dirs
     # Never without the lock: a registration that went on unlocked replaced an
     # entry a pruning had read as gone (tk-registry-lock-is-best-effort).
+    # Status 75 says it was the lock: a start stops on it (review, installer#122).
     if ! router_lock_acquire; then
         error "The local app registry is locked by ${ROUTER_LOCK_HOLDER:-another run} and stayed locked for ${SEMITEXA_REGISTRY_LOCK_WAIT:-30} s, so nothing was registered. Run this again when that run has ended; the lock is $ROUTER_LOCK_DIR/registry.lock."
-        return 1
+        return 75
     fi
 
     _existing_port=""
@@ -1638,7 +1659,10 @@ local_app_reconcile() {
     if [ "$(env_val APP_ENV '')" = "prod" ]; then
         case "$_current_port" in ''|auto|*[!0-9]*) ;; *) _pin="pin" ;; esac
     fi
-    _assigned="$(local_app_register_logic "$_app_id" "$_current_port" "$PROJECT_ROOT" "$_pin" quiet || true)"
+    _assigned="$(local_app_register_logic "$_app_id" "$_current_port" "$PROJECT_ROOT" "$_pin" quiet || { [ "$?" -ne 75 ] || printf 'locked'; })"
+    # The registry stayed locked, which the registration has said: the port in
+    # .env is recorded nowhere, and the caller must not start on it.
+    [ "$_assigned" != "locked" ] || return 75
     if [ -z "$_assigned" ]; then
         warn "Local app registry could not assign a Swoole port; keeping existing value."
         return 1
@@ -3126,7 +3150,16 @@ cmd_server_start() {
     # Reconcile local app registry: ensure SEMITEXA_APP_ID exists in .env and
     # SWOOLE_PORT is unique on this workstation. May rewrite .env when a port
     # collision is detected. compose_args reads .env, so this must run first.
-    local_app_reconcile || warn "Local app reconcile reported a problem; continuing with current .env."
+    # Not on a port the registry did not record: it may be free and another
+    # project's, and that project's domains would be served by this one
+    # (review, installer#122).
+    _reconciled=0
+    local_app_reconcile || _reconciled=$?
+    if [ "$_reconciled" -eq 75 ]; then
+        error "Not started: this project's port could not be recorded while the local app registry is locked. Run bin/semitexa server:start again."
+        exit 1
+    fi
+    [ "$_reconciled" -eq 0 ] || warn "Local app reconcile reported a problem; continuing with current .env."
     stack_event start
 
     _overlays="$(compose_args)"
