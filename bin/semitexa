@@ -4562,9 +4562,11 @@ agent_identity() {
     [ "${SEMITEXA_AGENT_IMPLICIT:-}" != "0" ] || return 0
     _ai_name=""; _ai_key=""
     # One ps per hop. CLIs run under node (gemini, older codex) show up as
-    # node and are not recognised; they can still export a session.
+    # node and are not recognised; they can still export a session. PID 1 is
+    # read too: an agent CLI can be a container's main process (codex as PID 1
+    # running bin/semitexa), and init's parent is 0, which ends the walk.
     _ai_pid="$PPID"; _ai_hops=0
-    while [ -n "$_ai_pid" ] && [ "$_ai_pid" -gt 1 ] 2>/dev/null && [ "$_ai_hops" -lt 12 ]; do
+    while [ -n "$_ai_pid" ] && [ "$_ai_pid" -ge 1 ] 2>/dev/null && [ "$_ai_hops" -lt 12 ]; do
         _ai_row="$(ps -o ppid= -o comm= -p "$_ai_pid" 2>/dev/null)" || break
         _ai_parent="$(printf '%s' "$_ai_row" | awk '{print $1}')"
         _ai_comm="$(printf '%s' "$_ai_row" | awk '{print $2}' | sed 's#.*/##')"
