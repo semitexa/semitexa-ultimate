@@ -16,6 +16,7 @@
         "php": "^8.4",
         "semitexa/core": "2026.11.19.0527",
         "semitexa/update": "2026.11.19.1915",
+        "semitexa/installer": "2026.11.19.1915",
         "semitexa/docs": "2026.11.19.1915",
         "semitexa/auth": "2026.11.17.0406",
         "semitexa/authorization": "2026.11.16.1329",
