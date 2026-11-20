@@ -24,7 +24,7 @@
     "hello.demo_hint_local": "Semitexa Demo was detected in this installation, so the CTA opens your local /demo experience.",
     "hello.demo_hint_remote": "Semitexa Demo is not installed in this project, so the CTA points to the official hosted showcase.",
     "hello.deferred_eyebrow": "Deferred blocks demo",
-    "hello.deferred_body": "These cards are rendered as deferred template slots and arrive a bit later on purpose, so you can watch Semitexa KISS stream the UI into the page without breaking the shared visual system.",
+    "hello.deferred_body": "These cards are rendered as deferred template slots and arrive a bit later on purpose, so you can watch Semitexa KISS stream the UI into the page without breaking the shared visual system. Deferred means delivered once, not live: a block that keeps itself current is an island for signed-in visitors or a public feed for guests, and bin/semitexa ai:ask mechanisms --id=ssr.transport shows both.",
     "hello.card_eyebrow": "Starter card",
     "hello.panel1_title": "Open the module",
     "hello.panel1_body": "Start in <code>src/modules/Hello</code> and treat this page as a living reference for Semitexa module structure.",
