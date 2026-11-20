@@ -864,8 +864,15 @@ router_ensure_app_dirs() {
 #   only after the same directory stayed ownerless for
 #   SEMITEXA_REGISTRY_LOCK_OWNERLESS_GRACE seconds (10) of this run's wait,
 #   so never by a caller that tries once.
-# - The owner file is created with noclobber (O_EXCL): of two runs writing
-#   one, one fails.
+#   With no owner file it only writes its own; a file it read and that names
+#   nobody is renamed away and checked as a dead owner's is. It never renames
+#   away a file it did not read: another run may have written its own in
+#   between, and both held the lock (review of installer 30fcefd).
+# - The owner file appears whole or not at all, and of two runs writing one,
+#   one fails: it is written beside and hard-linked into place.
+# - Pids are this machine's: the locks directory is never mounted into a
+#   container (of ~/.semitexa only agents/ and the proxy's generated config
+#   are), so runs in different PID namespaces do not meet here.
 router_lock_acquire() {
     router_ensure_app_dirs
     _lock="$ROUTER_LOCK_DIR/registry.lock"
@@ -882,6 +889,21 @@ router_lock_acquire() {
         fi
     }
     ROUTER_LOCK_ME="$$|$(_rl_started "$$")|."
+    # The owner file, whole and only if there is none: ln fails on a name
+    # that exists. A write that came out short (a full disk) links nothing.
+    _rl_own() {
+        _rl_new="$_lock/new.$$"
+        _rl_ok=''
+        if printf '%s\n' "$ROUTER_LOCK_ME" > "$_rl_new" 2>/dev/null; then
+            _rl_wrote=''
+            { IFS= read -r _rl_wrote < "$_rl_new"; } 2>/dev/null || _rl_wrote=''
+            if [ "$_rl_wrote" = "$ROUTER_LOCK_ME" ] && ln "$_rl_new" "$_lock/owner" 2>/dev/null; then
+                _rl_ok=1
+            fi
+        fi
+        rm -f "$_rl_new" 2>/dev/null || :
+        [ -n "$_rl_ok" ]
+    }
     _rl_tries="${1:-}"
     if [ -z "$_rl_tries" ]; then
         _rl_tries="${SEMITEXA_REGISTRY_LOCK_WAIT:-30}"
@@ -893,16 +915,25 @@ router_lock_acquire() {
     _rl_grace=$((_rl_grace * 10))
     [ "$_rl_grace" -ge 1 ] || _rl_grace=1
     _rl_waited=0
+    # Tenths of a second the last sleep took: 10 where sleep takes whole
+    # seconds only, so the wait stays the seconds asked for.
+    _rl_step=1
     _rl_bare=''
     _rl_bare_seen=0
     while :; do
         if mkdir "$_lock" 2>/dev/null \
-            && ( set -C; printf '%s\n' "$ROUTER_LOCK_ME" > "$_lock/owner" ) 2>/dev/null; then
+            && _rl_own; then
             ROUTER_LOCK_HELD=1
             return 0
         fi
-        _rl_line=''
-        { IFS= read -r _rl_line < "$_lock/owner"; } 2>/dev/null || _rl_line=''
+        # One open says both whether there is an owner file and what it names:
+        # a file that was not there at the read is never renamed away below.
+        if _rl_line="$(head -n 1 "$_lock/owner" 2>/dev/null)"; then
+            _rl_there=1
+        else
+            _rl_there=''
+            _rl_line=''
+        fi
         if [ "$_rl_line" = "$ROUTER_LOCK_ME" ]; then
             # This run's own, left by a part of it that stopped before its release.
             ROUTER_LOCK_HELD=1
@@ -927,7 +958,7 @@ router_lock_acquire() {
                 _rl_got=''
                 { IFS= read -r _rl_got < "$_lock/claim.$$"; } 2>/dev/null || _rl_got=''
                 if [ "$_rl_got" = "$_rl_line" ]; then
-                    if ( set -C; printf '%s\n' "$ROUTER_LOCK_ME" > "$_lock/owner" ) 2>/dev/null; then
+                    if _rl_own; then
                         rm -f "$_lock/claim.$$" 2>/dev/null || :
                         ROUTER_LOCK_HELD=1
                         return 0
@@ -943,16 +974,42 @@ router_lock_acquire() {
             ROUTER_LOCK_HOLDER="a run that left no owner (killed, or a bin/semitexa from before the lock had one)"
             _rl_now="$(ls -di "$_lock" 2>/dev/null || :)"
             if [ -n "$_rl_now" ] && [ "$_rl_now" = "$_rl_bare" ]; then
-                _rl_bare_seen=$((_rl_bare_seen + 1))
+                _rl_bare_seen=$((_rl_bare_seen + _rl_step))
             else
                 _rl_bare="$_rl_now"
                 _rl_bare_seen=0
             fi
             if [ "$_rl_bare_seen" -ge "$_rl_grace" ]; then
-                # A file that is there but names nobody would refuse the new one.
-                mv "$_lock/owner" "$_lock/claim.$$" 2>/dev/null || :
-                if ( set -C; printf '%s\n' "$ROUTER_LOCK_ME" > "$_lock/owner" ) 2>/dev/null; then
+                _rl_took=''
+                if [ -z "$_rl_there" ]; then
+                    # No owner file: this run only writes its own, which
+                    # fails when another has written one since. While
+                    # another run has one renamed away (its claim), it is
+                    # not this run's to write; a claim whose run is gone is
+                    # litter.
+                    _rl_claims=''
+                    for _rl_claim in "$_lock"/claim.*; do
+                        [ -e "$_rl_claim" ] || continue
+                        [ -z "$(_rl_started "${_rl_claim##*.}")" ] || _rl_claims=1
+                    done
+                    if [ -z "$_rl_claims" ] && _rl_own; then
+                        _rl_took=1
+                    fi
+                elif mv "$_lock/owner" "$_lock/claim.$$" 2>/dev/null; then
+                    # A file that was read and names nobody (it is written
+                    # whole, so one damaged since): taken as a dead owner's is.
+                    _rl_got=''
+                    { IFS= read -r _rl_got < "$_lock/claim.$$"; } 2>/dev/null || _rl_got=''
+                    if [ "$_rl_got" = "$_rl_line" ]; then
+                        if _rl_own; then
+                            _rl_took=1
+                        fi
+                    else
+                        ln "$_lock/claim.$$" "$_lock/owner" 2>/dev/null || :
+                    fi
                     rm -f "$_lock/claim.$$" 2>/dev/null || :
+                fi
+                if [ -n "$_rl_took" ]; then
                     ROUTER_LOCK_HELD=1
                     return 0
                 fi
@@ -960,22 +1017,36 @@ router_lock_acquire() {
                 _rl_bare_seen=0
             fi
         fi
-        _rl_waited=$((_rl_waited + 1))
+        _rl_waited=$((_rl_waited + _rl_step))
         [ "$_rl_waited" -lt "$_rl_tries" ] || break
-        sleep 0.1 2>/dev/null || sleep 1
+        if sleep 0.1 2>/dev/null; then
+            _rl_step=1
+        else
+            sleep 1
+            _rl_step=10
+        fi
     done
     return 1
 }
 
 # Only the owner releases: a run that did not take the lock, or lost it,
 # changes nothing. The directory goes in one rename, so no other run sees it
-# without its owner.
+# without its owner. A run that held it and finds no owner file looks twice
+# more: a run that renamed the file away by mistake is putting it back.
 router_lock_release() {
+    _rl_had="${ROUTER_LOCK_HELD:-}"
     ROUTER_LOCK_HELD=''
     _lock="$ROUTER_LOCK_DIR/registry.lock"
     [ -n "${ROUTER_LOCK_ME:-}" ] || return 0
-    _rl_line=''
-    { IFS= read -r _rl_line < "$_lock/owner"; } 2>/dev/null || _rl_line=''
+    _rl_looks=0
+    while :; do
+        _rl_line=''
+        { IFS= read -r _rl_line < "$_lock/owner"; } 2>/dev/null || _rl_line=''
+        [ -n "$_rl_had" ] && [ ! -e "$_lock/owner" ] && [ -d "$_lock" ] || break
+        _rl_looks=$((_rl_looks + 1))
+        [ "$_rl_looks" -lt 3 ] || break
+        sleep 0.1 2>/dev/null || sleep 1
+    done
     [ "$_rl_line" = "$ROUTER_LOCK_ME" ] || return 0
     if mv "$_lock" "$_lock.released.$$" 2>/dev/null; then
         rm -rf "$_lock.released.$$" 2>/dev/null || :
