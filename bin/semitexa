@@ -32,8 +32,28 @@ resolve_script_dir() {
     cd -P "$(dirname "$_source")" && pwd
 }
 
-SCRIPT_DIR="$(resolve_script_dir)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# `$(...)` strips every trailing newline, so `$(cd ... && pwd)` turned a project
+# at '/work/shop<LF>' into '/work/shop', its sibling, and every command ran on
+# that other project, a local-domain:add registering it too
+# (tk-project-root-capture-drops-a-trailing-newline). Each directory is read
+# with a sentinel after pwd's own newline, and only those two are stripped. A
+# path with a line break is then refused before anything runs, as the app
+# registry refuses one.
+SCRIPT_DIR="$(resolve_script_dir && printf x)"
+SCRIPT_DIR="${SCRIPT_DIR%x}"
+SCRIPT_DIR="${SCRIPT_DIR%?}"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd && printf x)"
+PROJECT_ROOT="${PROJECT_ROOT%x}"
+PROJECT_ROOT="${PROJECT_ROOT%?}"
+_root_cr="$(printf '\r')"
+case "$PROJECT_ROOT" in
+    *"
+"*|*"$_root_cr"*)
+        printf "[ERROR] The project's path contains a line break: '%s'\n" "$PROJECT_ROOT" >&2
+        printf '        bin/semitexa cannot work in it: a command that reads the path back can take it for another directory. Rename the directory.\n' >&2
+        exit 1
+        ;;
+esac
 cd "$PROJECT_ROOT" || {
     printf '[ERROR] Failed to enter project root: %s\n' "$PROJECT_ROOT" >&2
     exit 1
