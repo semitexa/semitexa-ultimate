@@ -51,6 +51,30 @@ services:
       # the worker dies with exit 255 under load and every route it served
       # starts timing out, including ones unrelated to SSE.
       - memory_limit=${PHP_MEMORY_LIMIT:-512M}
+      # OPcache for the server (tk-opcache-for-the-swoole-server). Swoole runs
+      # under the CLI SAPI, where OPcache is off by default: every worker then
+      # compiles the framework into its own private heap. On, the compiled code
+      # sits once in shared memory the master creates and the workers inherit.
+      # Timestamps stay validated (the PHP default), and revalidate_freq is 0
+      # on purpose: OPcache compares a file's next check with the time the
+      # request began, and a CLI process is one request that never ends, so at
+      # the default 2 s no file was ever checked again and server:reload served
+      # the old code (measured 2026-11-21). At 0 every include checks the file,
+      # which a long-lived worker does once per class. Short CLI commands do not
+      # get OPcache: a cache that lives for one command only costs its setup.
+      # PHP_OPCACHE=0 turns it off.
+      # Sized so the whole framework fits; `opcache_get_status()` in a worker
+      # must show cache_full false.
+      - -d
+      - opcache.enable_cli=${PHP_OPCACHE:-1}
+      - -d
+      - opcache.revalidate_freq=0
+      - -d
+      - opcache.memory_consumption=${PHP_OPCACHE_MEMORY:-256}
+      - -d
+      - opcache.interned_strings_buffer=32
+      - -d
+      - opcache.max_accelerated_files=30000
       - -d
       - swoole.blocking_detection=${SWOOLE_BLOCKING_DETECTION:-Off}
       - -d
