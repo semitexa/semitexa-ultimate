@@ -67,19 +67,57 @@ ARG SWOOLE_VERSION=6.2.5
 # account. bootstrap-remote names it in a passwd file of its own, read through
 # nss_wrapper; /etc/passwd stays read-only, as a writable one turns any file
 # write in the app into a new account.
-RUN apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic bash openssh-client nss_wrapper \
+#
+# pecl_fetch: the download is the one step of this layer that fails for no
+# reason of ours. On 2026-11-18 the stack smoke failed twice in a row on
+# "unable to unpack /tmp/pear/download/swoole-6.2.5.tgz" and the next run
+# fetched the same archive fine; a first install builds this image, so it
+# failed the same way. Only the download is tried again (3 tries, 5 s then
+# 10 s apart): an archive counts when it is the one file fetched and it
+# unpacks, a bad one is removed before the next try, and after the last try
+# the build fails as before. The install and the compile run once, from the
+# local archive, so a failed compile is never retried into a half-installed
+# extension. Versions are the ones named here, as before.
+RUN pecl_fetch() { \
+        _spec="$1"; _dir="/tmp/pecl-fetch/$_spec.d"; _try=1; \
+        while :; do \
+            rm -rf "$_dir" "/tmp/pecl-fetch/$_spec.tgz"; \
+            mkdir -p "$_dir"; \
+            if (cd "$_dir" && pecl download "$_spec" >&2) \
+                && _tgz="$(ls "$_dir"/*.tgz 2>/dev/null)" \
+                && [ -f "$_tgz" ] \
+                && tar -tzf "$_tgz" >/dev/null 2>&1 \
+                && mv "$_tgz" "/tmp/pecl-fetch/$_spec.tgz"; then \
+                rm -rf "$_dir"; \
+                return 0; \
+            fi; \
+            if [ "$_try" -ge 3 ]; then break; fi; \
+            echo "pecl_fetch: $_spec: try $_try of 3 gave no usable archive, trying again" >&2; \
+            sleep "$((_try * 5))"; \
+            _try="$((_try + 1))"; \
+        done; \
+        rm -rf "$_dir"; \
+        echo "pecl_fetch: $_spec: no usable archive after 3 tries" >&2; \
+        return 1; \
+    } \
+    && apk add --no-cache autoconf g++ make linux-headers openssl-dev zlib-dev git unzip imagemagick-dev imagemagick-webp imagemagick-jpeg imagemagick-heic bash openssh-client nss_wrapper \
     && docker-php-ext-install pdo pdo_mysql sockets \
-    && pecl install --nobuild swoole-"${SWOOLE_VERSION}" \
+    && pecl_fetch swoole-"${SWOOLE_VERSION}" \
+    && pecl install --nobuild /tmp/pecl-fetch/swoole-"${SWOOLE_VERSION}".tgz \
     && cd "$(pecl config-get temp_dir)/swoole" \
     && phpize && ./configure --enable-openssl --disable-brotli --disable-zstd \
     && make -j$(nproc) && make install \
     && docker-php-ext-enable swoole \
-    && pecl install redis \
+    && pecl_fetch redis \
+    && pecl install /tmp/pecl-fetch/redis.tgz \
     && docker-php-ext-enable redis \
-    && pecl install imagick-"${IMAGICK_VERSION}" \
+    && pecl_fetch imagick-"${IMAGICK_VERSION}" \
+    && pecl install /tmp/pecl-fetch/imagick-"${IMAGICK_VERSION}".tgz \
     && docker-php-ext-enable imagick \
-    && pecl install pcov \
+    && pecl_fetch pcov \
+    && pecl install /tmp/pecl-fetch/pcov.tgz \
     && docker-php-ext-enable pcov \
+    && rm -rf /tmp/pecl-fetch \
     && printf 'pcov.enabled=0\npcov.directory=/var/www/html\npcov.exclude="~(vendor|/tests/)~"\npcov.initial.files=20000\n' > /usr/local/etc/php/conf.d/zz-pcov.ini \
     && printf 'session.upload_progress.enabled=0\n' > /usr/local/etc/php/conf.d/zz-semitexa-session.ini \
     && addgroup -g 1000 -S semitexa \
