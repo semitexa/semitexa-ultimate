@@ -27,7 +27,7 @@ final class IntlAndBcmathTest extends TestCase
         $intl = strpos($dockerfile, 'docker-php-ext-install bcmath intl');
         self::assertIsInt($pcntl, 'the pcntl layer the Swoole build sits under');
         self::assertIsInt($intl);
-        $swoole = strpos($dockerfile, 'pecl install --nobuild swoole-');
+        $swoole = strpos($dockerfile, 'pecl install --nobuild /tmp/pecl-fetch/swoole-');
         self::assertIsInt($swoole, 'the Swoole build');
         self::assertGreaterThan($swoole, $intl, 'after the Swoole build, so adding it re-uses that cached layer');
         self::assertGreaterThan($pcntl, $intl, 'and after pcntl, which is cached the same way');
