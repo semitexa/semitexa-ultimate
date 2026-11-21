@@ -244,6 +244,44 @@ final class QueueWorkerScaffoldTest extends TestCase
     }
 
     /**
+     * tk-worker-roles-only-what-the-project-uses. A php for each role loaded
+     * the framework five times over: about 74 MB a role, 369 MB at rest. With
+     * a core that has worker:run, the container runs that one command and
+     * nothing else: it loads the framework once and forks the roles itself.
+     * It replaces the shell (exec), so docker stop's TERM reaches it directly.
+     */
+    #[Test]
+    public function with_a_core_that_has_worker_run_the_worker_is_that_one_process(): void
+    {
+        [$started, $stderr, $alive, $aliveBefore] = $this->runWorker("printf '5 queue:work nats events\\n5 mail:work nats mail\\n'; exit 0", 1, shellOnly: true, before: static function (string $root): void {
+            mkdir($root . '/vendor/semitexa/core/src/Application/Console/Command', 0o777, true);
+            touch($root . '/vendor/semitexa/core/src/Application/Console/Command/WorkerRunCommand.php');
+        });
+
+        self::assertSame(['worker:run'], $started, 'no php for each line, and worker:processes is not asked here: worker:run reads it');
+        self::assertSame(1, $aliveBefore, 'worker:run took the place of the shell: nothing stands between it and docker stop');
+        self::assertSame(0, $alive, 'and the TERM stops it');
+        self::assertSame('', $stderr);
+    }
+
+    /** It is given the memory limit each role was given: a role is forked from it and keeps its settings. */
+    #[Test]
+    public function worker_run_is_started_with_the_memory_limit_the_roles_had(): void
+    {
+        $command = self::section($this->service('docker-compose.worker.yml', 'worker'), 'command');
+
+        self::assertStringContainsString(
+            "          exec php -d memory_limit=\${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa worker:run\n",
+            $command,
+        );
+        self::assertStringContainsString(
+            'if [ -f vendor/semitexa/core/src/Application/Console/Command/WorkerRunCommand.php ]; then',
+            $command,
+            'asked of the file: a core without the command costs no php start to find out',
+        );
+    }
+
+    /**
      * Runs the worker service's own script with a stand-in php:
      * worker:processes does what $queuesBehaviour says; every other command
      * records its arguments and stays up, as a real worker does, except

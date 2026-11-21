@@ -10,6 +10,17 @@
 # is started again after its pause when it exits. A queue or package added
 # later is picked up by server:restart.
 #
+# `worker:run` does that: one process loads the framework and forks each line
+# from itself, so the roles share what was loaded instead of loading it once
+# each (five roles took about 74 MB each; forked, about 4 MB each on top of
+# the one that loaded). Every role is still a process of its own, named after
+# its command in `docker compose top worker`; `kill <pid>` in the container
+# restarts one, and one that dies is reported in the log and started again.
+# The roles run the code that process loaded: server:reload and
+# `server:restart app` send it HUP, and it loads the code again once every
+# role has finished the work in hand (the container is not restarted).
+# server:restart recreates it, which a new queue or package still needs.
+#
 # The overlays point the app at their services (DB_HOST=mysql, ...). This file
 # cannot name those services itself, because an overlay that is not loaded has
 # none, so bin/semitexa writes the same values to var/run/worker.env, read
@@ -18,7 +29,7 @@
 services:
   worker:
     build: .
-    # A PID 1 that passes docker stop's TERM on to the shell below.
+    # A PID 1 that passes docker stop's TERM on to the worker below.
     init: true
     # docker stop's TERM reaches every worker; queue, mail, media, scheduler and
     # webhook workers finish the work in hand first (StopSignals), and are
@@ -43,6 +54,13 @@ services:
       - sh
       - -c
       - |
+        # worker:run is the worker: it takes docker stop's TERM itself and
+        # hands it to every role. Asked of the file, not of php: a core that
+        # has no such command is found without loading it.
+        if [ -f vendor/semitexa/core/src/Application/Console/Command/WorkerRunCommand.php ]; then
+          exec php -d memory_limit=${PHP_MEMORY_LIMIT:-512M} vendor/bin/semitexa worker:run
+        fi
+        # A core from before worker:run: the same lines, a php for each.
         # Words are split, never globbed: worker:processes prints plain words.
         set -f
         # On TERM: pass it to every run loop below, then wait for them. Each

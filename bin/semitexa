@@ -3384,6 +3384,72 @@ server_restart_build_or_warn() {
     warn "Fix the network / Dockerfile problem, then run 'bin/semitexa server:restart' again to pick up a fresh build."
     return 0
 }
+# The worker (worker:run) forks its roles from one process, so every role
+# runs the code that process loaded when the container started: reloading or
+# recreating the app alone left the queue, mail and scheduler roles on the old
+# code, and nothing said so. HUP tells it to load the code again: each role
+# finishes the work in hand, as for docker stop, and the process starts anew
+# in the same container.
+#
+# Only a container whose main process IS worker:run gets the HUP. That the
+# core has the command proves nothing about a container started before the
+# core was updated, or from a compose file the project kept: there the worker
+# is a shell with a php for each role, and HUP kills the shell and the
+# container with its jobs half done. So the container is asked what it runs.
+
+# Run in the worker container as `sh -c "$WORKER_RUN_PROBE" sh /proc`: exit 0
+# when the process docker started there is php running
+# `vendor/bin/semitexa worker:run`. That process is pid 1 itself, or the child
+# the container's init started: of the init's children, the one that started
+# first, since whatever the init adopts later (a worker:run started by hand
+# whose shell ended, a background job of a docker exec) started after it, and
+# a HUP re-exec keeps both its pid and its start time (reviews
+# semitexa-installer#129). The shell loops quote the command in their script
+# text, so the line must BE the php: its first word is php, its last two the
+# command. No single quotes here.
+WORKER_RUN_PROBE='
+runs_worker_run() {
+    case "$(tr "\000" " " < "$1/cmdline" 2>/dev/null)" in
+        php\ *"vendor/bin/semitexa worker:run "|*/php\ *"vendor/bin/semitexa worker:run ") return 0 ;;
+    esac
+    return 1
+}
+proc=$1
+runs_worker_run "$proc/1" && exit 0
+first=
+first_start=
+for p in "$proc"/[0-9]*; do
+    [ "${p##*/}" = 1 ] && continue
+    stat=$(cat "$p/stat" 2>/dev/null) || continue
+    # The fields after the command name: state, parent, ... start time 20th.
+    set -- ${stat##*) }
+    [ "$#" -ge 20 ] && [ "$2" = 1 ] && [ "$1" != Z ] || continue
+    shift 19
+    if [ -z "$first" ] || [ "$1" -lt "$first_start" ]; then
+        first=$p
+        first_start=$1
+    fi
+done
+[ -n "$first" ] && runs_worker_run "$first"
+'
+worker_container_runs_worker_run() {
+    docker exec "$1" sh -c "$WORKER_RUN_PROBE" sh /proc >/dev/null 2>&1
+}
+worker_reload_code() {
+    [ -f "$PROJECT_ROOT/docker-compose.worker.yml" ] || return 0
+    _reloaded=0
+    # Each replica is asked: none running (EVENTS_ASYNC switched off since, or
+    # stopped by hand) is nothing to tell, and not this command's failure.
+    for _worker in $(run_compose ps -q worker 2>/dev/null); do
+        if worker_container_runs_worker_run "$_worker" && docker kill -s HUP "$_worker" >/dev/null 2>&1; then
+            _reloaded=1
+        fi
+    done
+    if [ "$_reloaded" = 1 ]; then
+        info "Worker: every role finishes the work in hand, then loads the code again." >&2
+    fi
+    return 0
+}
 cmd_server_restart() {
     _service="${1:-}"
     printf "\n%s%s Semitexa — Restarting Environment %s\n\n" "$C_BOLD" "$C_CYAN" "$C_RESET"
@@ -3407,6 +3473,10 @@ cmd_server_restart() {
         info "Recreating service: $_service"
         server_restart_build_or_warn "$_service"
         run_compose up -d --no-build --force-recreate --no-deps "$_service"
+        # The app alone was recreated: the worker still runs the code it loaded.
+        if [ "$_service" = "app" ]; then
+            worker_reload_code
+        fi
     else
         info "Recreating all containers..."
         # Before down: run_compose refuses the up when var/run/worker.env
@@ -5669,6 +5739,9 @@ case "$COMMAND" in
     server:start)    cmd_server_start "$@" ;;
     server:stop)     cmd_server_stop "$@" ;;
     server:restart)  _svc=""; while [ $# -gt 0 ]; do case "$1" in --service=*) _svc="${1#--service=}" ;; -s) shift; _svc="${1:-}" ;; *) _svc="$1" ;; esac; shift; done; cmd_server_restart "$_svc" ;;
+    # The app's workers reload in the app container; the worker's roles load
+    # the code again too, once the reload itself succeeded.
+    server:reload)   cmd_proxy "$COMMAND" "$@"; _rc=$?; [ "$_rc" -ne 0 ] || worker_reload_code; exit "$_rc" ;;
     local-router:init) cmd_local_router_init "$@" ;;
     local-router:start) cmd_local_router_start "$@" ;;
     local-router:stop) cmd_local_router_stop "$@" ;;
