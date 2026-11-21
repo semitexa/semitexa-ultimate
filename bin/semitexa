@@ -19,17 +19,29 @@
 set -e
 
 # ── Resolve project root (follow symlinks, works on macOS + Linux) ──────────
+# Every capture here keeps the bytes it names: dirname, pwd and readlink each
+# end their output with one newline, so each is read with a sentinel after it
+# and exactly those two characters are dropped. A bare `$(...)` would also drop
+# a line break that ends a directory's name, and a script reached through a
+# link in '/work/shop<LF>' would resolve from '/work/shop', the sibling
+# (review semitexa-ultimate#180).
 resolve_script_dir() {
     _source="$0"
     while [ -L "$_source" ]; do
-        _dir="$(cd -P "$(dirname "$_source")" && pwd)"
-        _source="$(readlink "$_source")"
+        _parent="$(dirname "$_source" && printf x)"
+        _parent="${_parent%??}"
+        _dir="$(cd -P "$_parent" && pwd && printf x)"
+        _dir="${_dir%??}"
+        _source="$(readlink "$_source" && printf x)"
+        _source="${_source%??}"
         case "$_source" in
             /*) ;;
             *)  _source="$_dir/$_source" ;;
         esac
     done
-    cd -P "$(dirname "$_source")" && pwd
+    _parent="$(dirname "$_source" && printf x)"
+    _parent="${_parent%??}"
+    cd -P "$_parent" && pwd
 }
 
 # `$(...)` strips every trailing newline, so `$(cd ... && pwd)` turned a project
