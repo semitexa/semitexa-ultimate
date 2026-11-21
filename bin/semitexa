@@ -2883,6 +2883,62 @@ run_quiet_step() {
     return "$_qs_rc"
 }
 
+# ── The first build of the app image says how long it takes ───────────────
+# A new project's first start compiles the runtime image (Swoole, imagick,
+# intl and pcntl from source) while the screen said only "Building and
+# starting the containers": measured 2026-11-21 at 5 min 20 s with no
+# cache on an 8-core machine, where the site promises two minutes
+# (tk-first-run-image-build-minutes). One wording for every command that
+# may run that build.
+APP_IMAGE_BUILD_WAIT="several minutes, about 6 on a typical machine"
+
+# Is the app image built? Returns 0 when it exists, 1 when Docker answered
+# and has none, 2 when that cannot be told (a Compose without
+# `config --images`, a daemon that does not answer). The name is Compose's
+# own, so a project name or an `image:` set in an override is followed.
+# `config --images app` lists the images of app's dependencies too (setup), in
+# no fixed order, so the app's own is named from the resolved model, its
+# `image:` or else <project>-app, and must be one of the listed (review,
+# installer#124); a Compose that names images another way gives 2, not a guess.
+app_image_state() {
+    _ais_listed="$(run_compose config --images app 2>/dev/null < /dev/null)" || return 2
+    _ais_name="$(run_compose config app 2>/dev/null < /dev/null | awk '
+        /^[^ #]/ { in_services = ($0 ~ /^services:/); in_app = 0 }
+        /^name: / && project == "" { project = $2 }
+        in_services && /^  [^ ]/ { in_app = ($0 == "  app:") }
+        in_app && /^    image: / { image = $2 }
+        END {
+            gsub(/["\047]/, "", image); gsub(/["\047]/, "", project)
+            if (image != "") print image; else if (project != "") print project "-app"
+        }')" || return 2
+    [ -n "$_ais_name" ] || return 2
+    printf '%s\n' "$_ais_listed" | grep -Fqx -- "$_ais_name" || return 2
+    # A name alone means :latest to Compose, and to `image ls` every tag of
+    # it: an image left under another tag would pass for the one to build.
+    case "${_ais_name##*/}" in
+        *:*|*@*) ;;
+        *) _ais_name="$_ais_name:latest" ;;
+    esac
+    _ais_id="$(docker image ls -q "$_ais_name" 2>/dev/null)" || return 2
+    [ -n "$_ais_id" ] || return 1
+    return 0
+}
+
+# Usage: app_image_build_notice [or-unknown]
+# One line before a build that will compile the image; nothing when the image
+# exists, so a later start stays as short as it was. An image that cannot be
+# looked up is announced only with `or-unknown` (install, whose first run it
+# most likely is): a start must not promise a wait it cannot know of.
+app_image_build_notice() {
+    _abn_state=0
+    app_image_state || _abn_state=$?
+    case "$_abn_state:${1:-}" in
+        1:*|2:or-unknown) ;;
+        *) return 0 ;;
+    esac
+    info "No app image yet: the first build compiles the PHP extensions and takes $APP_IMAGE_BUILD_WAIT. Later runs reuse the image."
+}
+
 # server:start's `up -d --build`, shown as it comes and also left in the
 # file $1, where the port-conflict check reads it. Returns compose's exit code.
 server_start_compose_up_shown() {
@@ -3196,6 +3252,9 @@ cmd_server_start() {
         fi
     fi
 
+    # Before the ownership handover: with files to hand over it runs the same
+    # build first, and shows none of it.
+    app_image_build_notice
     project_ownership_reclaim || exit 1
     info "Starting containers..."
     server_start_run_with_port_conflict_fallback || exit $?
@@ -3531,7 +3590,7 @@ cmd_install() {
     if [ ! -f "$PROJECT_ROOT/composer.json" ]; then error "composer.json not found. Is this a Semitexa project?"; exit 1; fi
     if [ ! -f "$PROJECT_ROOT/.env.default" ]; then error ".env.default not found. This project is missing its Semitexa baseline configuration."; exit 1; fi
     info "Building Docker image and running composer install inside container..."
-    info "(This may take a few minutes on the first run)"
+    app_image_build_notice or-unknown
     composer_quiet_flag
     run_quiet_step install-build "Building the app image" run_compose build app
     # shellcheck disable=SC2086
@@ -3556,7 +3615,7 @@ cmd_demo_install() {
     if [ ! -f "$PROJECT_ROOT/composer.json" ]; then error "composer.json not found. Is this a Semitexa project?"; exit 1; fi
     if [ ! -f "$PROJECT_ROOT/.env.default" ]; then error ".env.default not found. This project is missing its Semitexa baseline configuration."; exit 1; fi
     info "Installing semitexa/demo via Composer inside Docker..."
-    info "(This may take a few minutes on the first run)"
+    app_image_build_notice or-unknown
     composer_quiet_flag
     run_quiet_step demo-install-build "Building the app image" run_compose build app
     run_compose run --rm --no-deps --user "$(id -u):$(id -g)" app composer config repositories.semitexa-demo vcs https://github.com/semitexa/semitexa-demo.git

@@ -29,6 +29,13 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
     private const COMPOSE = 'run_compose() { echo "#1 [internal] load build definition"; echo "#2 extracting sha256:abc" >&2; echo "ran: $*"; return "${RC:-0}"; }' . "\n";
     private const NOISE = "#1 [internal] load build definition\n#2 extracting sha256:abc\nran: build app\n";
 
+    /**
+     * install and demo:install say how long the first build takes, unless the app image is known to
+     * exist (tk-first-run-image-build-minutes). The compose stub names no image, so here it is not known.
+     */
+    private const INSTALL = [...self::QUIET, 'app_image_state', 'app_image_build_notice'];
+    private const FIRST_BUILD = 'INFO No app image yet: the first build compiles the PHP extensions and takes several minutes, about 6 on a typical machine. Later runs reuse the image.';
+
     private const START = [...self::QUIET, 'server_start_log_signals_port_conflict', 'server_start_compose_up_shown', 'server_start_compose_up', 'server_start_run_with_port_conflict_fallback'];
     /** The port is taken on the first start, free once the app is reconciled to another. */
     private const CONFLICT = 'PORT=9555; env_val() { printf "%s" "$PORT"; }; local_app_reconcile() { PORT=9600; }' . "\n"
@@ -132,13 +139,13 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
     #[Test]
     public function install_off_a_terminal_says_each_step_once_and_runs_composer_without_progress(): void
     {
-        $out = $this->shell([...self::QUIET, 'refresh_local_semitexa_packages', 'cmd_install'], $this->installStubs()
+        $out = $this->shell([...self::INSTALL, 'refresh_local_semitexa_packages', 'cmd_install'], $this->installStubs()
             . '( set -e; cmd_install ); printf "exit=%s\n" "$?"');
 
         $logs = $this->tmp . '/var/log/';
         self::assertSame([
             'INFO Building Docker image and running composer install inside container...',
-            'INFO (This may take a few minutes on the first run)',
+            self::FIRST_BUILD,
             'OK Building the app image: done (full output: ' . $logs . 'install-build.log)',
             'OK Installing the Composer packages: done (full output: ' . $logs . 'install-composer.log)',
             'INFO Refreshing local Semitexa path packages in composer.lock...',
@@ -156,7 +163,7 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
     #[Test]
     public function install_on_a_terminal_runs_the_commands_it_ran_before(): void
     {
-        $out = $this->shell([...self::QUIET, 'refresh_local_semitexa_packages', 'cmd_install'], $this->installStubs()
+        $out = $this->shell([...self::INSTALL, 'refresh_local_semitexa_packages', 'cmd_install'], $this->installStubs()
             . '( set -e; cmd_install ); printf "exit=%s\n" "$?"', terminal: true);
 
         self::assertSame([
@@ -172,7 +179,7 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
     #[Test]
     public function install_off_a_terminal_stops_at_a_failed_build_with_its_exit_code(): void
     {
-        $out = $this->shell([...self::QUIET, 'refresh_local_semitexa_packages', 'cmd_install'], $this->installStubs()
+        $out = $this->shell([...self::INSTALL, 'refresh_local_semitexa_packages', 'cmd_install'], $this->installStubs()
             . 'run_compose() { echo "failed to solve: $*"; return 17; }' . "\n"
             . '( set -e; cmd_install ); printf "exit=%s\n" "$?"');
 
@@ -183,6 +190,7 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
             'ERROR Full output: ' . $log,
             'exit=17',
         ], array_slice($out, -4), 'composer never ran');
+        self::assertContains(self::FIRST_BUILD, $out, 'the wait is said before the build that fails');
         self::assertFileDoesNotExist($this->tmp . '/var/log/install-composer.log');
     }
 
@@ -352,13 +360,13 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
     #[Test]
     public function demo_install_off_a_terminal_says_each_step_once_and_runs_composer_without_progress(): void
     {
-        $out = $this->shell([...self::QUIET, 'cmd_demo_install'], $this->installStubs()
+        $out = $this->shell([...self::INSTALL, 'cmd_demo_install'], $this->installStubs()
             . '( set -e; cmd_demo_install ); printf "exit=%s\n" "$?"');
 
         $logs = $this->tmp . '/var/log/';
         self::assertSame([
             'INFO Installing semitexa/demo via Composer inside Docker...',
-            'INFO (This may take a few minutes on the first run)',
+            self::FIRST_BUILD,
             'OK Building the app image: done (full output: ' . $logs . 'demo-install-build.log)',
             // One short command, left as it was.
             'Extracting archive',
@@ -376,7 +384,7 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
     #[Test]
     public function demo_install_on_a_terminal_runs_the_commands_it_ran_before(): void
     {
-        $out = $this->shell([...self::QUIET, 'cmd_demo_install'], $this->installStubs()
+        $out = $this->shell([...self::INSTALL, 'cmd_demo_install'], $this->installStubs()
             . '( set -e; cmd_demo_install ); printf "exit=%s\n" "$?"', terminal: true);
 
         self::assertSame([
@@ -402,7 +410,10 @@ final class BuildOutputGoesToALogOffATerminalTest extends TestCase
             file_put_contents($this->tmp . '/' . $file, '');
         }
 
-        return self::SAY . 'has_compose() { return 0; }; id() { echo 7; }' . "\n"
+        $script = (string) file_get_contents(dirname(__DIR__, 3) . '/bin/semitexa');
+        self::assertSame(1, preg_match('/^APP_IMAGE_BUILD_WAIT=.*$/m', $script, $wait), 'APP_IMAGE_BUILD_WAIT must still exist in bin/semitexa');
+
+        return self::SAY . ($wait[0] ?? '') . "\n" . 'has_compose() { return 0; }; id() { echo 7; }' . "\n"
             . 'local_semitexa_package_update_specs() { printf "semitexa/core\nsemitexa/orm:dev-develop\n"; }' . "\n"
             . 'run_compose() { echo "Extracting archive"; echo "ran: $*"; }' . "\n";
     }
