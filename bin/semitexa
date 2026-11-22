@@ -5279,11 +5279,38 @@ e2e_database_reset() {
             || { error "Copying '$_e2e_live' into the E2E database failed; the run would test a partial copy. Retry, or SEMITEXA_E2E_DB=clean."; return 1; }
         info "Copied in $(( $(date +%s) - _e2e_t0 )) s; queued jobs, mail, webhooks and outboxes emptied."
     fi
-    info "E2E database '$_e2e_name': schema and data patches..."
-    # shellcheck disable=SC2046,SC2086
-    ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) app php vendor/bin/semitexa update --no-composer --no-scaffold < /dev/null ) \
-        || { error "Seeding the E2E database '$_e2e_name' failed."; return 1; }
+    e2e_database_seed "$1" "$2" "$_e2e_name" || return 1
     e2e_fixtures_apply "$1" "$2" "$_e2e_name"
+}
+
+# The schema and the data patches of the E2E database. The command that applies
+# them is `semitexa update --no-composer --no-scaffold`, and what it prints (an
+# update plan, "Update completed. Installed release: ...") read in a test run as
+# the framework being updated (tk-e2e-seeding-reads-like-a-framework-update).
+# It updates no package and writes no project file: its output goes to a log,
+# the run gets one line that says what this is, and a seeding that failed
+# prints all of it.
+#   $1 compose binary   $2 compose -f arguments   $3 the E2E database
+e2e_database_seed() {
+    _e2e_seed_log="$PROJECT_ROOT/var/log/e2e-seed.log"
+    _e2e_seed_shown="var/log/e2e-seed.log"
+    # A var/log this user cannot write (left by a root run) is no reason to fail the phase.
+    # In a subshell: a redirection that fails on `:` would end a POSIX shell.
+    if ! ( mkdir -p "$PROJECT_ROOT/var/log" && : > "$_e2e_seed_log" ) 2>/dev/null; then
+        _e2e_seed_log="$(mktemp "${TMPDIR:-/tmp}/semitexa-e2e-seed.XXXXXX")" \
+            || { error "Could not make a log for seeding the E2E database '$3'."; return 1; }
+        _e2e_seed_shown="$_e2e_seed_log"
+    fi
+    info "E2E database '$3': seeding its schema and data patches (no package and no project file is updated; output in $_e2e_seed_shown)..."
+    _e2e_seed_rc=0
+    # shellcheck disable=SC2046,SC2086
+    ( env_export_compose_context; $1 $2 run --rm --no-deps -T $(e2e_app_args) app php vendor/bin/semitexa update --no-composer --no-scaffold < /dev/null ) > "$_e2e_seed_log" 2>&1 \
+        || _e2e_seed_rc=$?
+    if [ "$_e2e_seed_rc" -ne 0 ]; then
+        error "Seeding the E2E database '$3' failed (exit $_e2e_seed_rc). What the seeding printed:"
+        cat "$_e2e_seed_log" >&2
+        return 1
+    fi
 }
 
 # Hex from the kernel's random source, $1 bytes of it.
