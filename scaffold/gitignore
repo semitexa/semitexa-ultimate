@@ -57,6 +57,10 @@ var/ai-work/agents/
 var/ai-work/stack-events.ndjson
 # Each agent's read position in the activity feed: whose news is unread.
 var/ai-work/activity.cursors
+# The locks the backlog's stores hold while they write (charter.json.lock,
+# tasks/.lock, decisions/.lock, state/scores.json.lock): one machine's, never
+# source. One pattern: * takes a name that is only ".lock" too.
+var/ai-work/**/*.lock
 !.gitkeep
 !var/docs/README.md
 
