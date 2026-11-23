@@ -14,7 +14,7 @@
     },
     "require": {
         "php": "^8.4",
-        "semitexa/core": "2026.11.23.0659",
+        "semitexa/core": "2026.11.23.1215",
         "semitexa/update": "2026.11.23.0659",
         "semitexa/installer": "2026.11.23.0659",
         "semitexa/docs": "2026.11.23.0659",
@@ -27,7 +27,7 @@
         "semitexa/cache": "2026.11.10.0849",
         "semitexa/storage": "2026.10.29.1052",
         "semitexa/ssr": "2026.11.23.0659",
-        "semitexa/dev": "2026.11.23.0659",
+        "semitexa/dev": "2026.11.23.1215",
         "semitexa/tenancy": "2026.11.23.0659",
         "semitexa/locale": "2026.10.29.1052",
         "semitexa/orm": "2026.11.18.0511",
@@ -40,7 +40,7 @@
         "semitexa/ledger": "2026.11.23.0659",
         "semitexa/project-graph": "2026.11.23.0659",
         "semitexa/theme": "2026.11.07.1841",
-        "semitexa/platform-ui": "2026.11.23.0659",
+        "semitexa/platform-ui": "2026.11.23.1215",
         "semitexa/platform-user": "2026.10.29.1052",
         "semitexa/platform-settings": "2026.11.23.0659",
         "semitexa/crud": "2026.11.17.1407"
