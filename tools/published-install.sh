@@ -130,28 +130,36 @@ installer_pin() {
 # installs with `latest`, as a newcomer does.
 wait_for_installer_image() {
     local version deadline
+    rm -f "$WORKDIR/installer-image"
     version=$(installer_pin) || { echo "cannot read the semitexa/installer pin of ultimate $EXPECT_VERSION"; return 1; }
     case $version in
         20[0-9][0-9].[0-9]*) ;;
         '') echo "ultimate $EXPECT_VERSION pins no semitexa/installer"; return 1 ;;
         *) echo "ultimate $EXPECT_VERSION pins semitexa/installer '$version', not one release"; return 1 ;;
     esac
+    local left
     deadline=$(( $(date +%s) + 1800 ))
     while :; do
-        if curl -fsS -o /dev/null "https://hub.docker.com/v2/repositories/semitexa/installer/tags/$version"; then
+        left=$(( deadline - $(date +%s) ))
+        [ "$left" -gt 0 ] || { echo "Docker Hub still has no semitexa/installer:$version after 30 min"; return 1; }
+        # Bounded: a Docker Hub that takes the connection and never answers
+        # would otherwise hold the run past its own deadline.
+        if curl -fsS --max-time "$(( left < 30 ? left : 30 ))" -o /dev/null "https://hub.docker.com/v2/repositories/semitexa/installer/tags/$version"; then
             printf '%s\n' "semitexa/installer:$version" > "$WORKDIR/installer-image"
             echo "Docker Hub has semitexa/installer:$version"
             return 0
         fi
-        [ "$(date +%s)" -lt "$deadline" ] || { echo "Docker Hub still has no semitexa/installer:$version after 30 min"; return 1; }
-        sleep 30
+        left=$(( deadline - $(date +%s) ))
+        [ "$left" -gt 0 ] && sleep "$(( left < 30 ? left : 30 ))"
     done
 }
 
 install() {
     cd "$WORKDIR" || return 1
     local image=''
-    [ -f "$WORKDIR/installer-image" ] && image=$(cat "$WORKDIR/installer-image")
+    # Only a release run reads it: a nightly run in the same --workdir must
+    # not pick up the image an earlier release run saved there.
+    [ -n "$EXPECT_VERSION" ] && [ -f "$WORKDIR/installer-image" ] && image=$(cat "$WORKDIR/installer-image")
     [ -z "$image" ] || echo "with the release's installer image $image"
     # Exactly the one-liner the README gives, non-interactive.
     curl -fsSL "$INSTALL_URL" | SEMITEXA_INSTALLER_IMAGE=${image:-${SEMITEXA_INSTALLER_IMAGE:-}} bash -s "$NAME" --start
