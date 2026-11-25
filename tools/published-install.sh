@@ -15,8 +15,11 @@
 #   tools/published-install.sh [--expect-version 2026.10.19.0811] [--workdir DIR] [--keep]
 #
 #   --expect-version  wait (up to 20 min) until Packagist lists this
-#                     semitexa/ultimate version, then require the project to
-#                     have installed exactly the semitexa/* versions it pins
+#                     semitexa/ultimate version, and (up to 30 min) until
+#                     Docker Hub has the semitexa/installer image of the
+#                     installer version it pins; install with that image, not
+#                     `latest`; then require the project to have installed
+#                     exactly the semitexa/* versions it pins
 #   --workdir         where the throwaway project goes (default: a temp dir)
 #   --keep            leave the project, its containers and images behind
 #
@@ -24,8 +27,8 @@
 #   SEMITEXA_INSTALL_URL   the install.sh to run (default https://semitexa.com/install.sh)
 #
 # Stages, in the order the README promises them: prerequisites, packagist,
-# install (curl | bash -s <name> --start), page, orm-sync, self-test, cli,
-# pins. The first failing stage stops the run; a summary table is printed
+# installer-image, install (curl | bash -s <name> --start), page, orm-sync,
+# self-test, cli, pins. The first failing stage stops the run; a summary table is printed
 # last and written to <workdir>/summary.txt, with every stage's output in
 # <workdir>/logs/. Exit status is non-zero when any stage failed.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +65,7 @@ stage() {
     local name=$1 started status
     shift
     if [ "$FAILED" -ne 0 ]; then
-        printf '%-14s %-5s %s\n' "$name" 'SKIP' '' >> "$SUMMARY"
+        printf '%-16s %-5s %s\n' "$name" 'SKIP' '' >> "$SUMMARY"
         return 0
     fi
     started=$(date +%s)
@@ -70,10 +73,10 @@ stage() {
     "$@" > "$WORKDIR/logs/$name.log" 2>&1 < /dev/null
     status=$?
     if [ "$status" -eq 0 ]; then
-        printf '%-14s %-5s %ss\n' "$name" 'OK' "$(( $(date +%s) - started ))" >> "$SUMMARY"
+        printf '%-16s %-5s %ss\n' "$name" 'OK' "$(( $(date +%s) - started ))" >> "$SUMMARY"
     else
         FAILED=1
-        printf '%-14s %-5s %ss  exit %s, see logs/%s.log\n' "$name" 'FAIL' "$(( $(date +%s) - started ))" "$status" "$name" >> "$SUMMARY"
+        printf '%-16s %-5s %ss  exit %s, see logs/%s.log\n' "$name" 'FAIL' "$(( $(date +%s) - started ))" "$status" "$name" >> "$SUMMARY"
         tail -n 30 "$WORKDIR/logs/$name.log" | sed 's/^/   | /'
     fi
 }
@@ -101,10 +104,65 @@ wait_for_packagist() {
     done
 }
 
+# The semitexa/installer version ultimate $EXPECT_VERSION pins, read as pins()
+# reads Packagist's minified metadata, in a PHP container: the host has none.
+installer_pin() {
+    ultimate_metadata | docker run --rm -i -e EXPECT="$EXPECT_VERSION" php:8.4-cli-alpine php -r '
+        $d = json_decode(stream_get_contents(STDIN), true);
+        $current = [];
+        foreach ($d["packages"]["semitexa/ultimate"] ?? [] as $v) {
+            foreach ($v as $key => $value) {
+                if ($value === "__unset") { unset($current[$key]); } else { $current[$key] = $value; }
+            }
+            if (($current["version"] ?? "") === getenv("EXPECT")) {
+                echo $current["require"]["semitexa/installer"] ?? "", "\n";
+                exit(0);
+            }
+        }
+        fwrite(STDERR, "version not in the metadata\n"); exit(1);'
+}
+
+# The release's own installer image. The installer's tag builds it, and a
+# release tags the installer and ultimate together, so this run used to start
+# while that build was still going and test the image before it: `latest`
+# moves only when the build ends. A release run waits for the image of the
+# version ultimate pins and installs with exactly that one; the nightly run
+# installs with `latest`, as a newcomer does.
+wait_for_installer_image() {
+    local version deadline
+    rm -f "$WORKDIR/installer-image"
+    version=$(installer_pin) || { echo "cannot read the semitexa/installer pin of ultimate $EXPECT_VERSION"; return 1; }
+    case $version in
+        20[0-9][0-9].[0-9]*) ;;
+        '') echo "ultimate $EXPECT_VERSION pins no semitexa/installer"; return 1 ;;
+        *) echo "ultimate $EXPECT_VERSION pins semitexa/installer '$version', not one release"; return 1 ;;
+    esac
+    local left
+    deadline=$(( $(date +%s) + 1800 ))
+    while :; do
+        left=$(( deadline - $(date +%s) ))
+        [ "$left" -gt 0 ] || { echo "Docker Hub still has no semitexa/installer:$version after 30 min"; return 1; }
+        # Bounded: a Docker Hub that takes the connection and never answers
+        # would otherwise hold the run past its own deadline.
+        if curl -fsS --max-time "$(( left < 30 ? left : 30 ))" -o /dev/null "https://hub.docker.com/v2/repositories/semitexa/installer/tags/$version"; then
+            printf '%s\n' "semitexa/installer:$version" > "$WORKDIR/installer-image"
+            echo "Docker Hub has semitexa/installer:$version"
+            return 0
+        fi
+        left=$(( deadline - $(date +%s) ))
+        [ "$left" -gt 0 ] && sleep "$(( left < 30 ? left : 30 ))"
+    done
+}
+
 install() {
     cd "$WORKDIR" || return 1
+    local image=''
+    # Only a release run reads it: a nightly run in the same --workdir must
+    # not pick up the image an earlier release run saved there.
+    [ -n "$EXPECT_VERSION" ] && [ -f "$WORKDIR/installer-image" ] && image=$(cat "$WORKDIR/installer-image")
+    [ -z "$image" ] || echo "with the release's installer image $image"
     # Exactly the one-liner the README gives, non-interactive.
-    curl -fsSL "$INSTALL_URL" | bash -s "$NAME" --start
+    curl -fsSL "$INSTALL_URL" | SEMITEXA_INSTALLER_IMAGE=${image:-${SEMITEXA_INSTALLER_IMAGE:-}} bash -s "$NAME" --start
 }
 
 page() {
@@ -173,6 +231,7 @@ trap cleanup EXIT
 echo "published install: $INSTALL_URL${EXPECT_VERSION:+, ultimate $EXPECT_VERSION}, in $WORKDIR"
 stage prerequisites prerequisites
 [ -z "$EXPECT_VERSION" ] || stage packagist wait_for_packagist
+[ -z "$EXPECT_VERSION" ] || stage installer-image wait_for_installer_image
 stage install install
 stage page page
 stage orm-sync in_project sh bin/semitexa orm:sync
