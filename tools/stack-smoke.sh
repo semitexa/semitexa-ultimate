@@ -222,8 +222,18 @@ stage_install() {
         record install FAIL "composer install failed"; return 1
     fi
     if [ ! -f .env ]; then
-        sed "s/{{ default_swoole_port }}/$PORT/" .env.default > .env
-        note "created .env from .env.default"
+        # The installer's .env.default, checked out beside the app: ultimate
+        # ships no runtime file since step 4 of one source for bin/semitexa.
+        local env_default=../semitexa-installer/scaffold/.env.default
+        [ -f "$env_default" ] || { record install FAIL "no $env_default: check out semitexa-installer beside the app"; return 1; }
+        # Through a temporary file: a sed that fails (an unreadable defaults
+        # file) must leave no empty .env for a retry to take as written.
+        if ! sed "s/{{ default_swoole_port }}/$PORT/" "$env_default" > .env.smoke-tmp; then
+            rm -f .env.smoke-tmp
+            record install FAIL "cannot read $env_default"; return 1
+        fi
+        mv .env.smoke-tmp .env
+        note "created .env from $env_default"
     fi
 
     log "install: swap vendor/semitexa/* for git checkouts (default ref $DEFAULT_REF)"

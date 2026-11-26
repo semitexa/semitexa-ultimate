@@ -137,8 +137,9 @@ jobs:
           # tests and every package's tests run below with access to .git.
           persist-credentials: false
 
-      # The installer scaffold, beside the app: the app's scaffold parity test
-      # compares its runtime files with it and fails without it. The same line
+      # The installer scaffold, beside the app: the runtime files a project gets
+      # (the Dockerfile the app image is built from, .env.default) are the
+      # installer's alone since step 4 of one source for bin/semitexa. The same line
       # as the app (develop for develop, master for master): a pull request's
       # target branch, never its head, which the installer need not have.
       - name: Check out the installer scaffold
@@ -171,10 +172,11 @@ jobs:
           path: override
           persist-credentials: false
 
-      # The image an install builds: this checkout's own Dockerfile, so a
-      # change to it is tested by the same run that ships it.
+      # The image an install builds: the installer's Dockerfile, the one
+      # install.sh gives a project, so a change to it is tested here on the
+      # installer's own pull request. It reads nothing from its context.
       - name: Build the app image
-        run: docker build --tag semitexa-app:smoke app
+        run: docker build --tag semitexa-app:smoke semitexa-installer/scaffold
 
       # In the image, with the runner's uid so the workspace stays its own,
       # and the host network so MySQL and Redis answer on 127.0.0.1 as the

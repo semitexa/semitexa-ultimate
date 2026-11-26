@@ -20,6 +20,8 @@ use PHPUnit\Framework\TestCase;
  */
 final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
 {
+    // verify:accept-test-change step 4c of tk-one-source-for-bin-semitexa: the runtime-file tests moved to semitexa-installer tests/Unit/Scaffold (installer#134, #135), and ultimate's copies of those files are deleted with them
+
     // tests/Unit/Scaffold: the skeleton's own tests, which went red in a project
     // whenever bin/semitexa update changed a file they assert (tk-skeleton-tests-go-red-after-update).
     // src/Application/Console/, src/Console/, src/Capabilities.php: the skeleton's
@@ -37,8 +39,11 @@ final class ANewProjectGetsOnlyItsOwnFilesTest extends TestCase
 
         // The archive is real and is the skeleton: an empty listing would pass every check below.
         self::assertContains('composer.json', $paths);
-        self::assertContains('bin/semitexa', $paths);
-        self::assertContains('docker-compose.yml', $paths);
+        // The runtime files come from semitexa/installer alone (step 4 of one
+        // source for bin/semitexa): a copy here would be one that nothing keeps.
+        foreach (['bin/semitexa', 'Dockerfile', 'docker-compose.yml', '.env.default'] as $runtime) {
+            self::assertNotContains($runtime, $paths, "{$runtime} is the installer's");
+        }
         self::assertContains('tests/Unit/Hello/HelloDeferredAttributesTest.php', $paths, "the product keeps its own sample tests");
 
         $carried = array_values(array_filter(
