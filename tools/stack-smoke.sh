@@ -226,7 +226,13 @@ stage_install() {
         # ships no runtime file since step 4 of one source for bin/semitexa.
         local env_default=../semitexa-installer/scaffold/.env.default
         [ -f "$env_default" ] || { record install FAIL "no $env_default: check out semitexa-installer beside the app"; return 1; }
-        sed "s/{{ default_swoole_port }}/$PORT/" "$env_default" > .env
+        # Through a temporary file: a sed that fails (an unreadable defaults
+        # file) must leave no empty .env for a retry to take as written.
+        if ! sed "s/{{ default_swoole_port }}/$PORT/" "$env_default" > .env.smoke-tmp; then
+            rm -f .env.smoke-tmp
+            record install FAIL "cannot read $env_default"; return 1
+        fi
+        mv .env.smoke-tmp .env
         note "created .env from $env_default"
     fi
 
