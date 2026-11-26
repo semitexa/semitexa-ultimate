@@ -1,12 +1,3 @@
-# Kept out of the archive `composer create-project semitexa/ultimate` unpacks
-# (--prefer-dist): a maintainer gate that compares this repository with the
-# semitexa-installer checkout beside it. A new project has neither, so its first
-# test:run was red (bench-fresh-testrun-red, 2026-11-04). The workspace and the
-# stack smoke are git checkouts and still run it.
-/tests/Unit/Scaffold/RuntimeScaffoldConsistencyTest.php export-ignore
-/tests/Unit/Scaffold/InstallerGivesTheE2eRunnerTest.php export-ignore
-/tests/Unit/Scaffold/InstallerCheckoutTestsStayOutOfTheArchiveTest.php export-ignore
-
 # The framework's own CI, its maintainer tools, its one-line installer and its
 # security policy. A project made from this skeleton lives on a host we do not
 # know (decision dec-projects-are-host-neutral, 2026-11-16) and has its own

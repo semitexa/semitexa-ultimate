@@ -8,104 +8,7 @@ use PHPUnit\Framework\TestCase;
 
 final class RuntimeScaffoldConsistencyTest extends TestCase
 {
-    public function testDockerComposeBaseDefinesSchedulerServiceUsedByOverlays(): void
-    {
-        $root = dirname(__DIR__, 3);
-        $baseCompose = file_get_contents($root . '/docker-compose.yml');
-        $mysqlOverlay = file_get_contents($root . '/docker-compose.mysql.yml');
-        $redisOverlay = file_get_contents($root . '/docker-compose.redis.yml');
-        $natsOverlay = file_get_contents($root . '/docker-compose.nats.yml');
-
-        self::assertIsString($baseCompose);
-        self::assertIsString($mysqlOverlay);
-        self::assertIsString($redisOverlay);
-        self::assertIsString($natsOverlay);
-
-        self::assertStringContainsString("\n  scheduler:\n", $baseCompose);
-        self::assertStringContainsString('build: .', $baseCompose);
-        self::assertStringContainsString("\n  scheduler:\n", $mysqlOverlay);
-        self::assertStringContainsString("\n  scheduler:\n", $redisOverlay);
-        self::assertStringContainsString("\n  scheduler:\n", $natsOverlay);
-    }
-
-    public function testShellEntryPointKeepsEnvScopeOnCommittedRuntimeFiles(): void
-    {
-        $root = dirname(__DIR__, 3);
-        $bin = file_get_contents($root . '/bin/semitexa');
-
-        self::assertIsString($bin);
-        self::assertStringContainsString('.env.default', $bin);
-        self::assertStringContainsString('.env', $bin);
-        self::assertStringNotContainsString('.env.local', $bin);
-    }
-
-    public function testShellEntryPointOnlyTreatsSelfPortAsReusableWhenAppIsRunning(): void
-    {
-        $root = dirname(__DIR__, 3);
-        $bin = file_get_contents($root . '/bin/semitexa');
-
-        self::assertIsString($bin);
-        self::assertStringContainsString(
-            'project_is_app_running()',
-            $bin,
-            'bin/semitexa must keep the project-scoped runtime guard available for self-port checks.',
-        );
-        self::assertStringContainsString(
-            'if project_is_app_running "$_project_root_arg"; then',
-            $bin,
-            'Self-port reuse must be gated by the app runtime state before registry entries are treated as safe.',
-        );
-        self::assertStringContainsString(
-            'if [ "$_project_running" -eq 1 ] && [ "$PROJECT_ROOT" = "$_project_root_arg" ] && [ "$UPSTREAM_PORT" = "$_port" ]; then',
-            $bin,
-            'Router registry entries must only bypass a host-port conflict when the matching app is actually running.',
-        );
-        self::assertStringContainsString(
-            'if [ "$_project_running" -eq 1 ] && [ "$SWOOLE_PORT" = "$_port" ]; then',
-            $bin,
-            'App registry entries must only bypass a host-port conflict when the matching app is actually running.',
-        );
-    }
-
-    public function testInstallerScaffoldStaysInSyncWithUltimateRuntimeFiles(): void
-    {
-        $ultimateRoot = dirname(__DIR__, 3);
-        $installerRoot = dirname($ultimateRoot) . '/semitexa-installer/scaffold';
-        // The installer is a sibling checkout: the framework workspace has one,
-        // and the stack smoke checks one out beside the app. Without it this
-        // gate compares nothing, so it fails instead of skipping: a skip read
-        // as a pass while a file drifted.
-        self::assertDirectoryExists(
-            $installerRoot,
-            'semitexa-installer must be checked out next to this repository: the scaffold parity gate has nothing to compare against.',
-        );
-        // Every runtime file both ship. The installer is the source: a hand
-        // edit on one side only drifted .env.default and the MySQL overlay
-        // apart for months (persistent SSE on here, off there; root vs a
-        // semitexa user the env file named but the overlay never created).
-        $pathPairs = [];
-        foreach (['docker-compose.yml', 'docker-compose.mysql.yml', 'docker-compose.redis.yml', 'docker-compose.nats.yml', 'docker-compose.ollama.yml', 'docker-compose.worker.yml', 'Dockerfile', '.env.default', 'bin/semitexa'] as $file) {
-            $pathPairs[] = ['ultimate' => $ultimateRoot . '/' . $file, 'installer' => $installerRoot . '/' . $file];
-        }
-        // init writes scaffold/gitignore as the project's .gitignore: behind the
-        // installer's, it did not ignore .ssh/, where the deploy docs tell
-        // users to keep the deploy key.
-        $pathPairs[] = ['ultimate' => $ultimateRoot . '/scaffold/gitignore', 'installer' => $installerRoot . '/.gitignore'];
-
-        foreach ($pathPairs as $pair) {
-            self::assertFileExists($pair['ultimate']);
-            self::assertFileExists($pair['installer']);
-            self::assertIsReadable($pair['ultimate']);
-            self::assertIsReadable($pair['installer']);
-
-            $ultimateContents = file_get_contents($pair['ultimate']);
-            $installerContents = file_get_contents($pair['installer']);
-
-            self::assertIsString($ultimateContents);
-            self::assertIsString($installerContents);
-            self::assertSame($installerContents, $ultimateContents, basename($pair['ultimate']) . ' drifted from the installer scaffold, its source: copy it over.');
-        }
-    }
+    // verify:accept-test-change step 4c of tk-one-source-for-bin-semitexa: the runtime-file tests moved to semitexa-installer tests/Unit/Scaffold (installer#134, #135), and ultimate's copies of those files are deleted with them
 
     public function testInstallerScriptRefreshesInstallerImageBeforeScaffolding(): void
     {
@@ -256,5 +159,4 @@ final class RuntimeScaffoldConsistencyTest extends TestCase
             . 'Sync the site repository with the framework version.',
         );
     }
-
 }
